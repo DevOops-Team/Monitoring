@@ -1,0 +1,32 @@
+{
+  "schema_version": "1",
+  "event_id": "1527ee60f1b1661940cdd91b3fbbc816",
+  "traceparent": "00-1527ee60f1b1661940cdd91b3fbbc816-3c63496b1c795af2-01",
+  "ts": "2026-11-18T14:02:11Z",
+  "cluster": "worker-a",
+  "az": "ap-northeast-2a",
+  "node": "ip-10-0-1-23",
+  "gpu_uuid": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7",
+  "job_id": "job-0421",
+  "generation": 3,
+  "source": "dmesg",
+  "raw": {
+    "xid": 79,
+    "exit_code": null,
+    "metric": null,
+    "value": null,
+    "log_line": "NVRM: Xid (PCI:0000:00:1e): 79, pid=12345, name=python, GPU has fallen off the bus."
+  },
+  "correlated": [
+    {
+      "alert": "CudaErrorInLog",
+      "source": "pod",
+      "ts": "2026-11-18T14:02:12Z"
+    }
+  ],
+  "collector_healthy": true,
+  "dedup_key": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7|79|2026-11-18T14:02:11Z",
+  "category": "hw",
+  "confidence": 0.95,
+  "suggested_action": "isolate_migrate"
+}

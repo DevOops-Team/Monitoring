@@ -1,0 +1,37 @@
+{
+  "schema_version": "1",
+  "event_id": "a61506a2200da4e8867778038eaeeb24",
+  "traceparent": "00-a61506a2200da4e8867778038eaeeb24-b50a4579e34b9ea8-01",
+  "ts": "2026-11-18T14:02:11Z",
+  "cluster": "worker-a",
+  "az": "ap-northeast-2a",
+  "node": null,
+  "gpu_uuid": null,
+  "job_id": null,
+  "generation": null,
+  "source": "site",
+  "raw": {
+    "xid": null,
+    "exit_code": null,
+    "metric": "up",
+    "value": 0,
+    "log_line": null
+  },
+  "correlated": [
+    {
+      "alert": "ClusterScrapeAbsent",
+      "source": "site",
+      "ts": "2026-11-18T14:01:40Z"
+    },
+    {
+      "alert": "PublicProbeFailed",
+      "source": "site",
+      "ts": "2026-11-18T14:01:55Z"
+    }
+  ],
+  "collector_healthy": false,
+  "dedup_key": "worker-a|site|2026-11-18T14:02:11Z",
+  "category": "site",
+  "confidence": 0.7,
+  "suggested_action": "fence_evacuate"
+}

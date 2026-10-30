@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "event_id": "0202df1d51d1a7b8b9495a837a25734d",
+  "traceparent": "00-0202df1d51d1a7b8b9495a837a25734d-0535b5a2e83a6f03-01",
+  "ts": "2026-11-18T14:02:11Z",
+  "cluster": "worker-a",
+  "az": "ap-northeast-2a",
+  "node": "ip-10-0-1-23",
+  "gpu_uuid": null,
+  "job_id": "job-0421",
+  "generation": 3,
+  "source": "spot",
+  "raw": {
+    "xid": null,
+    "exit_code": null,
+    "metric": "spot_interruption_notice_seconds",
+    "value": 120,
+    "log_line": null
+  },
+  "correlated": [],
+  "collector_healthy": true,
+  "dedup_key": "ip-10-0-1-23|spot|2026-11-18T14:02:11Z",
+  "category": "infra",
+  "confidence": 1.0,
+  "suggested_action": "evacuate_preemptive"
+}
