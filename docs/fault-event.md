@@ -6,7 +6,7 @@
 - 스키마: [`schemas/fault-event.v1.json`](../schemas/fault-event.v1.json) (JSON Schema 2020-12)
 - 예시: [`schemas/examples/`](../schemas/examples/) (장애 유형별 8개, 전부 스키마 통과)
 - 생산자: 분류기 (이태림) · 소비자: 복구 컨트롤러 (한송이), DB 적재 (김현수)
-- 변경: `schemas/` 변경 PR은 CODEOWNERS로 한송이 · 김현수 승인 필수
+- 변경: `schemas/` · 이 문서 변경 PR은 CODEOWNERS로 한송이 · 김현수가 리뷰어로 자동 지정되고, **둘 중 1명 승인 필수**. 형식 변경은 Slack에서 두 사람과 먼저 합의한 뒤 PR을 올린다
 
 ## 1. 역할 나눔
 
