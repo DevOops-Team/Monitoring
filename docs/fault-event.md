@@ -24,8 +24,8 @@
 | 필드 | 타입 | 뜻 |
 |---|---|---|
 | `schema_version` | `"1"` | 고정 |
-| `event_id` | 32자 hex | 이벤트 ID. **`traceparent`의 trace-id와 같은 값** (스키마로는 못 막아서 분류기 테스트로 검증) |
-| `traceparent` | W3C | 컨트롤러는 이걸 부모로 `decide` span을 연다 → 분류기 · 컨트롤러 · 학습 Job span이 한 trace로 이어짐 |
+| `event_id` | 32자 hex | 이벤트 ID. **`traceparent`의 trace-id와 같은 값** (스키마로는 못 막아서 분류기 테스트로 검증). 전부 0은 거부 |
+| `traceparent` | W3C | trace-id · parent-id가 전부 0이면 W3C 무효 값이라 거부. 컨트롤러는 이걸 부모로 `decide` span을 연다 → 분류기 · 컨트롤러 · 학습 Job span이 한 trace로 이어짐 |
 | `ts` | UTC 시각 | **원본 신호 발생 시각** (커널 로그 시각 등). 분류기가 받은 시각 아님 → 감지 지연 = 분류기 span 시작 − `ts` |
 | `cluster` · `az` | 문자열 | 예: `worker-a`, `ap-northeast-2a` |
 | `node` | 문자열 / null | site 이벤트는 null |
@@ -36,7 +36,7 @@
 | `raw` | 객체 | 분류 근거 원본. `xid` · `exit_code` · `metric` · `value` · `log_line` (해당 없으면 null) |
 | `correlated` | 배열 | 상관 창 안에서 함께 본 다른 알람 (`alert` · `source` · `ts`) |
 | `collector_healthy` | bool | 분류 시점에 그 노드의 수집 경로(Agent · Alloy)가 살아 있었나 |
-| `dedup_key` | 문자열 | 중복 전송 방지 키. 기본 `gpu_uuid\|xid\|원본 로그 시각`. Alloy 재시작 · Alertmanager 재전송으로 같은 사건이 두 번 와도 컨트롤러는 한 번만 처리 |
+| `dedup_key` | 문자열 | 같은 사건 식별 키. `대상\|코드\|기준 시각(epoch 초)`. 규칙은 2.1절 |
 | `category` | enum | `hw` · `hw_warn` · `driver` · `app` · `infra` · `site` · `network` · `straggler` |
 | `confidence` | 0~1 | 분류 확신도. Xid 하나로 원인 확정 불가(NVIDIA 공식 입장)라서 둠 |
 | `suggested_action` | enum | 아래 3절 8개 |
@@ -45,6 +45,36 @@
 
 - `collector_healthy: false`면 `suggested_action`은 `hold`만 허용 (site 제외: 사이트 장애면 수집 경로가 죽는 게 당연함)
 - `category: site`면 `node` · `gpu_uuid`는 null
+- `dedup_key`는 `대상|코드|10자리 epoch 초` 형식만 허용 (ISO 시각 문자열 금지: `…11Z`와 `…11.000Z`가 다른 키가 되는 것 방지)
+
+### 2.1 중복 처리 규칙
+
+같은 사건이 여러 번 올 수 있다. 경로가 둘(커널 로그 · DCGM)이고, Alloy 재시작이나 Alertmanager 재전송도 있다.
+
+**키 만들기 (분류기)**
+
+- 대상 = `gpu_uuid` (spot은 `node`, site는 `cluster`), 코드 = `raw.xid` (없으면 `source`)
+- 같은 대상+코드 이벤트가 이미 본 사건의 기준 시각 **±45초** 안의 `ts`면 같은 사건 → 그 사건의 키를 그대로 쓴다
+- 아니면 새 사건 → 이 이벤트의 `ts`(epoch 초)가 기준 시각
+- 비교는 도착 시각이 아니라 `ts`(신호 발생 시각)로 한다. 로그 경로가 몇 시간 뒤 살아나 밀린 줄이 와도 같은 사건으로 묶인다
+
+**창 45초 근거**: 같은 사건이 두 경로로 올 때 `ts` 차이의 최댓값 + 여유.
+
+| 구간 | 최대 지연 |
+|---|---|
+| dcgm-exporter 수집 주기 (Xid 필드 230만 5초로 설정, 기본값 30초) | 5초 |
+| Prometheus Agent 스크레이프 | 15초 |
+| 룰 평가 주기 | 15초 |
+| 합계 (커널 로그 경로는 원본 시각이라 0) | 35초 → 여유 10초 더해 **45초** |
+
+위 주기를 바꾸면 창도 다시 계산한다. 5주차 Xid 주입 실험에서 두 경로의 실제 `ts` 차이를 재서 조정한다.
+창을 너무 키우면 제자리 재시작 직후 같은 고장이 다시 났을 때 같은 사건으로 묶여 반복 횟수(`refuse` 승격)에서 빠진다.
+
+**키 소비 (컨트롤러 · 분류기)**
+
+- 컨트롤러는 **실제 조치를 실행했을 때만** 그 키를 "처리됨"으로 기록한다. 이후 같은 키 이벤트는 무시한다
+- `hold` · `none`은 키를 소비하지 않는다 → 같은 키로 더 확실한 이벤트가 오면 처리된다 (예: 08 `hold` → 01 `isolate_migrate`)
+- 분류기는 직전에 보낸 이벤트와 **키와 `suggested_action`이 둘 다 같을 때만** 다시 보내지 않는다. 키만 같고 action이 바뀌었으면 보낸다
 
 ## 3. suggested_action → 컨트롤러 동작
 
@@ -81,6 +111,8 @@
 | `06-site-az-fence` | 클러스터 스크레이프 끊김 + 공인망 프로브 실패 | site → fence_evacuate |
 | `07-straggler-evacuate` | 스텝 시간 p99 1.8배 + 클럭 스로틀 | straggler → evacuate_preemptive |
 | `08-hold-collector-down` | DCGM 필드 230만 바뀜, 로그 경로 죽음 | hw → hold |
+
+01과 08은 같은 사건이다. 로그 경로가 죽어 DCGM 경로(08, 14:02:40)가 먼저 와서 `hold`, 로그 경로가 살아나 커널 로그(01, 14:02:11)가 뒤늦게 와서 `isolate_migrate`. `ts` 차이 29초 < 45초라 01은 08의 키를 재사용하고, 08은 키를 소비하지 않았으므로 01이 처리된다.
 
 예시의 `confidence` 값은 자리 표시용이다. 실제 값은 룰 표에서 정한다.
 

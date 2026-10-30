@@ -30,14 +30,29 @@
       "const": "1"
     },
     "event_id": {
-      "description": "traceparent의 trace-id와 같은 값",
+      "description": "traceparent의 trace-id와 같은 값. 전부 0은 W3C 무효 값이라 거부",
       "type": "string",
-      "pattern": "^[0-9a-f]{32}$"
+      "pattern": "^[0-9a-f]{32}$",
+      "not": {
+        "const": "00000000000000000000000000000000"
+      }
     },
     "traceparent": {
-      "description": "W3C Trace Context. 컨트롤러는 이 값을 부모로 decide span을 연다",
+      "description": "W3C Trace Context. trace-id · parent-id 전부 0은 무효. 컨트롤러는 이 값을 부모로 decide span을 연다",
       "type": "string",
-      "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$"
+      "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "^00-0{32}-"
+          }
+        },
+        {
+          "not": {
+            "pattern": "-0{16}-[0-9a-f]{2}$"
+          }
+        }
+      ]
     },
     "ts": {
       "description": "원본 신호 발생 시각 (UTC). 분류기 수신 시각 아님",
@@ -174,9 +189,9 @@
       "type": "boolean"
     },
     "dedup_key": {
-      "description": "같은 사건 중복 전송 방지 키. 기본 gpu_uuid|xid|원본 로그 시각",
+      "description": "같은 사건 식별 키. 형식: 대상|코드|기준 시각(epoch 초). 대상 = gpu_uuid (spot은 node, site는 cluster), 코드 = xid (없으면 source). 같은 대상+코드가 기준 시각 ±45초 안이면 같은 사건으로 보고 첫 키를 재사용. 규칙: docs/fault-event.md 2.1절",
       "type": "string",
-      "minLength": 1
+      "pattern": "^[^|]+\\|[^|]+\\|[0-9]{10}$"
     },
     "category": {
       "enum": [

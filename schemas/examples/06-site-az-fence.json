@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "event_id": "a61506a2200da4e8867778038eaeeb24",
-  "traceparent": "00-a61506a2200da4e8867778038eaeeb24-b50a4579e34b9ea8-01",
+  "event_id": "d180880cf3fb3d1cf052c9aafa7233a4",
+  "traceparent": "00-d180880cf3fb3d1cf052c9aafa7233a4-cefce2c8b0c5e7dd-01",
   "ts": "2026-11-18T14:02:11Z",
   "cluster": "worker-a",
   "az": "ap-northeast-2a",
@@ -30,7 +30,7 @@
     }
   ],
   "collector_healthy": false,
-  "dedup_key": "worker-a|site|2026-11-18T14:02:11Z",
+  "dedup_key": "worker-a|site|1795010531",
   "category": "site",
   "confidence": 0.7,
   "suggested_action": "fence_evacuate"

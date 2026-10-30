@@ -1,7 +1,7 @@
 {
   "schema_version": "1",
-  "event_id": "8ec19ae4fd02ed3112f74c24928b6841",
-  "traceparent": "00-8ec19ae4fd02ed3112f74c24928b6841-dc6486b4adbf3c2a-01",
+  "event_id": "7f74077f0c4704db4f713208d54129c4",
+  "traceparent": "00-7f74077f0c4704db4f713208d54129c4-d312c0c9af24f37e-01",
   "ts": "2026-11-18T14:02:11Z",
   "cluster": "worker-a",
   "az": "ap-northeast-2a",
@@ -25,7 +25,7 @@
     }
   ],
   "collector_healthy": true,
-  "dedup_key": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7|straggler|2026-11-18T14:02:11Z",
+  "dedup_key": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7|straggler|1795010531",
   "category": "straggler",
   "confidence": 0.75,
   "suggested_action": "evacuate_preemptive"
