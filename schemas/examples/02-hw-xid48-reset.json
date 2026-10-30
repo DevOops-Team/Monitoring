@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "event_id": "623d9290f2d56569c2a3e1282d01097c",
+  "traceparent": "00-623d9290f2d56569c2a3e1282d01097c-b35bbd21349b7201-01",
+  "ts": "2026-11-18T14:02:11Z",
+  "cluster": "worker-a",
+  "az": "ap-northeast-2a",
+  "node": "ip-10-0-1-23",
+  "gpu_uuid": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7",
+  "job_id": "job-0421",
+  "generation": 3,
+  "source": "dmesg",
+  "raw": {
+    "xid": 48,
+    "exit_code": null,
+    "metric": null,
+    "value": null,
+    "log_line": "NVRM: Xid (PCI:0000:00:1e): 48, pid=12345, name=python, An uncorrectable double bit error (DBE) has been detected on GPU in the framebuffer at partition 0, subpartition 0."
+  },
+  "correlated": [],
+  "collector_healthy": true,
+  "dedup_key": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7|48|1795010531",
+  "category": "hw",
+  "confidence": 0.9,
+  "suggested_action": "reset_then_migrate"
+}

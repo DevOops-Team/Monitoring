@@ -1,0 +1,32 @@
+{
+  "schema_version": "1",
+  "event_id": "d36704f7864e71439abea88123fab77b",
+  "traceparent": "00-d36704f7864e71439abea88123fab77b-e898f91f39db50ca-01",
+  "ts": "2026-11-18T14:02:40Z",
+  "cluster": "worker-a",
+  "az": "ap-northeast-2a",
+  "node": "ip-10-0-1-23",
+  "gpu_uuid": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7",
+  "job_id": "job-0421",
+  "generation": 3,
+  "source": "dcgm",
+  "raw": {
+    "xid": 79,
+    "exit_code": null,
+    "metric": "DCGM_FI_DEV_XID_ERRORS",
+    "value": 79,
+    "log_line": null
+  },
+  "correlated": [
+    {
+      "alert": "GpuXidFieldChanged",
+      "source": "dcgm",
+      "ts": "2026-11-18T14:02:40Z"
+    }
+  ],
+  "collector_healthy": false,
+  "dedup_key": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7|79|1795010560",
+  "category": "hw",
+  "confidence": 0.5,
+  "suggested_action": "hold"
+}

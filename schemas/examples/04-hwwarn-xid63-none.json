@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "event_id": "0e1bc230b373405f89367e414e37f7e1",
+  "traceparent": "00-0e1bc230b373405f89367e414e37f7e1-b90cfb1cc79e5241-01",
+  "ts": "2026-11-18T14:02:11Z",
+  "cluster": "worker-a",
+  "az": "ap-northeast-2a",
+  "node": "ip-10-0-1-23",
+  "gpu_uuid": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7",
+  "job_id": "job-0421",
+  "generation": 3,
+  "source": "dmesg",
+  "raw": {
+    "xid": 63,
+    "exit_code": null,
+    "metric": null,
+    "value": null,
+    "log_line": "NVRM: Xid (PCI:0000:00:1e): 63, pid=12345, name=python, Dynamic Page Retirement: New page retired, reboot to activate (0x00000000000a8b2f)."
+  },
+  "correlated": [],
+  "collector_healthy": true,
+  "dedup_key": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7|63|1795010531",
+  "category": "hw_warn",
+  "confidence": 0.9,
+  "suggested_action": "none"
+}

@@ -1,0 +1,268 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/DevOops-Team/Monitoring/schemas/fault-event.v1.json",
+  "title": "Fault Event v1",
+  "description": "분류기 → 복구 컨트롤러 장애 이벤트. suggested_action은 추천이고 최종 결정은 컨트롤러. 설명: docs/fault-event.md",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "traceparent",
+    "ts",
+    "cluster",
+    "az",
+    "node",
+    "gpu_uuid",
+    "job_id",
+    "generation",
+    "source",
+    "raw",
+    "correlated",
+    "collector_healthy",
+    "dedup_key",
+    "category",
+    "confidence",
+    "suggested_action"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1"
+    },
+    "event_id": {
+      "description": "traceparent의 trace-id와 같은 값. 전부 0은 W3C 무효 값이라 거부",
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$",
+      "not": {
+        "const": "00000000000000000000000000000000"
+      }
+    },
+    "traceparent": {
+      "description": "W3C Trace Context. trace-id · parent-id 전부 0은 무효. 컨트롤러는 이 값을 부모로 decide span을 연다",
+      "type": "string",
+      "pattern": "^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+      "allOf": [
+        {
+          "not": {
+            "pattern": "^00-0{32}-"
+          }
+        },
+        {
+          "not": {
+            "pattern": "-0{16}-[0-9a-f]{2}$"
+          }
+        }
+      ]
+    },
+    "ts": {
+      "description": "원본 신호 발생 시각 (UTC). 분류기 수신 시각 아님",
+      "type": "string",
+      "format": "date-time"
+    },
+    "cluster": {
+      "type": "string",
+      "minLength": 1
+    },
+    "az": {
+      "type": "string",
+      "minLength": 1
+    },
+    "node": {
+      "description": "site 이벤트는 null",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "gpu_uuid": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "pattern": "^GPU-[0-9a-f-]+$"
+    },
+    "job_id": {
+      "description": "학습 Job ID (k8s Job 이름 아님)",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "generation": {
+      "description": "체크포인트 세대 번호. 원본은 S3",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "source": {
+      "description": "dmesg = 커널 로그(journald 경유)",
+      "enum": [
+        "dcgm",
+        "dmesg",
+        "pod",
+        "straggler",
+        "site",
+        "spot"
+      ]
+    },
+    "raw": {
+      "description": "분류 근거가 된 원본 신호. 해당 없는 칸은 null",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "xid",
+        "exit_code",
+        "metric",
+        "value",
+        "log_line"
+      ],
+      "properties": {
+        "xid": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "exit_code": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "metric": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "log_line": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "correlated": {
+      "description": "상관 창 안에서 함께 본 다른 신호 (Alertmanager 알람 이름 기준)",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "alert",
+          "source",
+          "ts"
+        ],
+        "properties": {
+          "alert": {
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "dcgm",
+              "dmesg",
+              "pod",
+              "straggler",
+              "site",
+              "spot"
+            ]
+          },
+          "ts": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    },
+    "collector_healthy": {
+      "description": "분류 시점에 해당 노드 수집 경로(Agent·Alloy)가 살아 있었나. false면 suggested_action은 hold (site는 예외: 사이트 장애면 수집 경로가 죽는 게 당연함)",
+      "type": "boolean"
+    },
+    "dedup_key": {
+      "description": "같은 사건 식별 키. 형식: 대상|코드|기준 시각(epoch 초). 대상 = gpu_uuid (spot은 node, site는 cluster), 코드 = xid (없으면 source). 같은 대상+코드가 기준 시각 ±45초 안이면 같은 사건으로 보고 첫 키를 재사용. 규칙: docs/fault-event.md 2.1절",
+      "type": "string",
+      "pattern": "^[^|]+\\|[^|]+\\|[0-9]{10}$"
+    },
+    "category": {
+      "enum": [
+        "hw",
+        "hw_warn",
+        "driver",
+        "app",
+        "infra",
+        "site",
+        "network",
+        "straggler"
+      ]
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "suggested_action": {
+      "enum": [
+        "restart_in_place",
+        "isolate_migrate",
+        "reset_then_migrate",
+        "evacuate_preemptive",
+        "fence_evacuate",
+        "refuse",
+        "hold",
+        "none"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "collector_healthy": {
+            "const": false
+          },
+          "category": {
+            "not": {
+              "const": "site"
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "suggested_action": {
+            "const": "hold"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "category": {
+            "const": "site"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "node": {
+            "const": null
+          },
+          "gpu_uuid": {
+            "const": null
+          }
+        }
+      }
+    }
+  ]
+}

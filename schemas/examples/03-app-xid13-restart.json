@@ -1,0 +1,32 @@
+{
+  "schema_version": "1",
+  "event_id": "da1ed752967bdc6823e4c3a68c072394",
+  "traceparent": "00-da1ed752967bdc6823e4c3a68c072394-097ad754b8e4e6ff-01",
+  "ts": "2026-11-18T14:02:11Z",
+  "cluster": "worker-a",
+  "az": "ap-northeast-2a",
+  "node": "ip-10-0-1-23",
+  "gpu_uuid": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7",
+  "job_id": "job-0421",
+  "generation": 3,
+  "source": "dmesg",
+  "raw": {
+    "xid": 13,
+    "exit_code": null,
+    "metric": null,
+    "value": null,
+    "log_line": "NVRM: Xid (PCI:0000:00:1e): 13, pid=12345, name=python, Graphics Exception: ESR 0x404600=0x80000002"
+  },
+  "correlated": [
+    {
+      "alert": "CudaErrorInLog",
+      "source": "pod",
+      "ts": "2026-11-18T14:02:12Z"
+    }
+  ],
+  "collector_healthy": true,
+  "dedup_key": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7|13|1795010531",
+  "category": "app",
+  "confidence": 0.8,
+  "suggested_action": "restart_in_place"
+}
