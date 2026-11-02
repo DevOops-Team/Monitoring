@@ -16,10 +16,12 @@
 | 종류 | 뜻 | 채워지는 단계 | 예 |
 |---|---|---|---|
 | **벤더** | NVIDIA · AWS · Prometheus 공식 문서의 스펙 값 | 지금(뼈대)부터 | `nvidia-smi -q -d TEMPERATURE`의 Slowdown Temp, 스팟 2분 통보, Agent WAL 기본 보존 |
-| **기준선** | 진짜 GPU에서 정상 학습 24시간 수집한 지표별 p50 · p95 · p99 분포 | 4주 (3단계) | GPU 사용률, 스텝 시간, 체크포인트 저장 시간 |
+| **기준선** | 데모 Job 설정을 고정하고, 장애 주입 없는 정상 상태 구간(`phase="steady"`)을 **여러 실행에 걸쳐 누적 3시간 이상** 모은 지표별 p50 · p95 · p99 분포. GPU 4장(한 클러스터)이면 충분. 켠 직후 워밍업 10~15분과 주입 구간은 제외. 실행 횟수 · 누적 시간을 함께 기록 | 4주 첫 분포, 6주 재계산 (3단계) | GPU 사용률, 스텝 시간, 체크포인트 저장 시간 |
 | **실험** | 부하 · 장애를 일부러 주입해 "어디서 스텝 시간이 꺾이나" 확인한 값 | 5주 (4단계) | stress-ng CPU, `nvidia-smi -lgc` 클럭 제한, tc netem, VPN 단절, dcgmi 주입 |
 | **논문 · 트레이스** | 공개 장애 트레이스 · 논문의 빈도 · 분포 | 발표 근거용, 임계값에는 보조 | Llama 3 54일 419회 중단, Philly / Acme 장애 분포 |
 | **운영 경험** | exporter 기본 룰 · 커뮤니티 룰 · 일반 운영 관행. 근거가 약하므로 기준선 · 실험으로 대체 대상 | 지금부터, 교체 예정 표시 | postgres_exporter 기본 룰, `absent(up)` 2분, 디스크 80/90% |
+
+기준선을 누적으로 모을 수 있게 학습 Job 지표에 `phase` 라벨(`warmup` · `steady` · `injected`)을 붙인다. 장애 주입 CLI가 돌면 `injected`로 바뀐다. 이 라벨은 학습 Job 계측 규약(노찬경)에 포함. 모델 · 배치 크기 · 데이터셋이 바뀌면 기준선은 다시 모은다.
 
 ## 3. 표 열 정의
 
@@ -42,7 +44,7 @@
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-01 | GPU | 온도 `DCGM_FI_DEV_GPU_TEMP` | | | | 경고 Slowdown Temp − 10 · 위험 Slowdown Temp | 벤더 (`nvidia-smi -q -d TEMPERATURE`) + 기준선 | 클럭 제한 사유 확인 → MON-STD-02 · 08 | 가설 |
 | MON-STD-02 | GPU | 클럭 제한 사유 `DCGM_FI_DEV_CLOCKS_EVENT_REASONS` | | | | 정상 0 · 경고 thermal/power 비트 · 위험 HW slowdown 비트 | 벤더 (DCGM 필드 문서) | `evacuate_preemptive` 입력 (스트래글러) | 가설 |
-| MON-STD-03 | GPU | ECC SBE 증가율 `DCGM_FI_DEV_ECC_SBE_VOL_TOTAL` · `DCGM_FI_DEV_RETIRED_PENDING` | | | | 정상 0/h · 위험 Xid 63 기록 또는 RETIRED_PENDING=1 | 벤더 (XID 문서) + 기준선 (SBE p99) | `evacuate_preemptive` | 가설 |
+| MON-STD-03 | GPU | ECC SBE 증가율 `DCGM_FI_DEV_ECC_SBE_VOL_TOTAL` · `DCGM_FI_DEV_RETIRED_PENDING` | | | | 정상 0/h · 위험 Xid 63 기록 또는 RETIRED_PENDING=1 | 벤더 (XID 문서) + 논문 · 트레이스. SBE 빈도는 15장 · 수 시간으로는 분포가 안 나와 기준선 측정 대상 아님 | `evacuate_preemptive` | 가설 |
 | MON-STD-04 | GPU | XID. 메인 = journald 커널 로그 `NVRM: Xid` (Loki ruler) · 보조 = `DCGM_FI_DEV_XID_ERRORS` (필드 230, 수집 5초) | | | | 경고 앱 코드 Xid 1회 · 위험 HW Xid 1회 | 벤더 (NVIDIA XID Errors 원인 열) | 분류기 룰 테이블 → [fault-event.md 3절](fault-event.md) | 가설 |
 | MON-STD-05 | GPU | 사용률 · 메모리 `DCGM_FI_DEV_GPU_UTIL` · `DCGM_FI_DEV_FB_USED` (학습 중) | | | | 경고 사용률 p50 − 2σ 이하 5분 | 기준선 | 데이터 공급 병목 점검 런북 | 가설 |
 | MON-STD-17 | GPU | NVML 사이드카: NVML 호출 지연 히스토그램 · `nvmlDeviceRegisterEvents` XID 카운터 (계측 필요) | | | | | 기준선 | `collector_healthy` 판단 입력 (지연 급증 = 드라이버 응답 이상) | 비움 |
@@ -122,7 +124,7 @@
 | 단계 (로드맵) | 채워지는 열 |
 |---|---|
 | 2 규약 (2~3주) | 조치 열의 런북 이름, 룰 annotation `standard: MON-STD-nn`, 추적표의 룰 이름 |
-| 3 기준선 (4주) | 정상 열 (근거 = 기준선) |
+| 3 기준선 (4~6주 누적) | 정상 열 (근거 = 기준선). 4주에 첫 분포, 6주에 누적분으로 재계산 |
 | 4 임계값 (5주) | 경고 · 위험 열 (근거 = 실험). 확정되면 가설 열 비우고 상태 → 확정 |
 | 5 SLO (5~6주) | SLO 행 목표 |
 | 6 검증 (6주) | 추적표 전 행, 상태 `측정 못 함` 정리 |
