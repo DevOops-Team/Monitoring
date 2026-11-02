@@ -33,3 +33,17 @@ scrape_configs:
   - job_name: cadvisor
     static_configs:
       - targets: ["cadvisor:8080"]
+
+  # Proxmox 호스트 5대 (하드웨어 층). 호스트 OS에 직접 설치된 node-exporter를 LAN에서 긁음
+  - job_name: pve-host
+    static_configs:
+      - targets: ["172.30.0.90:9100"]
+        labels: {host: devoops}
+      - targets: ["172.30.0.91:9100"]
+        labels: {host: pve1}
+      - targets: ["172.30.0.92:9100"]
+        labels: {host: pve2}
+      - targets: ["172.30.0.93:9100"]
+        labels: {host: pve3}
+      - targets: ["172.30.0.94:9100"]
+        labels: {host: pve4}

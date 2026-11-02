@@ -56,6 +56,7 @@
 | MON-STD-06 | GPU 노드 | CPU (g4dn.xlarge 4 vCPU) `node_cpu_seconds_total` | | | | 경고 80% 5분 · 위험 95% | 실험 (stress-ng로 스텝 시간 꺾이는 점) | 데이터 로더 워커 수 조정 런북 | 가설 |
 | MON-STD-07 | GPU 노드 | 메모리 · 디스크 · 네트워크 `node_memory_*` · `node_filesystem_*` · `node_network_*` | | | | 위험 디스크 90% | 기준선 + 운영 경험 | 체크포인트 로컬 쓰기 실패 예방 런북 | 가설 |
 | MON-STD-16 | CPU 노드 | Prometheus Agent WAL 디스크 · `prometheus_agent_*` (WAL 경로 `node_filesystem_avail_bytes`) | | | | WAL 보존 상한 4h = VPN 단절 복구 상한 | 벤더 (Agent WAL 기본 보존 max 4h) + 실험 (VPN 단절) | VPN 점검 런북 | 가설 |
+| MON-STD-24 | Proxmox 호스트 (devoops · pve1~4) | 호스트 OS node-exporter (`job="pve-host"`, 중앙이 LAN 직접 pull): `up` · 루트 디스크 `node_filesystem_avail_bytes` · 온도 `node_hwmon_temp_celsius` | | | | 호스트 다운 5분 (`up==0`) · 디스크 경고 80% · 위험 90% · 온도 경고 80°C | 운영 경험 + 벤더 (CPU Tjmax 100°C) | 호스트 다운 = 그 위 VM(master·worker·monitoring) 전부 영향 → 인프라 담당 호출 런북 | 가설 |
 
 ### 4.3 학습 Job
 
@@ -116,7 +117,7 @@
 
 | 번호 | 룰 이름 (`alert:` / Loki ruler) | 런북 | 대시보드 패널 | 확인일 |
 |---|---|---|---|---|
-| MON-STD-01 ~ 23 | | | | |
+| MON-STD-01 ~ 24 | | | | |
 | SLO-1 ~ 4 | | | | |
 
 ## 6. 채우는 순서와 변경 규칙
@@ -129,6 +130,6 @@
 | 5 SLO (5~6주) | SLO 행 목표 |
 | 6 검증 (6주) | 추적표 전 행, 상태 `측정 못 함` 정리 |
 
-- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 24).
+- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 25).
 - 값을 바꾸면 근거 링크를 같이 바꾼다. 근거 없는 변경은 가설 열로만.
 - 룰 annotation `standard` 값이 이 표에 없으면 CI에서 실패시킨다 (2단계에서 promtool 테스트에 추가).
