@@ -1,0 +1,35 @@
+# 중앙 Prometheus. 워커·매니저 Agent의 remote_write를 받고, VM 자체 스택을 직접 긁는다
+global:
+  scrape_interval: 15s      # dcgm-exporter 내부 수집 5s + scrape 15s 전제 (fault-event ±45s 창)
+  evaluation_interval: 15s
+  external_labels:
+    site: onprem            # cluster 라벨은 각 Agent가 자기 external_labels로 붙임
+
+rule_files:
+  - rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["grafana:3000"]
+
+  - job_name: node-exporter
+    static_configs:
+      - targets: ["host.docker.internal:9100"]   # network_mode: host 라 호스트 게이트웨이로 접근
+
+  - job_name: cadvisor
+    static_configs:
+      - targets: ["cadvisor:8080"]
