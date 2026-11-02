@@ -1,0 +1,3 @@
+# 모니터링 VM 시크릿 (VM에만 존재)
+compose/.env
+compose/secrets/
