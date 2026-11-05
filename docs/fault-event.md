@@ -96,6 +96,37 @@
 
 **이벤트를 만들지 않는 종료**: 학습 컨테이너 종료 코드 **75**는 사이드카가 세대 불일치 · 승인 거부로 `/ckpt/STOP`을 만들어 trainer가 스스로 멈춘 것이다 (ADR-12). 펜싱이 정상 동작한 것이지 장애가 아니므로 `source=pod` 룰은 exit 75를 제외한다. 같은 이유로 사용자 취소 · 정상 완료(exit 0)도 제외.
 
+### 3.1 세 문서의 액션 이름 대응 (매핑표, 2026-11-05 초안)
+
+분류기(이 문서) · 복구 컨트롤러(한송이 "3. GPU·드라이버 장애복구" 4절) · 재배치 실행기(김성모 "평소 학습, 장애복구 시 스케줄링 방식" RelocationRequest)가 서로 다른 이름을 쓴다. 변환은 **컨트롤러가 한다**: Kafka에서 `suggested_action`을 읽어 자기 액션으로 결정하고, 실행이 필요하면 RelocationRequest를 만든다. 분류기는 이 표의 왼쪽 열만 낸다.
+
+| `suggested_action` (분류기) | 컨트롤러 액션 (한송이) | RelocationRequest `action` (김성모) | 비고 |
+|---|---|---|---|
+| `restart_in_place` | `RETRY_GROUP` | `restartInPlace` | 세대 +1 · 새 JobSet은 공통. 같은 클러스터로 돌아가므로 `devoops/target-cluster`를 붙여 4·5·7단계를 밟는다 (김성모 문서 "스케줄링 개입 없음"은 옛 표기, 확인 필요에 적혀 있음) |
+| `isolate_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 노드 cordon + `devoops/faulty` → 같은 클러스터 예비로 |
+| `reset_then_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 컨트롤러 입장에선 `isolate_migrate`와 같다. GPU 리셋은 한송이 6절대로 **별도 운영 액션**(격리 뒤 수동 · 후속), 자동 리셋 안 함 |
+| `evacuate_preemptive` | **제안** `PLANNED_MIGRATE` | `moveToSpare` | 스팟 2분 통보 · 스트래글러. "지금 체크포인트 저장 → 이전"이라 `QUARANTINE_AND_RETRY`와 순서가 다름. 한송이 액션에 값이 없어 새 값 제안. 재사용하려면 `QUARANTINE_AND_RETRY` + 선저장 생략 |
+| `fence_evacuate` | **제안** `FENCE_AND_EVACUATE` | `evacuateCluster` | 클러스터 펜싱(`devoops/fenced=true`) · 옛 실행 중단 확인 불가 → `devoops/old-execution-stopped=true` 어노테이션 대기. 한송이 문서가 노드 범위라 값이 없음 |
+| `refuse` | `NEEDS_CONFIG_FIX` | 없음 (복구 안 함) | 사용자에게 실패 알림. 원래 Job을 내려 쿼터를 반납할지는 김성모 확인 필요 항목 |
+| `hold` | `HOLD` | 없음 | 상태 저장 · 알림만. 다음 이벤트에서 재판정 |
+| `none` | 없음 (무시) | 없음 | 기록만. 컨트롤러는 Kafka에서 읽어도 처리하지 않는다 |
+
+분류기가 내지 않는 RelocationRequest 경로:
+- **예비 소진 → `evacuateCluster`**: 4절 "같은 클러스터에 예비 GPU가 없다"의 컨트롤러 승격. 분류기는 모른다.
+- **SDC(의심 노드 다수) → `evacuateCluster` + 되돌릴 체크포인트 지정**: v1 `category`에 SDC가 없다. 넣으려면 스키마 변경(한송이 · 김현수 합의).
+
+### 3.2 전달 필드 대응
+
+한송이 4절 "incident_id · job_id · generation · node · gpu_uuid · evidence · action · 룰 버전"과 v1 필드:
+
+| 한송이 필드 | v1 필드 | 비고 |
+|---|---|---|
+| `incident_id` | `dedup_key` | 같은 사건 묶음 키. 개별 판정은 `event_id`(= trace ID). 재판정(`fault.reclassified`)은 `event_id`가 바뀌고 `dedup_key`는 같다 |
+| `job_id` · `generation` · `node` · `gpu_uuid` | 같은 이름 | `job_id` null이면 수집기가 `fault.injection`으로 보완 (김현수) |
+| `evidence` | `raw` + `correlated` + `category` + `confidence` + `source` | 한 필드로 합치지 않는다 |
+| `action` | `suggested_action` | 추천. 결정은 컨트롤러 |
+| 룰 · 임계값 버전 | **없음** | v1에 필드가 없다. 후보: `rule_version`(문자열, 룰 파일 git SHA) 추가 → 스키마 변경이라 합의 뒤 v1.1. 그 전엔 Kafka 메시지 헤더로 |
+
 ## 4. 컨트롤러가 추천을 바꾸는 경우
 
 | 상황 | 추천 | 컨트롤러의 결정 |
@@ -125,9 +156,10 @@
 
 ## 6. 확인 필요 (v1 확정 전)
 
-- [ ] (한송이) 3절 · 4절 동작이 컨트롤러 설계와 맞나
+- [ ] (한송이) 3절 · 4절 동작이 컨트롤러 설계와 맞나 — 2026-11-05 확인됨: Kafka `gpu.fault` 소비, 봉투 `occurred_at`=판정 시각 · `payload.ts`=원본 시각 구분, exit 75 이벤트 없음, dcgm 5초는 확정값(±45초 창 전제). 나머지는 매핑표(11/12)와 함께
 - [ ] (한송이) 스트래글러를 `evacuate_preemptive`로 처리해도 되나, 별도 값(`isolate_straggler` 등)이 필요한가
 - [ ] (한송이) `refuse`는 컨트롤러가 반복 횟수로 올리는 것만 있나, 분류기가 직접 추천할 경우도 있나
+- [ ] (한송이) 소프트웨어 `restart_in_place` 재시도 상한은 미확정 (2026-11-05). 정해지면 `refuse` 승격 횟수와 같은 값으로 맞춤
 - [ ] (김현수) DB 컬럼 매핑: `raw` · `correlated`는 JSONB 한 칸으로 충분한가
 - [ ] (김현수) `dedup_key` 유니크 제약을 DB에도 걸 것인가
-- [ ] (한송이 · 김성모) `suggested_action` 8개 ↔ 컨트롤러 액션(RETRY_GROUP · QUARANTINE_AND_RETRY · NEEDS_CONFIG_FIX · HOLD) ↔ RelocationRequest action(restartInPlace · moveToSpare · evacuateCluster) 매핑표. 세 문서가 다른 이름을 쓰고 있어 컨트롤러 구현 전 한 표로 (모니터링 할 일, 11/12)
+- [ ] (한송이 · 김성모) 3.1 매핑표 확인 (초안 2026-11-05). 결정할 것: `evacuate_preemptive` · `fence_evacuate`의 컨트롤러 액션 값(제안 `PLANNED_MIGRATE` · `FENCE_AND_EVACUATE`) / `rule_version` 필드 추가 시점 / SDC category 추가 여부
