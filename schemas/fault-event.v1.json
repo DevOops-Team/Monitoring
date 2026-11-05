@@ -82,14 +82,14 @@
       "pattern": "^GPU-[0-9a-f-]+$"
     },
     "job_id": {
-      "description": "학습 Job ID (k8s Job 이름 아님)",
+      "description": "학습 작업 ID = 백엔드가 만드는 8자리 hex (예 3f9a1c2e). k8s JobSet 이름 job-3f9a1c2e-g0003이 아님. 못 찾으면 null",
       "type": [
         "string",
         "null"
       ]
     },
     "generation": {
-      "description": "체크포인트 세대 번호. 원본은 S3",
+      "description": "세대 번호. 원본은 DynamoDB 펜싱 테이블 devoops-job-fencing (ADR-6). Job을 다시 띄울 때마다 +1 (ADR-10)",
       "type": [
         "integer",
         "null"

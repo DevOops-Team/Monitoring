@@ -1,11 +1,13 @@
 # 장애 이벤트 JSON v1 (경계 문서 2)
 
-분류기(모니터링 VM)가 복구 컨트롤러(매니저 k8s)에 HTTP POST로 보내는 "사고 보고서 한 장".
-컨트롤러는 PromQL · LogQL · Xid 번호를 몰라도 이 문서만 보고 움직일 수 있어야 한다.
+분류기(모니터링 VM)가 Kafka `gpu.fault` 토픽(172.30.0.40:9092, 파티션 키 = `node`)에 발행하는 "사고 보고서 한 장" (ADR-7 · ADR-8, 2026-11-05 반영. 이전 "HTTP POST" 표기는 폐기).
+소비자는 둘: 복구 컨트롤러(매니저 k8s, 조치)와 수집기(김현수, DB 적재). 컨트롤러는 PromQL · LogQL · Xid 번호를 몰라도 이 문서만 보고 움직일 수 있어야 한다.
+전달 보장은 최소 한 번. 중복은 소비 측이 거른다 (수집기 = `event_id`, 컨트롤러 = `dedup_key`, 2.1절). HTTP POST는 kind · 단위 테스트의 컨트롤러 스텁에만 쓴다.
 
 - 스키마: [`schemas/fault-event.v1.json`](../schemas/fault-event.v1.json) (JSON Schema 2020-12)
 - 예시: [`schemas/examples/`](../schemas/examples/) (장애 유형별 8개, 전부 스키마 통과)
-- 생산자: 분류기 (이태림) · 소비자: 복구 컨트롤러 (한송이), DB 적재 (김현수)
+- 생산자: 분류기 (이태림) · 소비자: 복구 컨트롤러 (한송이), 수집기 → 데이터 DB (김현수)
+- 사건 type 이름(수집기 분류용): `fault.detected`. 보류는 `fault.held`, 재판정은 `fault.reclassified` (김현수 DB 스키마와 합의 중)
 - 변경: `schemas/` · 이 문서 변경 PR은 CODEOWNERS로 한송이 · 김현수가 리뷰어로 자동 지정되고, **둘 중 1명 승인 필수**. 형식 변경은 Slack에서 두 사람과 먼저 합의한 뒤 PR을 올린다
 
 ## 1. 역할 나눔
@@ -30,8 +32,8 @@
 | `cluster` · `az` | 문자열 | 예: `worker-a`, `ap-northeast-2a` |
 | `node` | 문자열 / null | site 이벤트는 null |
 | `gpu_uuid` | `GPU-…` / null | dcgm-exporter 레이블(pci_bus_id → UUID)로 채움 |
-| `job_id` | 문자열 / null | **학습 Job ID**. k8s Job 이름(`job-0421-gen3`)이 아니라 `job-0421` |
-| `generation` | 정수 / null | 체크포인트 세대 번호. 원본은 S3 |
+| `job_id` | 문자열 / null | **학습 작업 ID** = 백엔드가 만드는 8자리 hex (예 `3f9a1c2e`). k8s JobSet 이름 `job-3f9a1c2e-g0003`이 아니다. 분류기는 노드 → Pod → JobSet 라벨 `devoops/job-id`로 찾고, 못 찾으면 null |
+| `generation` | 정수 / null | 세대 번호. 원본은 DynamoDB 펜싱 테이블 `devoops-job-fencing` (ADR-6). Pod 라벨 `devoops/generation`에서 읽음 |
 | `source` | enum | `dcgm` · `dmesg`(커널 로그, journald 경유) · `pod` · `straggler` · `site` · `spot` |
 | `raw` | 객체 | 분류 근거 원본. `xid` · `exit_code` · `metric` · `value` · `log_line` (해당 없으면 null) |
 | `correlated` | 배열 | 상관 창 안에서 함께 본 다른 알람 (`alert` · `source` · `ts`) |
@@ -70,9 +72,10 @@
 위 주기를 바꾸면 창도 다시 계산한다. 5주차 Xid 주입 실험에서 두 경로의 실제 `ts` 차이를 재서 조정한다.
 창을 너무 키우면 제자리 재시작 직후 같은 고장이 다시 났을 때 같은 사건으로 묶여 반복 횟수(`refuse` 승격)에서 빠진다.
 
-**키 소비 (컨트롤러 · 분류기)**
+**키 소비 (컨트롤러 · 분류기 · 수집기)**
 
-- 컨트롤러는 **실제 조치를 실행했을 때만** 그 키를 "처리됨"으로 기록한다. 이후 같은 키 이벤트는 무시한다
+- Kafka는 최소 한 번 전달이라 같은 메시지가 두 번 올 수 있다. 수집기는 `event_id`로 거른다(`ON CONFLICT (event_id) DO NOTHING`). `event_id`는 재전송에도 같다
+- 컨트롤러는 **실제 조치를 실행했을 때만** 그 키(`dedup_key`)를 "처리됨"으로 기록한다. 이후 같은 키 이벤트는 무시한다
 - `hold` · `none`은 키를 소비하지 않는다 → 같은 키로 더 확실한 이벤트가 오면 처리된다 (예: 08 `hold` → 01 `isolate_migrate`)
 - 분류기는 직전에 보낸 이벤트와 **키와 `suggested_action`이 둘 다 같을 때만** 다시 보내지 않는다. 키만 같고 action이 바뀌었으면 보낸다
 
@@ -80,14 +83,18 @@
 
 | suggested_action | 뜻 | 컨트롤러가 실제로 하는 일 |
 |---|---|---|
-| `restart_in_place` | GPU 멀쩡, 프로그램만 문제 | 같은 노드에서 Pod 재시작 → 체크포인트에서 이어 감 |
-| `isolate_migrate` | 이 GPU 못 씀 | 노드 cordon → Pod 삭제 → 같은 클러스터 예비 GPU로 이전 |
+| `restart_in_place` | GPU 멀쩡, 프로그램만 문제 | 세대 +1 → 옛 JobSet 정리 · 중단 확인 → **같은 노드를 다시 써도 되는** 새 JobSet 재제출 → 승인 체크포인트에서 이어 감. Pod 재시작이 아니다: torchrun · Job · JobSet · Kueue 자동 재시작은 전부 꺼져 있고 재시작 주체는 컨트롤러뿐 (ADR-12) |
+| `isolate_migrate` | 이 GPU 못 씀 | 노드 cordon + taint `devoops/faulty` → 세대 +1 → 옛 JobSet 정리 · 중단 확인 → 같은 클러스터 예비 GPU(taint `devoops/spare`)로 새 JobSet |
 | `reset_then_migrate` | 이 GPU 리셋 필요 | 먼저 다른 노드로 이전 → 빈 노드에서 GPU 리셋 → 성공하면 예비로 복귀, 실패하면 폐기 |
 | `evacuate_preemptive` | 곧 죽거나 느려짐 (스팟 2분 통보, 스트래글러) | 지금 체크포인트 저장 → 다른 노드로 미리 이전 |
-| `fence_evacuate` | 클러스터 전체가 사라짐 (AZ 장애) | 세대 번호 +1 (옛 Job이 살아 있어도 못 쓰게) → 다른 AZ 클러스터에서 재개 |
+| `fence_evacuate` | 클러스터 전체가 사라짐 (AZ 장애) | 클러스터 펜싱(`devoops/fenced=true`) → 세대 +1 (옛 Job이 살아 있어도 승인 못 하게) → 옛 실행 중단을 확인할 수 없으므로 확인 어노테이션을 기다렸다가 다른 AZ 클러스터에서 재개 |
 | `refuse` | 같은 Job이 같은 버그로 반복 사망 | 재시도 중단, 사용자에게 실패 알림 |
 | `hold` | 애매함, 지켜봐야 함 | 아무것도 안 함. 반복되면 다음 이벤트에서 결정 |
 | `none` | 기록만 (Xid 63, 92 등 전조) | 아무것도 안 함, DB 저장만 |
+
+세대 +1은 복구 종류와 상관없이 **Job을 다시 띄울 때마다** 복구 컨트롤러가 한 번 한다 (ADR-10). 위 표의 "세대 +1"은 그 공통 단계다.
+
+**이벤트를 만들지 않는 종료**: 학습 컨테이너 종료 코드 **75**는 사이드카가 세대 불일치 · 승인 거부로 `/ckpt/STOP`을 만들어 trainer가 스스로 멈춘 것이다 (ADR-12). 펜싱이 정상 동작한 것이지 장애가 아니므로 `source=pod` 룰은 exit 75를 제외한다. 같은 이유로 사용자 취소 · 정상 완료(exit 0)도 제외.
 
 ## 4. 컨트롤러가 추천을 바꾸는 경우
 
@@ -96,7 +103,7 @@
 | 같은 클러스터에 예비 GPU가 없다 | `isolate_migrate` | 다른 클러스터로 이전 |
 | `confidence`가 낮다 (예: 0.5 미만) | `isolate_migrate` | `hold`로 낮춤 |
 | 이 Job이 이미 복구 중이다 | 무엇이든 | 무시 (중복 처리 방지) |
-| VPN 단절인지 AZ 장애인지 아직 모른다 | `fence_evacuate` | `hold` 후 공인망 프로브 결과 보고 결정 |
+| VPN 단절인지 AZ 장애인지 아직 모른다 | `fence_evacuate` | `hold` 후 독립 경로(DynamoDB `heartbeat_at` · progress 갱신, EC2 상태 조회)를 보고 결정. 워커는 프라이빗 서브넷이라 공인망에서 직접 probe할 수 없다 (MON-STD-18) |
 | `restart_in_place`를 3번 했는데 또 같은 에러 | `restart_in_place` | `refuse`로 올림 |
 
 ## 5. 예시 목록
@@ -123,3 +130,4 @@
 - [ ] (한송이) `refuse`는 컨트롤러가 반복 횟수로 올리는 것만 있나, 분류기가 직접 추천할 경우도 있나
 - [ ] (김현수) DB 컬럼 매핑: `raw` · `correlated`는 JSONB 한 칸으로 충분한가
 - [ ] (김현수) `dedup_key` 유니크 제약을 DB에도 걸 것인가
+- [ ] (한송이 · 김성모) `suggested_action` 8개 ↔ 컨트롤러 액션(RETRY_GROUP · QUARANTINE_AND_RETRY · NEEDS_CONFIG_FIX · HOLD) ↔ RelocationRequest action(restartInPlace · moveToSpare · evacuateCluster) 매핑표. 세 문서가 다른 이름을 쓰고 있어 컨트롤러 구현 전 한 표로 (모니터링 할 일, 11/12)
