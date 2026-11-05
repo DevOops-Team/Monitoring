@@ -12,7 +12,7 @@
 
 - 예비 taint 키는 `devoops/spare`다. 이전 설계의 `gpu-failover/spare`는 폐기 (2026-11-05).
 - 학습 Pod의 GPU · spare toleration은 템플릿이 아니라 Kueue ResourceFlavor가 넣는다. 우리 매니페스트와 무관.
-- 라벨 접두어 `devoops/` 통일은 인프라(박기현)가 확정한다. 바뀌면 이 표만 고친다.
+- 라벨 · taint 키는 김성모가 확정함 (2026-11-05, Slack). Terraform 반영은 인프라(박기현).
 
 ## 2. 구성 요소별 배치
 
@@ -55,5 +55,5 @@ Alertmanager ──webhook(pipeline=failover)──▶ 분류기(모니터링 VM
 - [ ] (박기현) 노드 그룹 라벨 `devoops/gpu=true` · `devoops/node-group=system` · spare 라벨/taint를 Terraform에 (B4 때 요청한 `nvidia.com/gpu.present=true`는 이 권장안으로 대체)
 - [ ] (박기현) AMI journald 디스크 저장 여부 (`/var/log/journal` 존재)
 - [ ] (박기현) 모니터링 VM IAM: DynamoDB `devoops-job-fencing` · `devoops-job-progress` 읽기, `ec2:DescribeInstanceStatus`
-- [ ] (김성모) 예비 taint 키 · 값 최종 확정, Kueue flavor가 넣는 toleration과 충돌 없음 확인
+- [x] (김성모) 예비 taint 키 `devoops/spare=true:NoSchedule` · GPU 라벨 `devoops/gpu=true` 확정 (2026-11-05). monitoring ns 자원 예산 0.5코어 · 1Gi, nodeSelector `platform-worker=true`(관리 클러스터)도 그대로
 - [ ] (나) dcgm-exporter Helm values: `customMetrics` 전체 목록(B3 초안) + Xid 230 주기 5초, tolerations Exists

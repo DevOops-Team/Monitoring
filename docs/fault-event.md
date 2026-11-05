@@ -125,9 +125,10 @@
 
 ## 6. 확인 필요 (v1 확정 전)
 
-- [ ] (한송이) 3절 · 4절 동작이 컨트롤러 설계와 맞나
+- [ ] (한송이) 3절 · 4절 동작이 컨트롤러 설계와 맞나 — 2026-11-05 확인됨: Kafka `gpu.fault` 소비, 봉투 `occurred_at`=판정 시각 · `payload.ts`=원본 시각 구분, exit 75 이벤트 없음, dcgm 5초는 확정값(±45초 창 전제). 나머지는 매핑표(11/12)와 함께
 - [ ] (한송이) 스트래글러를 `evacuate_preemptive`로 처리해도 되나, 별도 값(`isolate_straggler` 등)이 필요한가
 - [ ] (한송이) `refuse`는 컨트롤러가 반복 횟수로 올리는 것만 있나, 분류기가 직접 추천할 경우도 있나
+- [ ] (한송이) 소프트웨어 `restart_in_place` 재시도 상한은 미확정 (2026-11-05). 정해지면 `refuse` 승격 횟수와 같은 값으로 맞춤
 - [ ] (김현수) DB 컬럼 매핑: `raw` · `correlated`는 JSONB 한 칸으로 충분한가
 - [ ] (김현수) `dedup_key` 유니크 제약을 DB에도 걸 것인가
 - [ ] (한송이 · 김성모) `suggested_action` 8개 ↔ 컨트롤러 액션(RETRY_GROUP · QUARANTINE_AND_RETRY · NEEDS_CONFIG_FIX · HOLD) ↔ RelocationRequest action(restartInPlace · moveToSpare · evacuateCluster) 매핑표. 세 문서가 다른 이름을 쓰고 있어 컨트롤러 구현 전 한 표로 (모니터링 할 일, 11/12)
