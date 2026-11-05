@@ -47,3 +47,23 @@ scrape_configs:
         labels: {host: pve3}
       - targets: ["172.30.0.94:9100"]
         labels: {host: pve4}
+
+  # Kafka 브로커 자체 지표 (JMX Exporter javaagent, 현수 설치 11/05). 원본은 약 1만 줄이라 필요한 것만 남긴다
+  - job_name: kafka-jmx
+    static_configs:
+      - targets: ["172.30.0.40:7071"]
+        labels: {host: kafka}
+    metric_relabel_configs:
+      # 1) 이름으로 1차 선별
+      - source_labels: [__name__]
+        regex: "kafka_network_requestmetrics_99thpercentile|kafka_server_brokertopicmetrics_oneminuterate|kafka_server_replicamanager_value|kafka_controller_kafkacontroller_value|kafka_log_log_value|kafka_server_kafkarequesthandlerpool_oneminuterate|jvm_memory_bytes_used|jvm_memory_pool_used_bytes|jvm_gc_collection_seconds_(count|sum)|jvm_threads_current|process_(cpu_seconds_total|open_fds|resident_memory_bytes)"
+        action: keep
+      # 2) 요청 지연은 Produce · FetchConsumer의 TotalTimeMs p99만 (원본 8,400줄 → 2줄).
+      #    RE2엔 부정 탐색이 없어 "남길 것을 새 이름으로 옮긴 뒤 원래 이름을 전부 버리는" 두 단계로 한다
+      - source_labels: [__name__, name, request]
+        regex: "kafka_network_requestmetrics_99thpercentile;TotalTimeMs;(Produce|FetchConsumer)"
+        target_label: __name__
+        replacement: kafka_request_total_time_ms_p99
+      - source_labels: [__name__]
+        regex: "kafka_network_requestmetrics_99thpercentile"
+        action: drop
