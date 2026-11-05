@@ -12,6 +12,8 @@ VM `monitoring` 172.30.0.30 (Ubuntu 24.04, 6 vCPU · 16GB · 200GB). 이 문서�
 | node-exporter | prom/node-exporter:v1.12.1 | 9100 (host) | VM 자체 지표 |
 | cadvisor | ghcr.io/google/cadvisor:v0.60.6 | 내부만 | 컨테이너 자원 지표 |
 
+외부 수집 대상: Proxmox 호스트 5대(`job: pve-host`) · Kafka JMX Exporter 172.30.0.40:7071(`job: kafka-jmx`, 현수 설치, 1만 줄 중 필요한 것만 metric_relabel로 남김).
+
 2차 예정: Loki · Alloy(수신) · Tempo · blackbox-exporter(VPN 터널 · pfSense · 공인 DNS 확인용) · 분류기(Alertmanager webhook 수신 → Kafka `gpu.fault` 발행, DynamoDB 하트비트 · EC2 상태 폴링) · kafka_exporter. 설계는 `docs/fault-event.md` · `docs/worker-agents.md`.
 
 ## 처음 설치
@@ -44,7 +46,7 @@ VM `monitoring` 172.30.0.30 (Ubuntu 24.04, 6 vCPU · 16GB · 200GB). 이 문서�
 
 | 무엇 | 어떻게 | 기대 |
 |---|---|---|
-| 타깃 | http://172.30.0.30:9090/targets | 5개 모두 UP |
+| 타깃 | http://172.30.0.30:9090/targets | VM 5개 + pve-host 5개 + kafka-jmx 1개 모두 UP |
 | Watchdog | http://172.30.0.30:9093/#/alerts | Watchdog 1건 상시 |
 | 데드맨 | healthchecks.io 대시보드 | 1분마다 핑 수신 |
 | Slack | `docker compose exec alertmanager amtool alert add test severity=warning --annotation=summary=테스트` | #alerts-gpu에 [FIRING] test |
