@@ -15,3 +15,17 @@ datasources:
     jsonData:
       implementation: prometheus
     editable: false
+  # 데이터 파트 PostgreSQL (현수, 172.30.0.50). Job 대장 · 장애 사건 · 측정 이벤트 조회용 읽기 전용 계정
+  - name: PostgreSQL
+    uid: postgres
+    type: grafana-postgresql-datasource
+    url: 172.30.0.50:5432
+    user: grafana_ro
+    jsonData:
+      database: gpuf_data
+      sslmode: require          # 서버 ssl=on(Ubuntu 기본 자체 서명 snakeoil). 암호화만, 인증서 검증은 안 함(verify-*는 자체 서명이라 실패). 인증은 scram-sha-256, pg_hba 172.30.0.30만, 읽기 전용
+      postgresVersion: 1600
+      timescaledb: false
+    secureJsonData:
+      password: $PG_RO_PASSWORD   # VM compose/.env 에서 주입. 레포엔 없음
+    editable: false
