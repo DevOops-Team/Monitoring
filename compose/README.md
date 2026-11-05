@@ -30,7 +30,7 @@ VM `monitoring` 172.30.0.30 (Ubuntu 24.04, 6 vCPU · 16GB · 200GB). 이 문서�
    ```
    ssh monitoring@172.30.0.30
    cd ~/monitoring/compose
-   cp .env.example .env && vi .env                # GRAFANA_ADMIN_PASSWORD
+   cp .env.example .env && vi .env                # GRAFANA_ADMIN_PASSWORD · PG_RO_PASSWORD(현수 DM)
    mkdir -p secrets
    printf '%s' 'https://hooks.slack.com/services/...' > secrets/slack_webhook_url
    printf '%s' 'https://hc-ping.com/<uuid>'         > secrets/healthchecks_ping_url
@@ -51,6 +51,7 @@ VM `monitoring` 172.30.0.30 (Ubuntu 24.04, 6 vCPU · 16GB · 200GB). 이 문서�
 | 데드맨 | healthchecks.io 대시보드 | 1분마다 핑 수신 |
 | Slack | `docker compose exec alertmanager amtool alert add test severity=warning --annotation=summary=테스트` | #alerts-gpu에 [FIRING] test |
 | Grafana | http://172.30.0.30:3000 (admin) → Connections → Data sources → Prometheus → Test | OK |
+| PostgreSQL | 같은 화면 → PostgreSQL → Test | "Database Connection OK" (실패하면 .env PG_RO_PASSWORD · pg_hba 172.30.0.30 허용 확인) |
 
 ## 설정 변경
 

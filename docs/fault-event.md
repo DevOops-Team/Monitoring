@@ -112,7 +112,7 @@
 | `none` | 없음 (무시) | 없음 | 기록만. 컨트롤러는 Kafka에서 읽어도 처리하지 않는다 |
 
 분류기가 내지 않는 RelocationRequest 경로:
-- **예비 소진 → `moveToOtherCluster`**(김성모가 CRD action에 추가 예정, 11/05): 의심 · 고장 노드 cordon + taint, 원래 클러스터는 `devoops/exclude-clusters`, **펜싱은 안 함**. 4절 "같은 클러스터에 예비 GPU가 없다"의 컨트롤러 승격. `evacuateCluster`를 쓰면 멀쩡한 클러스터가 통째로 펜싱되므로 쓰지 않는다. 구현 전 현재 코드는 같은 클러스터에서 15분 대기 뒤 Failed.
+- **예비 소진 → `moveToOtherCluster`**(김성모 relocator.py d091726에 추가됨, 시나리오 10 미실행, 11/05): 의심 · 고장 노드 cordon + taint, 원래 클러스터는 `devoops/exclude-clusters`, **펜싱은 안 함**. 4절 "같은 클러스터에 예비 GPU가 없다"의 컨트롤러 승격. `evacuateCluster`를 쓰면 멀쩡한 클러스터가 통째로 펜싱되므로 쓰지 않는다. 구현 전 현재 코드는 같은 클러스터에서 15분 대기 뒤 Failed.
 - **SDC(의심 노드 다수) → `moveToOtherCluster`**: v1 `category`에 SDC를 넣지 않는다. 이벤트 한 건을 보는 분류기가 아니라 여러 건을 모으는 컨트롤러가 판단 · 승격 (김성모 동의, 자기 문서 1단계 수정 예정). 되돌릴 체크포인트 지정은 RelocationRequest 필드가 아니라 컨트롤러가 RR 바깥에서 한다.
 
 ### 3.2 전달 필드 대응
@@ -163,5 +163,6 @@
 - [ ] (김현수) DB 컬럼 매핑: `raw` · `correlated`는 JSONB 한 칸으로 충분한가
 - [ ] (김현수) `dedup_key` 유니크 제약을 DB에도 걸 것인가
 - [x] (한송이 · 김성모) 3.1 매핑표 확인 완료 (2026-11-05): `PLANNED_MIGRATE` · `FENCE_AND_EVACUATE` 신설, `rule_version`은 v1 Kafka 헤더, SDC는 컨트롤러 승격, `moveToOtherCluster` 신설
-- [ ] (김성모) `moveToOtherCluster`를 RelocationRequest CRD enum · relocator.py에 추가, 자기 문서 1단계(SDC 분류 주체) · "스케줄링 개입 없음" 수정
+- [ ] (김성모) `moveToOtherCluster` 시나리오 10 실행 확인 (코드 추가는 d091726 완료), 자기 문서 1단계(SDC 분류 주체) · "스케줄링 개입 없음" 수정
+- [ ] (한송이 · 김현수) 컨트롤러 중복 제거 기준 — 현수 안건 7 "dedup_key로 거르면 재판정을 놓침"은 2.1절 규칙(`hold` · `none`은 키 비소비, 조치 실행 때만 소비)으로 이미 해결됨. 컨트롤러 구현이 이 규칙대로인지 한송이 확인
 - [ ] (김성모) `refuse` 때 쿼터 자동 반납 실제 확인 (JobSet Failed → Workload 종료)
