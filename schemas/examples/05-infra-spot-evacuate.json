@@ -7,7 +7,7 @@
   "az": "ap-northeast-2a",
   "node": "ip-10-0-1-23",
   "gpu_uuid": null,
-  "job_id": "job-0421",
+  "job_id": "3f9a1c2e",
   "generation": 3,
   "source": "spot",
   "raw": {

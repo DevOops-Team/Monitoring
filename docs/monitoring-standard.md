@@ -21,7 +21,7 @@
 | **논문 · 트레이스** | 공개 장애 트레이스 · 논문의 빈도 · 분포 | 발표 근거용, 임계값에는 보조 | Llama 3 54일 419회 중단, Philly / Acme 장애 분포 |
 | **운영 경험** | exporter 기본 룰 · 커뮤니티 룰 · 일반 운영 관행. 근거가 약하므로 기준선 · 실험으로 대체 대상 | 지금부터, 교체 예정 표시 | postgres_exporter 기본 룰, `absent(up)` 2분, 디스크 80/90% |
 
-기준선을 누적으로 모을 수 있게 학습 Job 지표에 `phase` 라벨(`warmup` · `steady` · `injected`)을 붙인다. 장애 주입 CLI가 돌면 `injected`로 바뀐다. 이 라벨은 학습 Job 계측 규약(노찬경)에 포함. 모델 · 배치 크기 · 데이터셋이 바뀌면 기준선은 다시 모은다.
+기준선을 누적으로 모을 수 있게 학습 Job 지표에 `phase` 라벨(`warmup` = step ≤ warmup_steps · `steady`)을 붙인다 (학습 Job 계측 규약, 노찬경에게 11/05 전달). 주입 구간은 학습 코드가 모르고, 측정 측이 Kafka `fault.injection` 사건의 시각으로 제외한다 (2026-11-05 변경: 이전 `injected` 라벨 계획 폐기). 모델 · 배치 크기 · 데이터셋이 바뀌면 기준선은 다시 모은다.
 
 ## 3. 표 열 정의
 
@@ -64,7 +64,7 @@
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-08 | 학습 Job | 랭크별 스텝 시간 / 전체 중앙값 (학습 Pod 계측, 히스토그램) | | | | 정상 1.0 ± 측정 · 경고 1.5× 2분 · 위험 2.0× | 실험 (클럭 제한 단계별 캘리브레이션) | `evacuate_preemptive` (스트래글러 격리) | 가설 |
 | MON-STD-09 | 학습 Job | 체크포인트 저장 시간 · 마지막 저장 경과 (학습 Pod 계측) | | | | 경고 저장 주기 × 1.5 · 위험 × 3 | 기준선 (김현수 체크포인트 모듈) | 손실 스텝 상한 런북 | 가설 |
-| MON-STD-20 | 학습 Job | Pod 종료 코드 `kube_pod_container_status_last_terminated_reason` · `_exitcode` | | | | | 운영 경험 (kube-state-metrics 문서) | 분류기 입력 (`restart_in_place` vs `refuse` 구분) | 비움 |
+| MON-STD-20 | 학습 Job | Pod 종료 코드 `kube_pod_container_status_last_terminated_reason` · `_exitcode`. **exit 75 = STOP(세대 불일치, 펜싱 정상 동작)** · exit 0 · 사용자 취소는 제외 (ADR-12) | | | | | 운영 경험 (kube-state-metrics 문서) | 분류기 입력 (`restart_in_place` vs `refuse` 구분) | 비움 |
 
 ### 4.4 수집 파이프라인
 
@@ -77,14 +77,14 @@
 
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
-| MON-STD-11 | 알람 | 감지 지연 (주입 → 컨트롤러 수신, Tempo span) | | | | 경고 p95 측정값 × 1.5 | 실험 (4주 감지 지연 표) | 룰 `for` · Alertmanager `group_wait` 조정 | 가설 |
+| MON-STD-11 | 알람 | 감지 지연 (주입 → 컨트롤러의 Kafka `gpu.fault` 소비, Tempo span) | | | | 경고 p95 측정값 × 1.5 | 실험 (4주 감지 지연 표) | 룰 `for` · Alertmanager `group_wait` 조정 | 가설 |
 | MON-STD-21 | 매니저 | Kueue 대기 Workload 수 `kueue_pending_workloads` · 컨트롤러 결정 지연 (`decide` span) | | | | | 기준선 + 트레이스 (Tempo) | 스케줄링 (김성모) · 컨트롤러 (한송이) 호출 런북 | 비움 |
 
 ### 4.6 네트워크 · 사이트
 
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
-| MON-STD-18 | 사이트 | 공인망 probe `probe_success` (blackbox_exporter, 워커 3 AZ) + VPN 경로 `up` | | | | 위험 2분 연속 실패 | 운영 경험 + 실험 (tc netem · VPN 단절) | 판정 재료: 공인망 실패 → `fence_evacuate` (SiteDown) / VPN만 실패 → `hold` (VpnDown) | 가설 |
+| MON-STD-18 | 사이트 | 독립 경로(공인 엔드포인트 경유): DynamoDB `devoops-job-fencing.heartbeat_at` 경과 · `devoops-job-progress` 갱신 경과 (분류기가 폴링해 지표로 노출, 계측 필요) + EC2 `DescribeInstanceStatus` + VPN 경로 `up`. blackbox_exporter는 터널 내부 IP · pfSense · 공인 DNS 확인용 | | | | 위험: VPN `up==0` 2분 + 하트비트 경과 > 하트비트 주기 × 3 | 운영 경험 + 실험 (tc netem · VPN 단절 · FIS AZ 중단) | 판정 재료: VPN 끊김 + 하트비트도 끊김 → `fence_evacuate` (SiteDown) / VPN만 끊기고 하트비트 계속 → `hold` (VpnDown). 워커는 프라이빗 서브넷 · EKS API 비공개라 공인망에서 직접 probe 불가 (2026-11-05 정정) | 가설 |
 | MON-STD-19 | 인프라 | 스팟 중단 통보 (aws-node-termination-handler 또는 IMDS `instance-action`) | | | | 통보 즉시 위험 (회수까지 2분) | 벤더 (AWS 스팟 2분 규칙) | `evacuate_preemptive` | 가설 |
 
 ### 4.7 서비스 층
@@ -94,7 +94,7 @@
 | MON-STD-12 | Job API | RED: 5xx 비율 · 지연 p95 (Backend 계측, 노찬경) | | | | 경고 5xx 1% · p95 측정 × 2 · 위험 5xx 5% 5분 | 기준선 (6주) | Backend 재시작 런북 (노찬경) | 가설 |
 | MON-STD-13 | PostgreSQL | 연결 수 · 디스크 · `pg_up` (postgres_exporter, 별도 VM) | | | | 경고 연결 80% · 디스크 80% · 위험 up==0 1분 | 운영 경험 (postgres_exporter 기본값) + 기준선 | DB 런북 (김현수) | 가설 |
 | MON-STD-14 | 결과 제공 | 결과물 업로드 실패 · 다운로드 오류 (학습 Job 카운터 · Backend 로그) | | | | 경고 1회 · 위험 연속 3회 | 운영 경험 | S3 권한 · 네트워크 점검 런북 | 가설 |
-| MON-STD-23 | Kafka (선택) | consumer lag · under-replicated partitions (kafka_exporter, 별도 VM) | | | | | 운영 경험 (kafka_exporter 기본 룰) | 데이터 담당 호출 런북. Kafka 투입 시점에 활성 | 비움 |
+| MON-STD-23 | Kafka (172.30.0.40, 2주차 도입 ADR-7 · 8) | 브로커 지표 JMX Exporter(김현수) + consumer lag `kafka_consumergroup_lag` (kafka_exporter, 모니터링 VM 컨테이너). 그룹: 복구 컨트롤러 · `collector` | | | | 경고 lag 증가 5분 · 위험 브로커 `up==0` 1분 (브로커 1대, 복제 없음) | 운영 경험 (kafka_exporter 기본 룰) | 데이터 담당 호출 런북. 컨트롤러 lag 증가 = 복구 지연 | 가설 |
 
 ### 4.8 모니터링 서버 자체
 
@@ -106,7 +106,7 @@
 
 | 번호 | 대상 | 지표 (SLI) | 목표 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|
-| SLO-1 | 플랫폼 | 감지 지연 p95 (주입 → 컨트롤러 수신) | | 4~5주 측정 뒤 결정 | 실험 | burn-rate 알람 | 비움 |
+| SLO-1 | 플랫폼 | 감지 지연 p95 (주입 → 컨트롤러 Kafka 소비) | | 4~5주 측정 뒤 결정 | 실험 | burn-rate 알람 | 비움 |
 | SLO-2 | 플랫폼 | 수집 가용성 (`up` · 샘플 누락) | | 99.5% | 기준선 | burn-rate 알람 | 가설 |
 | SLO-3 | 플랫폼 | 알람 정확도 (주입 장애 vs 분류 결과 혼동 행렬) | | 95% | 실험 (6주 혼동 행렬) | 분류기 룰 수정 | 가설 |
 | SLO-4 (후보) | 서비스 | Job API 가용성 (blackbox + 5xx) | | 99% | 기준선 (6주) | 서비스가 나오면 활성 | 가설 |
