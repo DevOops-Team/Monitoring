@@ -57,4 +57,4 @@ max by (host) (node_hwmon_temp_celsius{job="pve-host", chip=~"nvme.*"})
 max by (host) (node_hwmon_temp_celsius{job="pve-host", host="pve4", chip=~"platform_coretemp.*"})
 ```
 
-재측정 절차: 덮개 열고 24h 이상 둔 뒤 위 쿼리 → 2절 표와 같은 형식으로 "2차: 덮개 열림" 절 추가 → 평균 차이로 덮개 영향 판단. 그 뒤 Confluence 5. 트러블슈팅 › 인프라에 전후 비교 1장.
+**2차 조건 시작: 2026-11-06 17:52 KST, 노트북 4대 덮개 열림 (전부 가동 유지).** 재측정 절차: 24h 이상 지난 뒤 위 쿼리 → 2절 표와 같은 형식으로 "2차: 덮개 열림" 절 추가 → 평균 차이로 덮개 영향 판단. 그 뒤 Confluence 5. 트러블슈팅 › 인프라에 전후 비교 1장.
