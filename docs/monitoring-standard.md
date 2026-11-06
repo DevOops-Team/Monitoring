@@ -62,7 +62,7 @@
 
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
-| MON-STD-08 | 학습 Job | 랭크별 스텝 시간 / 전체 중앙값 (학습 Pod 계측, 히스토그램) | | | | 정상 1.0 ± 측정 · 경고 1.5× 2분 · 위험 2.0× | 실험 (클럭 제한 단계별 캘리브레이션) | `evacuate_preemptive` (스트래글러 격리) | 가설 |
+| MON-STD-08 | 학습 Job | 스트래글러: 랭크별 GPU 계산 시간 `train_rank_compute_seconds` ÷ 랭크 값들의 중앙값 (`quantile by (job_id, generation)`, `on(...) group_left`). 보조 = `train_data_wait_seconds` 같은 식(노드 쪽 원인). **스텝 시간은 FSDP 동기화로 랭크 간 같아 쓰지 않음** ([training-metrics.md 3-1절](training-metrics.md)) | | | | 정상 1.0 ± 측정 · 경고 1.5× 2분 · 위험 2.0×. 분자·분모는 같은 분위수(p50÷p50). A5 promtool 테스트: 정상 랭크 1.00 · 주입 랭크 3.08 | 실험 (클럭 제한 단계별 캘리브레이션) | `evacuate_preemptive` (스트래글러 격리). data_wait만 튀면 노드 문제 → 컨트롤러 힌트 | 가설 |
 | MON-STD-09 | 학습 Job | 체크포인트 저장 시간 · 마지막 저장 경과 (학습 Pod 계측) | | | | 경고 저장 주기 × 1.5 · 위험 × 3 | 기준선 (김현수 체크포인트 모듈) | 손실 스텝 상한 런북 | 가설 |
 | MON-STD-20 | 학습 Job | Pod 종료 코드 `kube_pod_container_status_last_terminated_reason` · `_exitcode`. **exit 75 = STOP(세대 불일치, 펜싱 정상 동작)** · exit 0 · 사용자 취소는 제외 (ADR-12) | | | | | 운영 경험 (kube-state-metrics 문서) | 분류기 입력 (`restart_in_place` vs `refuse` 구분) | 비움 |
 
@@ -71,7 +71,7 @@
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-10 | 수집 | Agent remote_write 큐 · 샘플 누락 `prometheus_remote_storage_*` · Loki ingestion 지연 | | | | 정상 0 누락 · 경고 큐 지연 30s · 위험 5분 | 실험 (VPN 단절) | VPN 점검 런북 · `collector_healthy=false` → `hold` | 가설 |
-| MON-STD-15 | 수집 | 클러스터별 Agent 생존 `absent(up{job="prometheus-agent", cluster=...})` | | | | 경고 2분 | 운영 경험 (교체 예정: 실험) | 수집 중단 판정 → 해당 클러스터 `collector_healthy=false` | 가설 |
+| MON-STD-15 | 수집 | 클러스터별 Agent 생존 `absent_over_time(up{job="prometheus-agent", cluster="<c>"}[2m])`, 클러스터마다 룰 1개. `absent()`는 Agent 사망 시 stale 마커가 없어 lookback 5분 뒤에야 참(A5 테스트 9m15s vs 6m15s) → 쓰지 않음 | | | | 경고 2분 (= 범위 2m, `for` 없음) | 운영 경험 (교체 예정: 실험) | 수집 중단 판정 → 해당 클러스터 `collector_healthy=false` | 가설 |
 
 ### 4.5 알람 · 분류
 
