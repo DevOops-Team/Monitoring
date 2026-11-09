@@ -1,4 +1,4 @@
-# blackbox_exporter: 밖에서 찔러 보는 probe. 지금 대상은 pfSense LAN 게이트웨이와 인터넷(공인 DNS).
+# blackbox_exporter: 밖에서 찔러 보는 probe. Service는 ClusterIP(Agent만 접근). 지금 대상은 pfSense LAN 게이트웨이와 인터넷(공인 DNS).
 # VPN 터널 · 워커 쪽 probe는 AWS 재구축 뒤 Agent 설정(base/prometheus-agent/prometheus.yml)에 대상만 추가
 fullnameOverride: blackbox-exporter
 config:
@@ -8,21 +8,15 @@ config:
       timeout: 5s
       icmp:
         preferred_ip_protocol: ip4
-    http_2xx:
-      prober: http
-      timeout: 5s
-      http:
-        preferred_ip_protocol: ip4
-# ICMP 소켓을 열려면 NET_RAW가 필요하다
-securityContext:
-  runAsUser: 1000
-  runAsGroup: 1000
-  readOnlyRootFilesystem: true
-  runAsNonRoot: true
-  allowPrivilegeEscalation: false
-  capabilities:
-    drop: ["ALL"]
-    add: ["NET_RAW"]
+# HTTP 모듈은 두지 않는다. /probe?target=<아무 주소>로 클러스터 안에서 임의 HTTP 요청을 시킬 수 있는 통로가 되므로
+# 필요해질 때 대상 제한과 함께 추가한다. ICMP만.
+#
+# ICMP 권한: 루트나 NET_RAW를 주지 않고, 이 Pod 안에서만 비특권 ICMP 소켓을 허용한다(쿠버네티스 safe sysctl).
+# 노드 기본값은 "1 0"(금지)이라 이 설정이 없으면 "socket: operation not permitted"로 probe가 전부 실패한다
+podSecurityContext:
+  sysctls:
+    - name: net.ipv4.ping_group_range
+      value: "0 2147483647"
 resources:
   requests: {cpu: 10m, memory: 32Mi}
   limits: {memory: 96Mi}

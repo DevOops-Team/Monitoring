@@ -14,8 +14,5 @@ persistence:
   storageClassName: local-path
   size: 5Gi
 
-# 클러스터 밖 주소 172.30.0.35:4317 · :4318 (분류기 · 복구 컨트롤러 · OTel 게이트웨이의 span), 조회 API :3200
-service:
-  type: LoadBalancer
-  annotations:
-    kube-vip.io/loadbalancerIPs: "172.30.0.35"
+# Service는 차트 기본(ClusterIP, 조회 API 3200 포함). 밖으로는 base/external/services.yaml의 tempo-external이
+# OTLP 4317 · 4318만 연다. jaeger 수신 포트는 클러스터 안에만 남는다

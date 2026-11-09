@@ -137,17 +137,9 @@ SC
       tempo)    c="$(chart grafana-community/tempo "$TEMPO_CHART")" ;;
       blackbox) c="$(chart prometheus-community/prometheus-blackbox-exporter "$BLACKBOX_CHART")" ;;
     esac
-    # kind에서만: LoadBalancer를 ClusterIP로 (Service 타입 키 이름이 차트마다 다르다)
-    local extra=()
-    if [[ "$MODE" == kind ]]; then
-      case "$f" in
-        loki)  extra=(--set singleBinary.service.type=ClusterIP) ;;
-        tempo) extra=(--set service.type=ClusterIP) ;;
-      esac
-    fi
     echo "== 차트 ($f)"
     # shellcheck disable=SC2086
-    helm upgrade --install "$f" $c -n "$NS" -f "$D/values/$f.yaml" ${extra[@]+"${extra[@]}"} --wait --timeout 8m
+    helm upgrade --install "$f" $c -n "$NS" -f "$D/values/$f.yaml" --wait --timeout 8m
   done
   # 여기까지는 Secret 없이 뜬다(수집 · 저장은 이미 시작). Alertmanager · Grafana는 Secret이 있어야 한다
   ensure_secrets

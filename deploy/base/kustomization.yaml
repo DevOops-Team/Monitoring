@@ -9,6 +9,7 @@ resources:
   - mimir/service.yaml
   - prometheus-agent/rbac.yaml
   - prometheus-agent/statefulset.yaml
+  - external/services.yaml
 configMapGenerator:
   # 설정 파일은 이름 끝에 해시가 붙어, 내용이 바뀌면 Pod가 자동으로 다시 뜬다
   - name: mimir-config
