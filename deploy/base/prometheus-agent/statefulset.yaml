@@ -1,0 +1,68 @@
+# Agent는 저장하지 않지만 WAL(보내기 전 버퍼)은 재시작에도 남아야 하므로 PVC를 가진 StatefulSet으로 둔다
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prometheus-agent
+  labels:
+    app.kubernetes.io/name: prometheus-agent
+spec:
+  serviceName: prometheus-agent
+  replicas: 1                        # 3노드 확장 때 2 (__replica__ a/b + Mimir HA tracker)
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus-agent
+    spec:
+      serviceAccountName: prometheus-agent
+      securityContext:
+        fsGroup: 65534               # prom/prometheus 이미지의 nobody
+        runAsUser: 65534
+        runAsNonRoot: true
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.15.1
+          args:
+            - --agent
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.agent.path=/prometheus
+            - --web.enable-lifecycle
+          ports:
+            - {name: http, containerPort: 9090}
+          readinessProbe:
+            httpGet: {path: /-/ready, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 768Mi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus}
+            - {name: wal, mountPath: /prometheus}
+      volumes:
+        - name: config
+          configMap: {name: prometheus-agent-config}
+  volumeClaimTemplates:
+    - metadata:
+        name: wal
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 2Gi
+---
+# StatefulSet이 요구하는 헤드리스 서비스. Agent UI(대상 상태 확인)는 kubectl port-forward svc/prometheus-agent 9090
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-agent
+  labels:
+    app.kubernetes.io/name: prometheus-agent
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: prometheus-agent
+  ports:
+    - {name: http, port: 9090, targetPort: http}

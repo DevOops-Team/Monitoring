@@ -1,0 +1,5 @@
+# 모니터링 노드 3대의 OS 지표. hostNetwork·hostPID·루트 파일시스템 마운트는 차트 기본값(= compose 때 설정과 같음)
+fullnameOverride: node-exporter
+resources:
+  requests: {cpu: 20m, memory: 32Mi}
+  limits: {memory: 96Mi}

@@ -1,0 +1,45 @@
+# 모니터링 클러스터 자기 감시 (MON-STD-22). compose/prometheus/rules/self.yml을 옮긴 것.
+# 워커 지표 룰은 Agent가 붙은 뒤 별도 파일로. Mimir ruler가 평가해 Alertmanager로 보낸다
+groups:
+  - name: monitoring-self
+    rules:
+      # 항상 발화하는 데드맨 스위치. Alertmanager가 healthchecks.io로 1분마다 전달,
+      # 끊기면(Agent·Mimir·Alertmanager·클러스터·인터넷 중 하나라도 죽음) healthchecks.io가 Slack에 알림
+      - alert: Watchdog
+        expr: vector(1)
+        labels:
+          severity: none
+        annotations:
+          summary: 모니터링 파이프라인 생존 신호 (항상 발화가 정상)
+          standard: MON-STD-22
+
+      - alert: MonitoringNodeDiskWarning
+        expr: >
+          1 - node_filesystem_avail_bytes{job="node-exporter", mountpoint="/"}
+            / node_filesystem_size_bytes{job="node-exporter", mountpoint="/"} > 0.80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '모니터링 노드 {{ $labels.node }} 루트 디스크 80% 초과'
+          standard: MON-STD-22
+
+      - alert: MonitoringNodeDiskCritical
+        expr: >
+          1 - node_filesystem_avail_bytes{job="node-exporter", mountpoint="/"}
+            / node_filesystem_size_bytes{job="node-exporter", mountpoint="/"} > 0.90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: '모니터링 노드 {{ $labels.node }} 루트 디스크 90% 초과. Mimir·Loki PVC와 보존 설정 확인'
+          standard: MON-STD-22
+
+      - alert: MonitoringTargetDown
+        expr: up == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '스크레이프 대상 다운: {{ $labels.job }} {{ $labels.instance }}'
+          standard: MON-STD-22

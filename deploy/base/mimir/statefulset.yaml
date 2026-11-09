@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mimir
+  labels:
+    app.kubernetes.io/name: mimir
+spec:
+  serviceName: mimir-headless
+  replicas: 1                        # 3노드 확장 때 3 (mimir.yaml의 replication_factor와 함께)
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mimir
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: mimir
+    spec:
+      securityContext:
+        fsGroup: 10001               # mimir 이미지의 실행 계정. PVC를 쓸 수 있게
+        runAsUser: 10001
+        runAsNonRoot: true
+      terminationGracePeriodSeconds: 120   # 종료 때 ingester가 WAL을 블록으로 내려쓸 시간
+      containers:
+        - name: mimir
+          image: grafana/mimir:3.2.4
+          args:
+            - -config.file=/etc/mimir/mimir.yaml
+          ports:
+            - {name: http, containerPort: 9009}
+            - {name: grpc, containerPort: 9095}
+            - {name: gossip, containerPort: 7946}
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 200m, memory: 1Gi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: config, mountPath: /etc/mimir/mimir.yaml, subPath: mimir.yaml}
+            - {name: rules, mountPath: /etc/mimir/rules/anonymous}   # 테넌트 anonymous의 룰 디렉터리
+            - {name: data, mountPath: /data}
+      volumes:
+        - name: config
+          configMap: {name: mimir-config}
+        - name: rules
+          configMap: {name: mimir-rules}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: [ReadWriteOnce]
+        storageClassName: local-path
+        resources:
+          requests:
+            storage: 10Gi

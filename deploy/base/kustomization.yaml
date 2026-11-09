@@ -1,0 +1,22 @@
+# 자체 매니페스트(Mimir · Prometheus Agent). 적용: kubectl apply -k deploy/base
+# 공식 차트를 쓰는 것(Alertmanager · Grafana · node-exporter · Loki · Tempo)은 deploy/values/
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - namespace.yaml
+  - mimir/statefulset.yaml
+  - mimir/service.yaml
+  - prometheus-agent/rbac.yaml
+  - prometheus-agent/statefulset.yaml
+configMapGenerator:
+  # 설정 파일은 이름 끝에 해시가 붙어, 내용이 바뀌면 Pod가 자동으로 다시 뜬다
+  - name: mimir-config
+    files: [mimir/mimir.yaml]
+  - name: prometheus-agent-config
+    files: [prometheus-agent/prometheus.yml]
+  # 룰은 해시를 붙이지 않는다: Mimir ruler가 1분마다 디렉터리를 다시 읽으므로 재시작 없이 반영
+  - name: mimir-rules
+    files: [mimir/rules/self.yml]
+    options:
+      disableNameSuffixHash: true
