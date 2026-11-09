@@ -81,10 +81,10 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `promtool check config`가 토큰 파일 없다고 실패 | lint 컨테이너엔 ServiceAccount 토큰이 없음 | lint 때 빈 파일 마운트 |
 | 차트 다운로드 504, "chart is deprecated" | GitHub 릴리스 불안정, grafana 차트 레포 이전 | `CHART_CACHE`, `grafana-community` |
 
-## 보안 메모 (결정 필요한 것 포함)
+## 보안 메모 (11/09 결정 반영)
 
-- **저장소 API에 인증이 없다.** `172.30.0.35`의 Mimir(9009: push · 조회 · 룰) · Loki(3100) · Tempo(4317/4318) · Alertmanager(9093)는 LAN 172.30.0.0/24와 사이트 간 VPN 뒤에 있다는 전제로 열려 있다. 그 망에 닿는 누구나 지표 · 로그를 넣거나 읽을 수 있다. 줄인 것: Loki 삭제 API 끔, gRPC · 조회 · jaeger 포트는 밖에 안 냄, blackbox는 ICMP만 · ClusterIP. 남은 선택지: ① 현 상태 유지(실습망) ② pfSense에서 VPN 쪽 출발지를 EKS 대역으로 제한 ③ NetworkPolicy(Calico)로 출발지 제한 ④ 앞단 프록시에 basic auth. 워커 Agent · 게이트웨이를 붙이기 전에 정한다
-- **kubelet TLS 검증 생략**(`insecure_skip_verify`): kubelet 서버 인증서가 노드별 자체 서명이라 클러스터 CA로 검증할 수 없다. 고치려면 IaC inventory에 `kubelet_rotate_server_certificates: true`(+ CSR 승인자)를 넣고 Kubespray를 다시 돌린 뒤 `ca_file`로 바꾼다. API 서버 proxy 경유는 `nodes/proxy` 권한이 필요해 더 넓어서 쓰지 않는다
+- **저장소 API에 인증이 없다.** `172.30.0.35`의 Mimir(9009: push · 조회 · 룰) · Loki(3100) · Tempo(4317/4318) · Alertmanager(9093)는 LAN 172.30.0.0/24와 사이트 간 VPN 뒤에 있다는 전제로 열려 있다. 그 망에 닿는 누구나 지표 · 로그를 넣거나 읽을 수 있다. 줄인 것: Loki 삭제 API 끔, gRPC · 조회 · jaeger 포트는 밖에 안 냄, blackbox는 ICMP만 · ClusterIP. **결정(11/09): 현 상태 유지.** 망에 닿는 것은 팀원 6명과 우리 AWS 계정뿐이고, 분류기 라우트는 `pipeline=failover` 라벨이 붙은 알람만 받게 할 예정이라(분류기를 올릴 때 추가) 라벨 없는 테스트 알람은 복구로 이어지지 않는다. 운영 환경이라면 pfSense에서 VPN 쪽 출발지 제한, NetworkPolicy, 앞단 프록시 인증 중 하나가 필요하다(하지 않음)
+- **kubelet TLS 검증 생략**(`insecure_skip_verify`): kubelet 서버 인증서가 노드별 자체 서명이라 클러스터 CA로 검증할 수 없다. **결정(11/09): 그대로 둔다**(실습망에서 위험이 낮고 Agent 토큰은 읽기 전용). 고치는 방법은 IaC inventory에 `kubelet_rotate_server_certificates: true`(+ CSR 승인자)를 넣고 Kubespray를 다시 돌린 뒤 `ca_file`로 바꾸는 것이다. API 서버 proxy 경유는 `nodes/proxy` 권한이 필요해 더 넓어서 쓰지 않는다
 - Agent의 RBAC는 읽기 전용(nodes · nodes/metrics · services · pods · endpointslices). `nodes/proxy` · secrets 없음
 - Secret 값은 레포 · 셸 기록에 남기지 않는다(`create-secrets.sh`의 `read -s`)
 

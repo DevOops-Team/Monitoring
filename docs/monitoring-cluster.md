@@ -98,4 +98,4 @@ export ANSIBLE_HOST_KEY_CHECKING=True ANSIBLE_SSH_ARGS='-o ControlMaster=auto -o
 2. ArgoCD 원격 등록(노찬경, 후순위): server `https://172.30.0.30:6443`
 3. Monitoring 레포 `ansible/` roles(node_exporter · fluent_bit) → Proxmox 호스트 · Kafka/DB VM
 4. VIP 전환 시간 측정(다음 노드 재부팅 때 1초 간격 probe) → 4.1절에 추가
-5. kubelet serving 인증서를 클러스터 CA로(IaC `kubelet_rotate_server_certificates`) → Agent의 `insecure_skip_verify` 제거
+5. ~~kubelet serving 인증서를 클러스터 CA로~~ → 11/09 하지 않기로 결정(`deploy/README.md` 보안 메모)
