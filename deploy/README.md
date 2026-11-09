@@ -13,8 +13,8 @@ ADR-18 1단계 상태: 저장소는 **복제 1 · PVC filesystem**. 3노드 복�
 | Prometheus Agent v3.15.1 (스크레이프 → Mimir) | `base/prometheus-agent/` | 1 | 2Gi (WAL) | monitoring1 | `prometheus-agent:9090` | - |
 | Loki 3.7.9 | Helm `grafana-community/loki` | 1 | 10Gi | monitoring2 | `loki.monitoring.svc:3100` | `172.30.0.35:3100` |
 | Tempo 3.1.1 | Helm `grafana-community/tempo` | 1 | 5Gi | monitoring1 | `tempo.monitoring.svc:3200`(조회) | `172.30.0.35:4317` · `:4318` (OTLP만) |
-| Alertmanager v0.34.2 | Helm `prometheus-community/alertmanager` | 1 | 1Gi | Secret 뒤 | `alertmanager.monitoring.svc:9093` | `172.30.0.35:9093` |
-| Grafana 13.3.0 | Helm `grafana-community/grafana` | 1 | 2Gi | Secret 뒤 | `grafana.monitoring.svc:3000` | `http://172.30.0.35:3000` |
+| Alertmanager v0.34.2 | Helm `prometheus-community/alertmanager` | 1 | 1Gi | monitoring2 | `alertmanager.monitoring.svc:9093` | `172.30.0.35:9093` |
+| Grafana 13.3.0 | Helm `grafana-community/grafana` | 1 | 2Gi | monitoring2 | `grafana.monitoring.svc:3000` | `http://172.30.0.35:3000` |
 | node-exporter 1.12.1 | Helm | 노드마다 | - | 3대 | - | - |
 | blackbox_exporter v0.29.1 | Helm | 1 | - | monitoring2 | `blackbox-exporter:9115` | - |
 
