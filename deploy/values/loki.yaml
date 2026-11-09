@@ -1,0 +1,69 @@
+# Loki 모놀리식 단일 복제(ADR-18 1단계). 저장은 PVC filesystem, S3 버킷이 생기면 storage.type만 바꾼다.
+# 3노드 확장 때 바꿀 값: singleBinary.replicas 1 → 3, commonConfig.replication_factor 1 → 3 (그때는 오브젝트 스토리지 필수)
+fullnameOverride: loki
+deploymentMode: Monolithic
+
+loki:
+  auth_enabled: false            # 테넌트 하나
+  commonConfig:
+    replication_factor: 1
+  storage:
+    type: filesystem
+  schemaConfig:
+    configs:
+      - from: "2026-11-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+  limits_config:
+    retention_period: 720h       # 30일 (ADR-18)
+  compactor:
+    retention_enabled: true
+    delete_request_store: filesystem
+  # LogQL 알람(Xid · CUDA error · NCCL timeout)은 뒤에 추가. 보낼 곳만 미리 연결
+  rulerConfig:
+    alertmanager_url: http://alertmanager.monitoring.svc.cluster.local:9093
+
+singleBinary:
+  replicas: 1
+  persistence:
+    enabled: true
+    storageClass: local-path
+    size: 10Gi
+  resources:
+    requests: {cpu: 100m, memory: 512Mi}
+    limits: {memory: 1536Mi}
+  # 클러스터 밖 주소 172.30.0.35:3100 (워커·관리 클러스터 OTel 게이트웨이의 로그 push)
+  service:
+    type: LoadBalancer
+    annotations:
+      kube-vip.io/loadbalancerIPs: "172.30.0.35"
+
+# 모놀리식만 쓴다. 차트 기본은 simple scalable 구성요소(write · read · backend)도 복제 수가 있어 0으로 내린다
+write:
+  replicas: 0
+read:
+  replicas: 0
+backend:
+  replicas: 0
+
+# 이 규모에 필요 없는 부속을 끈다: 앞단 nginx, memcached 2종, 자기 시험용 canary, helm test, 룰 사이드카
+gateway:
+  enabled: false
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+lokiCanary:
+  enabled: false
+test:
+  enabled: false
+sidecar:
+  rules:
+    enabled: false
+# 클러스터 범위 RBAC를 만들지 않는다(룰 사이드카를 껐으므로 필요 없음)
+rbac:
+  namespaced: true

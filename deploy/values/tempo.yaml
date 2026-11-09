@@ -1,0 +1,21 @@
+# Tempo 단일 바이너리(ADR-18 1단계). 저장은 PVC local, 수신은 OTLP만.
+fullnameOverride: tempo
+tempo:
+  reportingEnabled: false
+  retention: 720h                # 30일 (ADR-18)
+  # 수신은 차트 기본값 그대로(OTLP gRPC 4317 · HTTP 4318 + jaeger). 우리는 OTLP만 쓴다.
+  # jaeger를 values에서 지우면 차트의 포트 템플릿이 깨져(nil 참조) 그대로 둔다
+  resources:
+    requests: {cpu: 50m, memory: 256Mi}
+    limits: {memory: 768Mi}
+
+persistence:
+  enabled: true
+  storageClassName: local-path
+  size: 5Gi
+
+# 클러스터 밖 주소 172.30.0.35:4317 · :4318 (분류기 · 복구 컨트롤러 · OTel 게이트웨이의 span), 조회 API :3200
+service:
+  type: LoadBalancer
+  annotations:
+    kube-vip.io/loadbalancerIPs: "172.30.0.35"

@@ -130,7 +130,26 @@ SC
   # shellcheck disable=SC2046
   helm upgrade --install node-exporter $(chart prometheus-community/prometheus-node-exporter "$NODE_EXPORTER_CHART") \
     -n "$NS" -f "$D/values/node-exporter.yaml" --wait --timeout 5m
-  # 여기까지는 Secret 없이 뜬다(수집은 이미 시작). Alertmanager · Grafana는 Secret이 있어야 한다
+  for f in loki tempo blackbox; do
+    [[ -f "$D/values/$f.yaml" ]] || continue
+    case "$f" in
+      loki)     c="$(chart grafana-community/loki "$LOKI_CHART")" ;;
+      tempo)    c="$(chart grafana-community/tempo "$TEMPO_CHART")" ;;
+      blackbox) c="$(chart prometheus-community/prometheus-blackbox-exporter "$BLACKBOX_CHART")" ;;
+    esac
+    # kind에서만: LoadBalancer를 ClusterIP로 (Service 타입 키 이름이 차트마다 다르다)
+    local extra=()
+    if [[ "$MODE" == kind ]]; then
+      case "$f" in
+        loki)  extra=(--set singleBinary.service.type=ClusterIP) ;;
+        tempo) extra=(--set service.type=ClusterIP) ;;
+      esac
+    fi
+    echo "== 차트 ($f)"
+    # shellcheck disable=SC2086
+    helm upgrade --install "$f" $c -n "$NS" -f "$D/values/$f.yaml" ${extra[@]+"${extra[@]}"} --wait --timeout 8m
+  done
+  # 여기까지는 Secret 없이 뜬다(수집 · 저장은 이미 시작). Alertmanager · Grafana는 Secret이 있어야 한다
   ensure_secrets
   echo "== 차트 (Alertmanager · Grafana)"
   # shellcheck disable=SC2046
@@ -139,17 +158,6 @@ SC
   # shellcheck disable=SC2046
   helm upgrade --install grafana $(chart grafana-community/grafana "$GRAFANA_CHART") \
     -n "$NS" -f "$D/values/grafana.yaml" ${svc_override[@]+"${svc_override[@]}"} --wait --timeout 8m
-  for f in loki tempo blackbox; do
-    [[ -f "$D/values/$f.yaml" ]] || continue
-    case "$f" in
-      loki)     c="$(chart grafana-community/loki "$LOKI_CHART")" ;;
-      tempo)    c="$(chart grafana-community/tempo "$TEMPO_CHART")" ;;
-      blackbox) c="$(chart prometheus-community/prometheus-blackbox-exporter "$BLACKBOX_CHART")" ;;
-    esac
-    echo "== 차트 ($f)"
-    # shellcheck disable=SC2086
-    helm upgrade --install "$f" $c -n "$NS" -f "$D/values/$f.yaml" --wait --timeout 8m
-  done
   echo "== 롤아웃 대기"
   kubectl -n "$NS" rollout status statefulset/mimir --timeout=5m
   kubectl -n "$NS" rollout status statefulset/prometheus-agent --timeout=5m

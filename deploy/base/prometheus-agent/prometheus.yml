@@ -73,6 +73,37 @@ scrape_configs:
       - targets: ["grafana.monitoring.svc.cluster.local:3000"]
         labels: {cluster: monitoring}
 
+  - job_name: loki
+    static_configs:
+      - targets: ["loki.monitoring.svc.cluster.local:3100"]
+        labels: {cluster: monitoring}
+
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo.monitoring.svc.cluster.local:3200"]
+        labels: {cluster: monitoring}
+
+  - job_name: blackbox-exporter
+    static_configs:
+      - targets: ["blackbox-exporter.monitoring.svc.cluster.local:9115"]
+        labels: {cluster: monitoring}
+
+  # --- 밖에서 찔러 보기 (blackbox_exporter 경유). 대상 주소가 instance 라벨이 된다 ---
+  # pfSense LAN 게이트웨이와 인터넷(공인 DNS). VPN 터널 · 워커 쪽은 AWS 재구축 뒤 대상만 추가
+  - job_name: blackbox-icmp
+    metrics_path: /probe
+    params:
+      module: [icmp]
+    static_configs:
+      - targets: ["172.30.0.1"]
+        labels: {target_name: pfsense-lan}
+      - targets: ["1.1.1.1"]
+        labels: {target_name: internet}
+    relabel_configs:
+      - {source_labels: [__address__], target_label: __param_target}
+      - {source_labels: [__param_target], target_label: instance}
+      - {target_label: __address__, replacement: "blackbox-exporter.monitoring.svc.cluster.local:9115"}
+
   # --- LAN 서버 (compose/prometheus/prometheus.yml에서 그대로 옮김) ---
   # Proxmox 호스트 5대 (하드웨어 층). 호스트 OS에 직접 설치된 node-exporter를 LAN에서 긁음
   - job_name: pve-host

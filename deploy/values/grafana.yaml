@@ -63,6 +63,21 @@ datasources:
         jsonData:
           implementation: prometheus
         editable: false
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki.monitoring.svc.cluster.local:3100
+        editable: false
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.monitoring.svc.cluster.local:3200
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki   # trace에서 같은 시각의 로그로 건너가기
+        editable: false
       # 데이터 파트 PostgreSQL (현수, 172.30.0.50). Job 대장 · 장애 사건 · 측정 이벤트 조회용 읽기 전용 계정
       - name: PostgreSQL
         uid: postgres
