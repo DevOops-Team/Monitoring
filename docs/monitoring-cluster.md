@@ -70,7 +70,8 @@ export ANSIBLE_HOST_KEY_CHECKING=True ANSIBLE_SSH_ARGS='-o ControlMaster=auto -o
 
 ## 5. 다음
 
-1. Helm 이전 계획(plan mode): `deploy/`에 compose 5개 + Mimir · Loki · Tempo replicas 1, StorageClass(local-path) 결정, 서비스 VIP .35 공유 설정, kind 단일 노드 검증
-2. ArgoCD 원격 등록(노찬경): server `https://172.30.0.30:6443`
-3. Monitoring 레포 `ansible/` roles(node_exporter · fluent_bit) → monitoring1~3 포함
+1. ~~Helm 이전~~ → 11/09 완료(복제 1). 스택 구성 · 적용 · 확인은 [`deploy/README.md`](../deploy/README.md). StorageClass `local-path`(기본)도 그때 설치. 서비스 VIP는 Mimir 9009 · Loki 3100 · Tempo 4317/4318 · Alertmanager 9093 · Grafana 3000이 공유
+2. ArgoCD 원격 등록(노찬경, 후순위): server `https://172.30.0.30:6443`
+3. Monitoring 레포 `ansible/` roles(node_exporter · fluent_bit) → Proxmox 호스트 · Kafka/DB VM
 4. ssd=1 재부팅 때 VIP 전환 시간 측정 → 이 문서 4절에 추가
+5. kubelet serving 인증서를 클러스터 CA로(IaC `kubelet_rotate_server_certificates`) → Agent의 `insecure_skip_verify` 제거

@@ -100,7 +100,7 @@
 
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
-| MON-STD-22 | 모니터링 VM | 디스크 (Loki · Tempo 로컬 30일 보존) · Alertmanager Watchdog 데드맨 수신 · 매니저 CronJob `/-/healthy` 프로브 | | | | 디스크 경고 80% · 위험 90% · Watchdog 미수신 5분 | 운영 경험 + 용량 계산 (6주 10GB 미만 추정) | 모니터링 VM 복구 런북 (부 담당이 재설치 가능하게) | 가설 |
+| MON-STD-22 | 모니터링 클러스터 (11/09 VM → k8s 3노드, ADR-18) | 노드 디스크 (Mimir · Loki · Tempo PVC, 30일 보존) `MonitoringNodeDisk*` · Alertmanager Watchdog 데드맨 수신 · 스크레이프 대상 `MonitoringTargetDown` · 매니저 CronJob 프로브 | | | | 디스크 경고 80% · 위험 90% · Watchdog 미수신 5분 | 운영 경험 + 용량 계산 (6주 10GB 미만 추정) | 모니터링 클러스터 복구 런북 `deploy/README.md` (부 담당이 재설치 가능하게) | 가설 |
 
 ### 4.9 플랫폼 SLO
 

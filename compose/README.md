@@ -1,5 +1,9 @@
 # 모니터링 VM 스택 (docker compose)
 
+> **2026-11-09 전환됨.** VM `monitoring`(172.30.0.30)은 삭제됐고 스택은 모니터링 k8s 3노드로 옮겼다(ADR-18).
+> 지금 쓰는 것은 [`deploy/README.md`](../deploy/README.md)와 [`docs/monitoring-cluster.md`](../docs/monitoring-cluster.md)다.
+> 이 폴더는 비교용으로 남겨 두었고, 새 스택이 안정된 뒤 지운다. 아래 내용은 옛 절차다.
+
 VM `monitoring` 172.30.0.30 (Ubuntu 24.04, 6 vCPU · 16GB · 200GB). 이 문서가 MON-STD-22 "모니터링 VM 복구 런북"의 초안이다. 부 담당이 이 절차만으로 재설치할 수 있어야 한다.
 
 ## 구성 (1차)
