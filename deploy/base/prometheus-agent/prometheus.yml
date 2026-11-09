@@ -15,7 +15,9 @@ scrape_configs:
         labels: {cluster: monitoring}
 
   # --- 이 클러스터 자신 ---
-  # kubelet: 노드마다 하나. 인증은 ServiceAccount 토큰, kubelet 서버 인증서가 자체 서명이라 검증은 건너뜀
+  # kubelet: 노드마다 하나. 인증은 ServiceAccount 토큰.
+  # kubelet 서버 인증서가 자체 서명이라 검증을 건너뛴다(insecure_skip_verify). 없애려면 IaC inventory에서
+  # kubelet serving 인증서를 클러스터 CA로 발급(kubelet_rotate_server_certificates + CSR 승인자)해야 한다 → 후속 과제
   - job_name: kubelet
     scheme: https
     kubernetes_sd_configs:

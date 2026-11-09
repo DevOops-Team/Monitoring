@@ -1,4 +1,6 @@
-# Agent가 kubernetes_sd로 노드·Pod·엔드포인트를 찾고 kubelet 지표를 읽기 위한 최소 권한(읽기만)
+# Agent가 kubernetes_sd로 노드·Pod·엔드포인트슬라이스를 찾고 kubelet 지표를 읽기 위한 최소 권한(읽기만).
+# nodes/proxy는 주지 않는다: kubelet API 전체를 API 서버 경유로 읽을 수 있는 넓은 권한이고,
+# Agent는 kubelet :10250/metrics 를 직접 긁으므로 nodes/metrics 면 충분하다
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -10,7 +12,7 @@ metadata:
   name: prometheus-agent
 rules:
   - apiGroups: [""]
-    resources: [nodes, nodes/metrics, nodes/proxy, services, endpoints, pods]
+    resources: [nodes, nodes/metrics, services, pods]
     verbs: [get, list, watch]
   - apiGroups: [discovery.k8s.io]
     resources: [endpointslices]
