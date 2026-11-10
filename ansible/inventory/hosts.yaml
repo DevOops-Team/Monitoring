@@ -1,0 +1,13 @@
+# Proxmox 호스트 5대 (Confluence "온프레 인프라 설정값"). 노트북 → Tailscale → LAN 172.30.0.0/24.
+# 계정은 Proxmox 기본 root, 비밀번호는 실행할 때 -k 로 매번 입력(키·NOPASSWD 안 둠, 11/09 결정과 같은 방식)
+all:
+  children:
+    pve_hosts:
+      hosts:
+        devoops: {ansible_host: 172.30.0.90}   # 데스크톱, master1 · worker1 · kafka1 · db
+        pve1:    {ansible_host: 172.30.0.91}   # master2 · worker2 · monitoring3
+        pve2:    {ansible_host: 172.30.0.92}   # master3 · worker3 · pfsense-standby
+        pve3:    {ansible_host: 172.30.0.93}   # monitoring1 · monitoring2 · kafka2
+        pve4:    {ansible_host: 172.30.0.94}   # pfsense · kafka3
+      vars:
+        ansible_user: root

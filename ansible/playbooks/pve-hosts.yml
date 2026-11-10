@@ -1,0 +1,10 @@
+---
+# Proxmox 호스트 5대의 모니터링 에이전트. root로 붙으므로 become 없음.
+#   cd ansible && ANSIBLE=~/gpu-failover/iac/ansible/.venv/bin/ansible-playbook
+#   $ANSIBLE playbooks/pve-hosts.yml -k --check --diff    # 먼저 바뀔 것만 보기
+#   $ANSIBLE playbooks/pve-hosts.yml -k                   # 적용
+- name: Proxmox 호스트 node-exporter 통일
+  hosts: pve_hosts
+  gather_facts: true
+  roles:
+    - node_exporter
