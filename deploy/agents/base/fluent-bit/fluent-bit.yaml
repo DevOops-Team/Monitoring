@@ -31,8 +31,12 @@ pipeline:
       mem_buf_limit: 16MB
       storage.type: filesystem
     # 커널 로그(Xid가 여기 찍힌다). journald cursor가 책갈피. 첫 기동은 꼬리부터(과거 전부를 쏟지 않게)
+    # path 필수: 없으면 libsystemd가 컨테이너 자기 machine-id 디렉토리(/var/log/journal/<id>)만 열어 호스트 저널을
+    # 못 보고 조용히 0건이 된다(11/10 관리 클러스터에서 systemd 입력 레코드 0으로 발견). path를 주면 디렉토리 전체를 읽는다.
+    # journald가 메모리 저장(Storage=volatile)인 노드는 overlay에서 /run/log/journal로 바꾼다
     - name: systemd
       tag: host.kernel
+      path: /var/log/journal
       systemd_filter: _TRANSPORT=kernel
       db: /var/lib/monitoring-agents/fluent-bit/systemd.db
       read_from_tail: on
