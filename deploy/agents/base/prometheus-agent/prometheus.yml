@@ -66,6 +66,11 @@ scrape_configs:
         regex: otel-gateway;metrics
         action: keep
       - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+    # 게이트웨이 자기 지표에 점 라벨(server.address · server.port)이 있음. Prometheus 3는 UTF-8 라벨을 통과시키지만
+    # Mimir는 400으로 거절하고, Agent는 400을 복구 불가로 보고 그 배치(2000샘플) 전체를 버린다 → 다른 지표까지 유실.
+    # 점 라벨은 exporter 라벨과 중복 정보라 여기서 떨어낸다 (11/10 관리 클러스터 첫 수집에서 발견)
+    metric_relabel_configs:
+      - {action: labeldrop, regex: '.+\..+'}
   - job_name: fluent-bit
     metrics_path: /api/v2/metrics/prometheus
     kubernetes_sd_configs:
@@ -89,6 +94,10 @@ scrape_configs:
       - source_labels: [__meta_kubernetes_pod_phase]
         regex: Running
         action: keep
+      # init 컨테이너도 타깃이 돼 같은 주소를 컨테이너 수만큼 긁는다(argocd haproxy Pod가 3번) → 제외
+      - source_labels: [__meta_kubernetes_pod_container_init]
+        regex: "true"
+        action: drop
       - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
         regex: (.+)
         target_label: __metrics_path__

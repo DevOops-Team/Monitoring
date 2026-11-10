@@ -100,7 +100,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | OTel Collector contrib 0.164.0 | Deployment ×1 | file_storage 큐 `otel-gateway/` | Loki `172.30.0.35:3100/otlp` · Tempo `172.30.0.35:4317` |
 
 - `base/`는 모든 클러스터 공통. 다른 것(cluster · site 이름, nodeSelector, 버퍼 디스크)만 `overlays/<클러스터>/`에서 patch. 클러스터 이름은 Deployment env `CLUSTER_NAME` · `SITE`로 들어가 Agent `external_labels` · 게이트웨이 `resource` 프로세서가 읽는다
-- 적용은 **ArgoCD**(K8s 레포 Application `gpu-monitoring-agents` → Monitoring main `deploy/agents/overlays/onprem`, automated). 이 스크립트는 kind만: `scripts/deploy-k8s.sh --agents-kind`(`kind create cluster --name agents-test` 뒤, 컨텍스트 kind-*만 허용). kind에서도 데이터는 실제 저장소로 간다(cluster 라벨 `kind-test`)
+- 적용은 **ArgoCD**(Gitops 레포 Application `gpu-monitoring-agents` → Monitoring main `deploy/agents/overlays/onprem`, automated). 이 스크립트는 kind만: `scripts/deploy-k8s.sh --agents-kind`(`kind create cluster --name agents-test` 뒤, 컨텍스트 kind-*만 허용). kind에서도 데이터는 실제 저장소로 간다(cluster 라벨 `kind-test`)
 - lint(`--lint-only`)가 수집 층도 본다: promtool(Agent 설정) · `fluent-bit --dry-run` · `otelcol-contrib validate` · overlay 렌더
 - Loki 라벨 이름은 `cluster`가 아니라 **`k8s_cluster_name`**(OTel 리소스 속성 `k8s.cluster.name`을 Loki가 그대로 인덱싱). 함께 라벨이 되는 것: `k8s_namespace_name` · `k8s_pod_name` · `k8s_container_name` · `service_name`(= 컨테이너 이름, 커널 로그는 `kernel`). `k8s_node_name` · `site` · `stream`은 structured metadata
 
