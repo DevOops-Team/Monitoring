@@ -1,0 +1,82 @@
+# Fluent Bit 설정(YAML 형식). 입력 2개 → kubernetes 필터 → OTLP 출력(게이트웨이). 어느 클러스터에서나 같은 파일
+service:
+  flush: 1
+  log_level: warn                  # info면 OTLP 출력이 매초 'HTTP status=200'을 찍어 자기 로그가 Loki를 채운다
+  http_server: on                  # :2020 상태 · 지표
+  http_listen: 0.0.0.0
+  http_port: 2020
+  health_check: on                 # /api/v1/health: 출력 오류 · 재시도 실패가 계속되면 unhealthy
+  hc_errors_count: 5
+  hc_retry_failure_count: 5
+  hc_period: 60
+  storage.path: /var/lib/monitoring-agents/fluent-bit/storage   # 미전송 청크를 디스크에(게이트웨이가 죽어 있는 동안)
+  storage.sync: normal
+  storage.checksum: off
+  storage.max_chunks_up: 64
+  storage.backlog.mem_limit: 16M
+  storage.metrics: on
+
+pipeline:
+  inputs:
+    # 컨테이너 로그. /var/log/containers/<pod>_<ns>_<container>-<id>.log → /var/log/pods/... 심볼릭 링크.
+    # cri 멀티라인 파서(내장)가 "시각 stream 태그 본문" 형식을 풀고 긴 줄을 이어 붙인다
+    - name: tail
+      tag: kube.*
+      path: /var/log/containers/*.log
+      multiline.parser: cri
+      db: /var/lib/monitoring-agents/fluent-bit/tail-containers.db   # 책갈피: 파일마다 읽은 위치
+      db.sync: normal
+      skip_long_lines: on
+      refresh_interval: 10
+      mem_buf_limit: 16MB
+      storage.type: filesystem
+    # 커널 로그(Xid가 여기 찍힌다). journald cursor가 책갈피. 첫 기동은 꼬리부터(과거 전부를 쏟지 않게)
+    - name: systemd
+      tag: host.kernel
+      systemd_filter: _TRANSPORT=kernel
+      db: /var/lib/monitoring-agents/fluent-bit/systemd.db
+      read_from_tail: on
+      strip_underscores: off
+      storage.type: filesystem
+
+  filters:
+    # Pod 메타데이터(namespace_name · pod_name · container_name · host)를 record의 kubernetes 키에 붙인다.
+    # 라벨 · 어노테이션은 안 붙인다(용량). 본문(log)은 그대로(merge_log off): JSON 풀기는 조회 때 LogQL로
+    - name: kubernetes
+      match: kube.*
+      kube_tag_prefix: kube.var.log.containers.
+      merge_log: off
+      keep_log: on
+      labels: off
+      annotations: off
+      buffer_size: 0
+      k8s-logging.parser: off
+      k8s-logging.exclude: off
+
+  outputs:
+    # 게이트웨이로 OTLP/HTTP. logs_body_key = 본문이 되는 키, 나머지 키(kubernetes 맵 등)는 로그 속성으로 → 게이트웨이가 리소스 속성으로 올린다.
+    # 게이트웨이가 죽어 있으면 storage.path에 쌓고 무한 재시도(총량 상한 1G)
+    - name: opentelemetry
+      match: kube.*
+      host: otel-gateway
+      port: 4318
+      logs_uri: /v1/logs
+      tls: off
+      http2: off
+      logs_body_key: log
+      logs_body_key_attributes: true
+      log_response_payload: false
+      retry_limit: no_limits
+      storage.total_limit_size: 1G
+    - name: opentelemetry
+      match: host.*
+      host: otel-gateway
+      port: 4318
+      logs_uri: /v1/logs
+      tls: off
+      http2: off
+      logs_body_key: MESSAGE
+      logs_body_key_attributes: true
+      log_response_payload: false
+      retry_limit: no_limits
+      storage.total_limit_size: 1G

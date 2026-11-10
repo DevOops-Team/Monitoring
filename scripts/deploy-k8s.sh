@@ -52,6 +52,11 @@ lint() {
     -v "$tmp/token:/var/run/secrets/kubernetes.io/serviceaccount/token:ro" \
     -e CLUSTER_NAME=lint -e SITE=lint \
     --entrypoint promtool "$PROMETHEUS_IMAGE" check config --agent /etc/prometheus/prometheus.yml
+  docker run --rm -v "$D/agents/base/fluent-bit/fluent-bit.yaml:/fluent-bit/etc/conf/fluent-bit.yaml:ro" \
+    "$FLUENT_BIT_IMAGE" -c /fluent-bit/etc/conf/fluent-bit.yaml --dry-run
+  docker run --rm -v "$D/agents/base/otel-gateway/config.yaml:/etc/otel/config.yaml:ro" \
+    -e CLUSTER_NAME=lint -e SITE=lint \
+    "$OTEL_COLLECTOR_IMAGE" validate --config=/etc/otel/config.yaml
   for o in "$D"/agents/overlays/*/; do
     kubectl kustomize "$o" > "$tmp/agents-$(basename "$o").yaml"
     echo "   overlays/$(basename "$o"): 리소스 $(grep -c '^kind:' "$tmp/agents-$(basename "$o").yaml")개"
@@ -171,9 +176,10 @@ SC
 apply_agents_kind() {
   echo "== 수집 층 → kind (overlays/kind)"
   kubectl apply -k "$D/agents/overlays/kind"
-  for d in kube-state-metrics prometheus-agent; do
+  for d in kube-state-metrics prometheus-agent otel-gateway; do
     kubectl -n "$NS" rollout status deployment/"$d" --timeout=3m
   done
+  kubectl -n "$NS" rollout status daemonset/fluent-bit --timeout=3m
   kubectl -n "$NS" get pods
 }
 

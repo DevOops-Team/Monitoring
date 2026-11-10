@@ -1,0 +1,91 @@
+# OTel Collector 게이트웨이. 받는 것: Fluent Bit 로그(OTLP/HTTP) · 앱 span(SDK → OTLP gRPC/HTTP).
+# 보내는 것: 로그 → Loki OTLP, 트레이스 → Tempo OTLP. 둘 다 저장소가 죽어 있으면 file_storage(hostPath) 영속 큐에 쌓고 무한 재시도.
+# 어느 클러스터에서나 같은 파일: 클러스터 이름은 env(CLUSTER_NAME · SITE, overlay가 정함)
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+  file_storage:
+    directory: /var/lib/otel-gateway
+    create_directory: true     # Pod에선 hostPath가 이미 있다. lint(컨테이너 단독 실행)에서 필요
+    timeout: 10s
+
+receivers:
+  otlp:
+    protocols:
+      grpc: {endpoint: 0.0.0.0:4317}
+      http: {endpoint: 0.0.0.0:4318}
+
+processors:
+  # 메모리 상한 안에서만 받는다(넘치면 거절 → Fluent Bit · SDK가 재시도). 컨테이너 limit 256Mi 기준
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 192
+    spike_limit_mib: 48
+  # 모든 신호에 클러스터 이름. Loki는 k8s.cluster.name을 라벨(k8s_cluster_name)로 인덱싱한다
+  resource:
+    attributes:
+      - {key: k8s.cluster.name, value: "${env:CLUSTER_NAME}", action: upsert}
+      - {key: site, value: "${env:SITE}", action: upsert}
+  # Fluent Bit이 로그 속성으로 보낸 kubernetes 맵 · journald 필드를 OTel 리소스 속성(k8s.namespace.name 등)으로 올린다.
+  # Loki가 라벨로 쓰는 것은 리소스 속성 중 기본 목록(service.name · k8s.namespace.name · k8s.pod.name · k8s.container.name …)뿐이라서
+  transform/fluent-bit:
+    log_statements:
+      - context: log
+        statements:
+          - set(resource.attributes["k8s.namespace.name"], attributes["kubernetes"]["namespace_name"]) where attributes["kubernetes"] != nil
+          - set(resource.attributes["k8s.pod.name"], attributes["kubernetes"]["pod_name"]) where attributes["kubernetes"] != nil
+          - set(resource.attributes["k8s.container.name"], attributes["kubernetes"]["container_name"]) where attributes["kubernetes"] != nil
+          - set(resource.attributes["k8s.node.name"], attributes["kubernetes"]["host"]) where attributes["kubernetes"] != nil
+          - set(resource.attributes["service.name"], attributes["kubernetes"]["container_name"]) where attributes["kubernetes"] != nil
+          - delete_key(attributes, "kubernetes") where attributes["kubernetes"] != nil
+          - delete_key(attributes, "time") where attributes["time"] != nil      # cri 파서 잔여물: 타임스탬프와 중복
+          - delete_key(attributes, "_p") where attributes["_p"] != nil          # cri 부분 줄 표시(F/P). 멀티라인 파서가 이미 합쳤다
+          - set(resource.attributes["k8s.node.name"], attributes["_HOSTNAME"]) where attributes["_TRANSPORT"] == "kernel"
+          - set(resource.attributes["service.name"], "kernel") where attributes["_TRANSPORT"] == "kernel"
+  batch:
+    timeout: 5s
+    send_batch_size: 1024
+
+exporters:
+  otlp_http/loki:
+    endpoint: http://172.30.0.35:3100/otlp     # Loki OTLP 수신(auth_enabled false, 테넌트 없음). /v1/logs는 exporter가 붙인다
+    sending_queue:
+      enabled: true
+      storage: file_storage                    # 디스크 큐: 재시작해도 남고, Loki가 죽어 있는 동안 쌓인다
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 0                      # 0 = 포기하지 않는다(큐가 찰 때까지)
+  otlp_grpc/tempo:
+    endpoint: 172.30.0.35:4317                 # Tempo OTLP gRPC
+    tls: {insecure: true}
+    sending_queue:
+      enabled: true
+      storage: file_storage
+      queue_size: 5000
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 0
+
+service:
+  extensions: [health_check, file_storage]
+  telemetry:
+    metrics:
+      level: normal
+      readers:
+        - pull:
+            exporter:
+              prometheus: {host: 0.0.0.0, port: 8888}   # 자체 지표(큐 길이 · 전송 실패), Agent가 긁는다
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/fluent-bit, resource, batch]
+      exporters: [otlp_http/loki]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, batch]
+      exporters: [otlp_grpc/tempo]

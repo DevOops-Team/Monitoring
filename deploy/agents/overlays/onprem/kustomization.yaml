@@ -24,3 +24,16 @@ patches:
                 env:
                   - {name: CLUSTER_NAME, value: onprem-manager}   # 노드 라벨 platform-cluster와 같은 값
                   - {name: SITE, value: onprem}
+  - target: {kind: Deployment, name: otel-gateway}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: otel-gateway}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: otel-collector
+                env:
+                  - {name: CLUSTER_NAME, value: onprem-manager}
+                  - {name: SITE, value: onprem}

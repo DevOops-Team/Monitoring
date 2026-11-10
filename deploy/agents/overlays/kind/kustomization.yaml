@@ -19,3 +19,16 @@ patches:
                 env:
                   - {name: CLUSTER_NAME, value: kind-test}
                   - {name: SITE, value: laptop}
+  - target: {kind: Deployment, name: otel-gateway}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: otel-gateway}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: otel-collector
+                env:
+                  - {name: CLUSTER_NAME, value: kind-test}
+                  - {name: SITE, value: laptop}

@@ -56,6 +56,27 @@ scrape_configs:
         regex: kube-state-metrics;http-metrics
         action: keep
 
+  # 수집 층 자신의 지표: 게이트웨이(큐 길이 · 전송 실패 otelcol_exporter_*) · Fluent Bit(입력 · 출력 · 재시도 fluentbit_*)
+  - job_name: otel-gateway
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_name]
+        regex: otel-gateway;metrics
+        action: keep
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+  - job_name: fluent-bit
+    metrics_path: /api/v2/metrics/prometheus
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_name]
+        regex: fluent-bit;http
+        action: keep
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+
   # 어노테이션으로 노출을 선언한 Pod(prometheus.io/scrape · port · path). 학습 Job trainer :8000(training-metrics.md) 등.
   # 포트는 어노테이션 값으로 바꿔 끼운다(컨테이너가 여러 포트를 열어도 하나만 긁는다)
   - job_name: annotated-pods
