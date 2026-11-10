@@ -1,0 +1,60 @@
+---
+# apt 캐시 갱신은 하지 않는다: Proxmox enterprise 저장소가 구독 없이 401을 내 apt update가 실패한다(11/02 pve4).
+# 패키지는 5대 모두 이미 1.9.0이 깔려 있어 present 확인만 한다. 새 호스트면 먼저 enterprise → no-subscription 저장소로 바꾼 뒤 돌린다
+- name: node-exporter 패키지 확인
+  ansible.builtin.apt:
+    name: prometheus-node-exporter
+    state: present
+    update_cache: false
+
+- name: textfile 수집기 패키지 제거 (타이머 포함)
+  ansible.builtin.apt:
+    name: prometheus-node-exporter-collectors
+    state: absent
+    purge: true
+  when: node_exporter_remove_collectors
+
+# 패키지를 지워도 타이머가 써 둔 *.prom은 남아 textfile collector가 계속 읽는다 → 같이 지운다
+- name: 남은 textfile 출력 찾기
+  ansible.builtin.find:
+    paths: "{{ node_exporter_textfile_dir }}"
+    patterns: "*.prom"
+  register: node_exporter_prom_files
+  when: node_exporter_remove_collectors
+
+- name: 남은 textfile 출력 삭제
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ node_exporter_prom_files.files | default([]) }}"
+  loop_control: {label: "{{ item.path }}"}
+  when: node_exporter_remove_collectors
+
+- name: 기동 인자 통일 (/etc/default/prometheus-node-exporter)
+  ansible.builtin.template:
+    src: default.j2
+    dest: /etc/default/prometheus-node-exporter
+    owner: root
+    group: root
+    mode: "0644"
+  notify: node-exporter 재시작
+
+- name: 서비스 켜짐 · 기동
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    enabled: true
+    state: started
+
+- name: 변경이 있었으면 지금 재시작
+  ansible.builtin.meta: flush_handlers
+
+- name: 응답 확인 (:9100/metrics)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:9100/metrics"
+    return_content: true
+  register: node_exporter_metrics
+  retries: 5
+  delay: 2
+  until: node_exporter_metrics.status == 200
+  failed_when: "'node_exporter_build_info' not in node_exporter_metrics.content"
+  changed_when: false

@@ -1,0 +1,9 @@
+---
+# node-exporter(Debian 패키지 prometheus-node-exporter)를 5대 같은 상태로.
+# 11/02 · 11/06에 손으로 깔아 호스트마다 달랐던 것을 여기로 맞춘다(11/08 IaC 우선 결정)
+node_exporter_listen: "0.0.0.0:9100"        # 11/06 pve2 사례: 자기 IP에 묶으면 부팅 때 네트워크보다 먼저 떠 영구 실패
+# prometheus-node-exporter-collectors(apt · nvme · smartmon textfile 수집기 + 15분 systemd 타이머)는 쓰지 않는다.
+# pve4에만 깔려 있었고, 그 타이머가 11/02~11/10 "15분 주기 1샘플 온도 스파이크"의 원인이었다(docs/measurements/2026-11-06-pve-host-temp.md 7절).
+# 우리는 apt_* · nvme_* 지표를 안 쓴다(NVMe 온도는 hwmon에서 받음)
+node_exporter_remove_collectors: true
+node_exporter_textfile_dir: /var/lib/prometheus/node-exporter

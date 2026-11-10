@@ -1,0 +1,5 @@
+---
+- name: node-exporter 재시작
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    state: restarted
