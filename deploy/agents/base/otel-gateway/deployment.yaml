@@ -1,0 +1,88 @@
+# 로그 · 트레이스 게이트웨이 1개. 복제 1인 이유(11/10 결정): push 수신이라 2개여도 죽은 대의 큐는 못 지키고, LAN에서 큐는 저장소가
+# 죽어 있는 동안만 채워진다. 약점은 Pod 재배치 동안(몇 분) span 수신 중단 → 모니터링 클러스터 3중화 때 재검토.
+# 영속 큐는 노드 디스크(hostPath). Pod 재시작은 버티고, 다른 노드로 옮겨질 때 잃는 것은 "저장소도 죽어 있던 동안 쌓인 양"뿐
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-gateway
+  labels:
+    app.kubernetes.io/name: otel-gateway
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                # 같은 노드 hostPath 큐를 두 Pod가 동시에 열지 않게
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otel-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otel-gateway
+    spec:
+      securityContext:
+        runAsUser: 10001          # otel/opentelemetry-collector-contrib 이미지의 기본 사용자
+        runAsGroup: 10001
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # hostPath 디렉터리는 kubelet이 root 0755로 만들어 10001이 못 쓴다. 소유자만 바꾼다(collector 이미지엔 셸이 없어 busybox)
+        - name: init-queue-dir
+          image: busybox:1.37.0
+          command: [sh, -c, "chown 10001:10001 /var/lib/otel-gateway"]
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL], add: [CHOWN]}
+          volumeMounts:
+            - {name: queue, mountPath: /var/lib/otel-gateway}
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.164.0
+          args: [--config=/etc/otel/config.yaml]
+          env:
+            # config.yaml의 ${env:CLUSTER_NAME} · ${env:SITE}. 값은 overlay가 정한다
+            - {name: CLUSTER_NAME, value: unset}
+            - {name: SITE, value: unset}
+          ports:
+            - {name: otlp-grpc, containerPort: 4317}
+            - {name: otlp-http, containerPort: 4318}
+            - {name: metrics, containerPort: 8888}
+            - {name: health, containerPort: 13133}
+          livenessProbe:
+            httpGet: {path: /, port: health}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /, port: health}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/otel, readOnly: true}
+            - {name: queue, mountPath: /var/lib/otel-gateway}
+      volumes:
+        - name: config
+          configMap: {name: otel-gateway-config}
+        - name: queue
+          hostPath:
+            path: /var/lib/monitoring-agents/otel-gateway
+            type: DirectoryOrCreate
+---
+# 클러스터 안 주소: otel-gateway.monitoring.svc:4317(gRPC) · :4318(HTTP). Fluent Bit과 앱 SDK(OTEL_EXPORTER_OTLP_ENDPOINT)가 이걸 본다
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-gateway
+  labels:
+    app.kubernetes.io/name: otel-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: otel-gateway
+  ports:
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http}

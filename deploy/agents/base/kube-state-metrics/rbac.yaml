@@ -1,0 +1,35 @@
+# kube-state-metrics는 노드가 아니라 API 서버 하나를 보고 오브젝트 상태(Pod phase · 재시작 수 · Deployment 복제 수 …)를
+# 지표로 낸다. 그래서 Deployment 1개. 읽기 권한도 우리가 쓰는 종류만 준다(기본 예제의 secrets · configmaps 등은 뺌).
+# deployment.yaml의 --resources 목록과 짝이 맞아야 한다
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kube-state-metrics
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kube-state-metrics
+rules:
+  - apiGroups: [""]
+    resources: [nodes, pods, namespaces, persistentvolumeclaims]
+    verbs: [list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, daemonsets, statefulsets, replicasets]
+    verbs: [list, watch]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kube-state-metrics
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kube-state-metrics
+subjects:
+  - kind: ServiceAccount
+    name: kube-state-metrics
+    namespace: monitoring

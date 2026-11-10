@@ -2,7 +2,7 @@
 
 모니터링 클러스터(monitoring1~3, `docs/monitoring-cluster.md`)에 올리는 스택. `compose/`(VM 1대)를 대체한다. 이 문서가 MON-STD-22 "모니터링 클러스터 복구 런북"이다. 부 담당이 이 절차만으로 다시 올릴 수 있어야 한다.
 
-ADR-18 1단계 상태: 저장소는 **복제 1 · PVC filesystem**. 3노드 복제 · S3 · ArgoCD · Fluent Bit/OTel 게이트웨이 · 분류기는 아직 없다.
+ADR-18 1단계 상태: 저장소는 **복제 1 · PVC filesystem**. 3노드 복제 · S3 · ArgoCD · 분류기는 아직 없다. 클러스터에 붙이는 수집 층은 `agents/`(아래 절).
 
 ## 구성
 
@@ -88,6 +88,40 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 - Agent의 RBAC는 읽기 전용(nodes · nodes/metrics · services · pods · endpointslices). `nodes/proxy` · secrets 없음
 - Secret 값은 레포 · 셸 기록에 남기지 않는다(`create-secrets.sh`의 `read -s`)
 
+## 수집 층 (`deploy/agents/`) — 관리 클러스터 · EKS에 올리는 것
+
+저장소(위)가 아니라 **클러스터마다 하나씩 붙이는 쪽**. 배치 규약과 이유는 `docs/worker-agents.md`.
+
+| 구성물 | 종류 | 버퍼 (관리 클러스터 hostPath `/var/lib/monitoring-agents/…`) | 보내는 곳 |
+|---|---|---|---|
+| kube-state-metrics v2.20.0 | Deployment ×1 | - | Agent가 긁음 |
+| Prometheus Agent v3.15.1 | Deployment ×1 | WAL `prometheus-agent/` | Mimir `172.30.0.35:9009` |
+| Fluent Bit 5.1.1 | DaemonSet (toleration Exists) | 책갈피 db · 미전송 청크 `fluent-bit/` | 게이트웨이 `otel-gateway:4318` |
+| OTel Collector contrib 0.164.0 | Deployment ×1 | file_storage 큐 `otel-gateway/` | Loki `172.30.0.35:3100/otlp` · Tempo `172.30.0.35:4317` |
+
+- `base/`는 모든 클러스터 공통. 다른 것(cluster · site 이름, nodeSelector, 버퍼 디스크)만 `overlays/<클러스터>/`에서 patch. 클러스터 이름은 Deployment env `CLUSTER_NAME` · `SITE`로 들어가 Agent `external_labels` · 게이트웨이 `resource` 프로세서가 읽는다
+- 적용은 **ArgoCD**(K8s 레포 Application `gpu-monitoring-agents` → Monitoring main `deploy/agents/overlays/onprem`, automated). 이 스크립트는 kind만: `scripts/deploy-k8s.sh --agents-kind`(`kind create cluster --name agents-test` 뒤, 컨텍스트 kind-*만 허용). kind에서도 데이터는 실제 저장소로 간다(cluster 라벨 `kind-test`)
+- lint(`--lint-only`)가 수집 층도 본다: promtool(Agent 설정) · `fluent-bit --dry-run` · `otelcol-contrib validate` · overlay 렌더
+- Loki 라벨 이름은 `cluster`가 아니라 **`k8s_cluster_name`**(OTel 리소스 속성 `k8s.cluster.name`을 Loki가 그대로 인덱싱). 함께 라벨이 되는 것: `k8s_namespace_name` · `k8s_pod_name` · `k8s_container_name` · `service_name`(= 컨테이너 이름, 커널 로그는 `kernel`). `k8s_node_name` · `site` · `stream`은 structured metadata
+
+확인:
+```bash
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{cluster="onprem-manager"}'          # 6 job: kubelet · cadvisor · kube-state-metrics · prometheus-agent · otel-gateway · fluent-bit
+curl -sG "http://$V:3100/loki/api/v1/label/k8s_namespace_name/values" --data-urlencode 'query={k8s_cluster_name="onprem-manager"}'
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=otelcol_exporter_queue_size{cluster="onprem-manager"}'   # 0이 정상, 쌓이면 저장소 쪽 문제
+```
+
+겪은 것 (11/10, kind):
+
+| 증상 | 원인 | 해결 |
+|---|---|---|
+| `otelcol validate`: `yaml: did not find expected ',' or '}'` | flow 매핑 `{value: ${env:X}}`의 `:`·`}` | `"${env:CLUSTER_NAME}"` 따옴표 |
+| `file_storage: directory must exist` (lint만) | 컨테이너 단독 실행엔 hostPath가 없음 | `create_directory: true` |
+| 게이트웨이 경고 `"otlphttp" alias is deprecated` | 0.164에서 exporter 이름 변경 | `otlp_http` · `otlp_grpc` |
+| Loki에 Fluent Bit 자기 로그가 매초 1줄 | OTLP 출력이 요청마다 `HTTP status=200`을 info로 찍음 | `log_level: warn` |
+| Loki 메타데이터에 `_p` · `time` | cri 파서 잔여 필드 | 게이트웨이 transform에서 `delete_key` |
+| Fluent Bit 첫 10초 `no upstream connections` | 게이트웨이보다 먼저 떴음 | 정상. 재시도 뒤 전부 전송(버퍼가 일하는 모습) |
+
 ## 다음
 
-replicas 3 + anti-affinity(Mimir · Loki는 replication_factor 3, Loki는 그때 오브젝트 스토리지 필수) → S3 백엔드(버킷 · Roles Anywhere, filesystem 블록 이전 여부 결정) → ArgoCD 원격 등록 → 워커/관리 클러스터용 Agent · Fluent Bit · OTel 게이트웨이 → 분류기 · kafka_exporter · Loki 룰(Xid).
+replicas 3 + anti-affinity(Mimir · Loki는 replication_factor 3, Loki는 그때 오브젝트 스토리지 필수) → S3 백엔드(버킷 · Roles Anywhere, filesystem 블록 이전 여부 결정) → ArgoCD 원격 등록 → ~~관리 클러스터용 수집 층~~(11/10 매니페스트 · kind 검증 완료, ArgoCD 뜨면 적용) → EKS overlay → 분류기 · kafka_exporter · Loki 룰(Xid).

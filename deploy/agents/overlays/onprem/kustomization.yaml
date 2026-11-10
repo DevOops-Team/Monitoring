@@ -1,0 +1,39 @@
+# 관리 클러스터(온프레미스, API 172.30.0.120). ArgoCD Application이 이 경로를 가리킨다(K8s 레포, ArgoCD가 뜬 뒤).
+# 네임스페이스 monitoring은 K8s 레포(gpu-foundation)가 만든다 → 여기 없음
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+patches:
+  # 1개짜리(Agent · KSM · 게이트웨이)는 워커 노드에. 플랫폼 앱과 같은 관례(platform-worker=true). DaemonSet은 전 노드라 제외
+  - target: {kind: Deployment}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: {platform-worker: "true"}
+  - target: {kind: Deployment, name: prometheus-agent}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: prometheus-agent}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: prometheus
+                env:
+                  - {name: CLUSTER_NAME, value: onprem-manager}   # 노드 라벨 platform-cluster와 같은 값
+                  - {name: SITE, value: onprem}
+  - target: {kind: Deployment, name: otel-gateway}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: otel-gateway}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: otel-collector
+                env:
+                  - {name: CLUSTER_NAME, value: onprem-manager}
+                  - {name: SITE, value: onprem}

@@ -1,0 +1,34 @@
+# 노트북 kind 검증용. 저장소 주소는 실제 모니터링 클러스터(172.30.0.35, Tailscale 경유)라 데이터가 진짜로 들어간다.
+# nodeSelector 없음(kind 노드에 platform-worker 라벨이 없음). cluster 라벨은 kind-test로 구분
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - ../../base
+patches:
+  - target: {kind: Deployment, name: prometheus-agent}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: prometheus-agent}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: prometheus
+                env:
+                  - {name: CLUSTER_NAME, value: kind-test}
+                  - {name: SITE, value: laptop}
+  - target: {kind: Deployment, name: otel-gateway}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: otel-gateway}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: otel-collector
+                env:
+                  - {name: CLUSTER_NAME, value: kind-test}
+                  - {name: SITE, value: laptop}

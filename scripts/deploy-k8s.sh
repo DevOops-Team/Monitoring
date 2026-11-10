@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # 노트북에서 실행: 설정 검사 → 모니터링 클러스터(또는 kind)에 deploy/ 적용
-# 사용: KUBECONFIG=<admin.conf> scripts/deploy-k8s.sh [--lint-only] [--kind]
-#   --lint-only  검사만 하고 끝 (클러스터 접속 없음)
-#   --kind       로컬 kind 클러스터에 적용 (더미 Secret을 만들어 구조만 검증)
+# 사용: KUBECONFIG=<admin.conf> scripts/deploy-k8s.sh [--lint-only] [--kind] [--agents-kind]
+#   --lint-only    검사만 하고 끝 (클러스터 접속 없음)
+#   --kind         로컬 kind 클러스터에 저장소 스택(deploy/base · values)을 적용 (더미 Secret을 만들어 구조만 검증)
+#   --agents-kind  로컬 kind 클러스터에 수집 층(deploy/agents/overlays/kind)만 적용. 데이터는 실제 모니터링 클러스터로 간다
+# 수집 층의 관리 클러스터 · EKS 적용은 이 스크립트가 아니라 ArgoCD(K8s 레포 Application)가 한다
 # 환경변수 CHART_CACHE=<폴더> 를 주면 그 안의 <차트>-<버전>.tgz를 쓴다(GitHub 다운로드가 불안정할 때)
 set -euo pipefail
 
@@ -18,6 +20,7 @@ LINT_ONLY=false
 for a in "$@"; do
   case "$a" in
     --kind) MODE=kind ;;
+    --agents-kind) MODE=agents-kind ;;
     --lint-only) LINT_ONLY=true ;;
     *) echo "모르는 옵션: $a" >&2; exit 2 ;;
   esac
@@ -44,6 +47,20 @@ lint() {
   echo "== kustomize 렌더 (deploy/base)"
   kubectl kustomize "$D/base" > "$tmp/base.yaml"
   echo "   리소스 $(grep -c '^kind:' "$tmp/base.yaml")개"
+  echo "== 수집 층 (deploy/agents): promtool + 렌더"
+  docker run --rm -v "$D/agents/base/prometheus-agent:/etc/prometheus:ro" \
+    -v "$tmp/token:/var/run/secrets/kubernetes.io/serviceaccount/token:ro" \
+    -e CLUSTER_NAME=lint -e SITE=lint \
+    --entrypoint promtool "$PROMETHEUS_IMAGE" check config --agent /etc/prometheus/prometheus.yml
+  docker run --rm -v "$D/agents/base/fluent-bit/fluent-bit.yaml:/fluent-bit/etc/conf/fluent-bit.yaml:ro" \
+    "$FLUENT_BIT_IMAGE" -c /fluent-bit/etc/conf/fluent-bit.yaml --dry-run
+  docker run --rm -v "$D/agents/base/otel-gateway/config.yaml:/etc/otel/config.yaml:ro" \
+    -e CLUSTER_NAME=lint -e SITE=lint \
+    "$OTEL_COLLECTOR_IMAGE" validate --config=/etc/otel/config.yaml
+  for o in "$D"/agents/overlays/*/; do
+    kubectl kustomize "$o" > "$tmp/agents-$(basename "$o").yaml"
+    echo "   overlays/$(basename "$o"): 리소스 $(grep -c '^kind:' "$tmp/agents-$(basename "$o").yaml")개"
+  done
   echo "== helm template (values 문법)"
   # shellcheck disable=SC2046
   helm template local-path-provisioner $(chart containeroo/local-path-provisioner "$LOCAL_PATH_CHART") -f "$D/values/local-path.yaml" > /dev/null
@@ -78,8 +95,8 @@ guard() {
   if [[ "$MODE" == cluster && "$server" != "$EXPECTED_SERVER" ]]; then
     echo "API 서버가 $EXPECTED_SERVER 가 아니다. KUBECONFIG를 확인하거나 --kind 를 써라" >&2; exit 1
   fi
-  if [[ "$MODE" == kind && "$ctx" != kind-* ]]; then
-    echo "--kind 인데 현재 컨텍스트가 kind-* 가 아니다" >&2; exit 1
+  if [[ "$MODE" == kind || "$MODE" == agents-kind ]] && [[ "$ctx" != kind-* ]]; then
+    echo "--kind / --agents-kind 인데 현재 컨텍스트가 kind-* 가 아니다" >&2; exit 1
   fi
 }
 
@@ -156,7 +173,17 @@ SC
   kubectl -n "$NS" get pods,pvc,svc
 }
 
+apply_agents_kind() {
+  echo "== 수집 층 → kind (overlays/kind)"
+  kubectl apply -k "$D/agents/overlays/kind"
+  for d in kube-state-metrics prometheus-agent otel-gateway; do
+    kubectl -n "$NS" rollout status deployment/"$d" --timeout=3m
+  done
+  kubectl -n "$NS" rollout status daemonset/fluent-bit --timeout=3m
+  kubectl -n "$NS" get pods
+}
+
 lint
 $LINT_ONLY && { echo "== lint만 하고 끝"; exit 0; }
 guard
-apply
+if [[ "$MODE" == agents-kind ]]; then apply_agents_kind; else apply; fi

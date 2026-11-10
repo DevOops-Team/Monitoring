@@ -1,0 +1,102 @@
+# 클러스터 안 Prometheus Agent 설정. 긁어서 모니터링 클러스터 Mimir로 보내기만 한다.
+# 어느 클러스터에서나 같은 파일을 쓴다: 클러스터 이름은 env(CLUSTER_NAME · SITE)로 들어온다(Deployment env, overlay가 정함)
+global:
+  scrape_interval: 15s             # dcgm-exporter 내부 수집 5s + scrape 15s 전제 (fault-event ±45s 창)
+  external_labels:
+    cluster: ${CLUSTER_NAME}       # 예: onprem-manager · worker-a
+    site: ${SITE}                  # onprem · aws
+
+remote_write:
+  # 모니터링 클러스터 서비스 VIP. LAN이든 VPN 너머든 같은 주소. 끊기면 WAL(기본 최대 약 2시간치)에 쌓였다가 복구 뒤 전송
+  - url: http://172.30.0.35:9009/api/v1/push
+
+scrape_configs:
+  - job_name: prometheus-agent
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # kubelet: 노드마다 하나. ServiceAccount 토큰 인증. 서버 인증서가 노드별 자체 서명이라 검증은 건너뛴다(11/09 결정)
+  - job_name: kubelet
+    scheme: https
+    kubernetes_sd_configs:
+      - role: node
+    authorization:
+      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tls_config:
+      insecure_skip_verify: true
+    relabel_configs:
+      - {source_labels: [__meta_kubernetes_node_name], target_label: node}
+
+  # 컨테이너 자원 지표(kubelet 내장 cAdvisor)
+  - job_name: cadvisor
+    scheme: https
+    metrics_path: /metrics/cadvisor
+    honor_timestamps: false        # cAdvisor 자체 타임스탬프를 쓰면 out-of-order로 버려지는 샘플이 생긴다
+    kubernetes_sd_configs:
+      - role: node
+    authorization:
+      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tls_config:
+      insecure_skip_verify: true
+    relabel_configs:
+      - {source_labels: [__meta_kubernetes_node_name], target_label: node}
+    metric_relabel_configs:
+      # Pod가 아닌 cgroup(시스템 슬라이스)과 이름 없는 컨테이너(pause)는 버린다 → 시계열 수 절반 이하
+      - source_labels: [container]
+        regex: "|POD"
+        action: drop
+
+  # kube-state-metrics: Pod · 노드 · 워크로드 상태. 헤드리스 Service의 엔드포인트를 긁는다
+  - job_name: kube-state-metrics
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpointslice_port_name]
+        regex: kube-state-metrics;http-metrics
+        action: keep
+
+  # 수집 층 자신의 지표: 게이트웨이(큐 길이 · 전송 실패 otelcol_exporter_*) · Fluent Bit(입력 · 출력 · 재시도 fluentbit_*)
+  - job_name: otel-gateway
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_name]
+        regex: otel-gateway;metrics
+        action: keep
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+  - job_name: fluent-bit
+    metrics_path: /api/v2/metrics/prometheus
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_name]
+        regex: fluent-bit;http
+        action: keep
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+
+  # 어노테이션으로 노출을 선언한 Pod(prometheus.io/scrape · port · path). 학습 Job trainer :8000(training-metrics.md) 등.
+  # 포트는 어노테이션 값으로 바꿔 끼운다(컨테이너가 여러 포트를 열어도 하나만 긁는다)
+  - job_name: annotated-pods
+    kubernetes_sd_configs:
+      - role: pod
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        regex: "true"
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_phase]
+        regex: Running
+        action: keep
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        regex: (.+)
+        target_label: __metrics_path__
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+      - {source_labels: [__meta_kubernetes_namespace], target_label: namespace}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+      - {source_labels: [__meta_kubernetes_pod_container_name], target_label: container}

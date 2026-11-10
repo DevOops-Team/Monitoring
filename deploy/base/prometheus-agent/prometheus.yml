@@ -119,11 +119,16 @@ scrape_configs:
       - targets: ["172.30.0.94:9100"]
         labels: {host: pve4}
 
-  # Kafka 브로커 자체 지표 (JMX Exporter javaagent, 현수 설치 11/05). 원본은 약 1만 줄이라 필요한 것만 남긴다
+  # Kafka 브로커 자체 지표 (JMX Exporter javaagent 7071, 현수 설치). 11/10 KRaft 3대로 재구성 → 브로커마다 하나.
+  # 원본은 브로커당 약 1만 줄이라 필요한 것만 남긴다
   - job_name: kafka-jmx
     static_configs:
       - targets: ["172.30.0.40:7071"]
-        labels: {host: kafka}
+        labels: {host: kafka1}
+      - targets: ["172.30.0.41:7071"]
+        labels: {host: kafka2}
+      - targets: ["172.30.0.42:7071"]
+        labels: {host: kafka3}
     metric_relabel_configs:
       # 1) 이름으로 1차 선별
       - source_labels: [__name__]

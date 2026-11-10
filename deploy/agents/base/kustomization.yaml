@@ -1,0 +1,23 @@
+# 수집 층(클러스터마다 하나씩 올리는 것): kube-state-metrics · Prometheus Agent · Fluent Bit · OTel 게이트웨이.
+# 관리 클러스터와 EKS 워커 클러스터에 같은 base를 쓰고, 다른 것(클러스터 이름 · nodeSelector · 버퍼 디스크)만 overlays/에서 바꾼다.
+# 저장소 주소(172.30.0.35)는 어느 클러스터에서나 같아서(LAN 또는 VPN) base에 고정.
+# 네임스페이스 monitoring은 여기서 만들지 않는다: 관리 클러스터에선 K8s 레포(gpu-foundation)가 소유. kind overlay만 만든다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - kube-state-metrics/rbac.yaml
+  - kube-state-metrics/deployment.yaml
+  - prometheus-agent/rbac.yaml
+  - prometheus-agent/deployment.yaml
+  - fluent-bit/rbac.yaml
+  - fluent-bit/daemonset.yaml
+  - otel-gateway/deployment.yaml
+configMapGenerator:
+  # 이름 끝에 해시가 붙어 설정이 바뀌면 Pod가 다시 뜬다
+  - name: prometheus-agent-config
+    files: [prometheus-agent/prometheus.yml]
+  - name: fluent-bit-config
+    files: [fluent-bit/fluent-bit.yaml]
+  - name: otel-gateway-config
+    files: [config.yaml=otel-gateway/config.yaml]
