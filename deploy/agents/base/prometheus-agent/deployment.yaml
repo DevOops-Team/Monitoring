@@ -1,0 +1,89 @@
+# 클러스터 안 대상을 긁어 모니터링 클러스터 Mimir로 remote_write만 하는 Agent(저장 · 룰 없음).
+# WAL(보내기 전 버퍼)은 노드 디스크(hostPath)에 둔다: 관리 클러스터엔 StorageClass가 없고, Pod 재시작은 버티면 되며
+# Pod가 다른 노드로 옮겨질 때 잃는 것은 "저장소도 같이 죽어 있던 동안 쌓인 양"뿐이다(11/10 결정). EKS overlay는 PVC로 바꾼다.
+# 복제 1. ×2 + Mimir HA tracker(__replica__)는 모니터링 클러스터 3중화 때 두 클러스터를 같이 올린다
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus-agent
+  labels:
+    app.kubernetes.io/name: prometheus-agent
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate                # 같은 노드 hostPath WAL을 두 Pod가 동시에 열면 깨진다 → 옛 Pod가 끝난 뒤 새 Pod
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus-agent
+    spec:
+      serviceAccountName: prometheus-agent
+      securityContext:
+        runAsUser: 65534          # prom/prometheus 이미지의 nobody
+        runAsGroup: 65534
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # hostPath 디렉터리는 kubelet이 root 0755로 만들어 nobody가 못 쓴다. 한 번 소유자만 바꾼다
+        - name: init-wal-dir
+          image: prom/prometheus:v3.15.1
+          command: [sh, -c, "chown 65534:65534 /prometheus"]
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL], add: [CHOWN]}
+          volumeMounts:
+            - {name: wal, mountPath: /prometheus}
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.15.1
+          args:
+            - --agent
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.agent.path=/prometheus
+          env:
+            # prometheus.yml의 external_labels가 ${CLUSTER_NAME} · ${SITE}로 읽는다. 값은 overlay가 정한다
+            - {name: CLUSTER_NAME, value: unset}
+            - {name: SITE, value: unset}
+          ports:
+            - {name: http, containerPort: 9090}
+          livenessProbe:
+            httpGet: {path: /-/healthy, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /-/ready, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 768Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus, readOnly: true}
+            - {name: wal, mountPath: /prometheus}
+      volumes:
+        - name: config
+          configMap: {name: prometheus-agent-config}
+        - name: wal
+          hostPath:
+            path: /var/lib/monitoring-agents/prometheus-agent
+            type: DirectoryOrCreate
+---
+# Agent UI(대상 상태 확인): kubectl -n monitoring port-forward svc/prometheus-agent 9090
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus-agent
+  labels:
+    app.kubernetes.io/name: prometheus-agent
+spec:
+  selector:
+    app.kubernetes.io/name: prometheus-agent
+  ports:
+    - {name: http, port: 9090, targetPort: http}
