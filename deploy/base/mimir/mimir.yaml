@@ -1,0 +1,70 @@
+# Mimir 모놀리식(-target=all) 단일 복제. ADR-18 1단계: 저장은 PVC filesystem, S3 버킷이 생기면 backend만 바꾼다.
+# 3노드 확장 때 바꿀 값: replication_factor 1 → 3, StatefulSet replicas 1 → 3 (memberlist 설정은 그대로)
+multitenancy_enabled: false          # 테넌트 하나(anonymous). 룰 디렉터리 이름이 여기서 온다
+target: all
+
+server:
+  http_listen_port: 9009             # remote_write · 조회 · ruler API. 밖에서는 서비스 VIP 172.30.0.35:9009
+  grpc_listen_port: 9095
+  log_level: info
+
+common:
+  storage:
+    backend: filesystem
+    filesystem:
+      dir: /data/common
+
+blocks_storage:
+  backend: filesystem
+  filesystem:
+    dir: /data/blocks
+  tsdb:
+    dir: /data/tsdb
+  bucket_store:
+    sync_dir: /data/tsdb-sync
+
+compactor:
+  data_dir: /data/compactor
+  sharding_ring:
+    kvstore:
+      store: memberlist
+
+distributor:
+  ring:
+    kvstore:
+      store: memberlist
+
+ingester:
+  ring:
+    kvstore:
+      store: memberlist
+    replication_factor: 1
+
+store_gateway:
+  sharding_ring:
+    replication_factor: 1
+
+memberlist:
+  join_members:
+    - mimir-headless.monitoring.svc.cluster.local:7946
+
+# 룰은 ConfigMap(mimir-rules)을 /etc/mimir/rules/anonymous/ 에 마운트해 읽는다. 1분마다 다시 읽음
+ruler:
+  rule_path: /data/ruler
+  alertmanager_url: http://alertmanager.monitoring.svc.cluster.local:9093
+  evaluation_interval: 15s           # compose Prometheus와 같은 평가 주기(fault-event ±45s 창의 전제)
+  poll_interval: 1m
+ruler_storage:
+  backend: local
+  local:
+    directory: /etc/mimir/rules
+
+limits:
+  compactor_blocks_retention_period: 30d   # compose --storage.tsdb.retention.time=30d 와 동일
+
+# 진행 중인 쿼리 기록 파일. 기본값은 작업 디렉터리라 비루트 계정이 못 쓴다 → PVC로
+activity_tracker:
+  filepath: /data/metrics-activity.log
+
+usage_stats:
+  enabled: false

@@ -96,7 +96,7 @@
 
 **이벤트를 만들지 않는 종료**: 학습 컨테이너 종료 코드 **75**는 사이드카가 세대 불일치 · 승인 거부로 `/ckpt/STOP`을 만들어 trainer가 스스로 멈춘 것이다 (ADR-12). 펜싱이 정상 동작한 것이지 장애가 아니므로 `source=pod` 룰은 exit 75를 제외한다. 같은 이유로 사용자 취소 · 정상 완료(exit 0)도 제외.
 
-### 3.1 세 문서의 액션 이름 대응 (매핑표, 2026-11-05 한송이 · 김성모 확인)
+### 3.1 세 문서의 액션 이름 대응 (매핑표, 2026-11-05 한송이 · 김성모 확인 · 2026-11-09 ADR-19 반영)
 
 분류기(이 문서) · 복구 컨트롤러(한송이 "3. GPU·드라이버 장애복구" 4절) · 재배치 실행기(김성모 "평소 학습, 장애복구 시 스케줄링 방식" RelocationRequest)가 서로 다른 이름을 쓴다. 변환은 **컨트롤러가 한다**: Kafka에서 `suggested_action`을 읽어 자기 액션으로 결정하고, 실행이 필요하면 RelocationRequest를 만든다. 분류기는 이 표의 왼쪽 열만 낸다.
 
@@ -110,9 +110,12 @@
 | `refuse` | `NEEDS_CONFIG_FIX` | 없음 (복구 안 함) | 사용자에게 실패 알림. 자동 재시작이 전부 꺼져 있어 JobSet이 Failed → Kueue Workload 종료 → 쿼터 자동 반납될 것으로 봄(김성모, 미검증). 멈춘 채 안 죽는 Job만 별도 처리 |
 | `hold` | `HOLD` | 없음 | 상태 저장 · 알림만. 다음 이벤트에서 재판정 |
 | `none` | 없음 (무시) | 없음 | 기록만. 컨트롤러는 Kafka에서 읽어도 처리하지 않는다 |
+| (분류기 출력 없음 — 컨트롤러 승격) | `QUARANTINE_AND_RETRY` 승격 (develop 이름 `RELOCATE_SAME_CLUSTER` 승격) | `moveToOtherCluster` | 예비 소진 · SDC. 의심 노드 cordon + taint `devoops/faulty`, 원래 클러스터는 `devoops/exclude-clusters`, **펜싱 없음**. 분류기가 내는 값이 아니라 컨트롤러가 여러 이벤트를 보고 올리는 경로 (ADR-19, 아래 설명) |
+
+**컨트롤러 액션 이름 주의 (2026-11-09, ADR-19 상황 표)**: 위 표의 "컨트롤러 액션 (한송이)" 열은 11/05 문서 기준이다. develop `controllers/recovery-controller`(contracts.md)의 실제 이름은 `RESTART_SAME_CLUSTER` · `RELOCATE_SAME_CLUSTER` · `HOLD_FOR_FENCING` · `REVIEW` · `REJECT`다. ADR-19(김성모 제안)의 대응은 `RESTART_SAME_CLUSTER` → `restartInPlace`, `RELOCATE_SAME_CLUSTER` → `moveToSpare`(예비 소진이면 `moveToOtherCluster`로 승격), `HOLD_FOR_FENCING` → `evacuateCluster`, `REVIEW` · `REJECT` → RelocationRequest 없음. `suggested_action` 8개와 develop 이름의 대응(특히 `hold` · `refuse` → `REVIEW` · `REJECT`, `PLANNED_MIGRATE` · `FENCE_AND_EVACUATE`가 코드에 있는지)은 **한송이 확인 뒤** 가운데 열을 갱신한다. 분류기 출력(왼쪽 열)은 바뀌지 않는다.
 
 분류기가 내지 않는 RelocationRequest 경로:
-- **예비 소진 → `moveToOtherCluster`**(김성모 relocator.py d091726에 추가됨, 시나리오 10 미실행, 11/05): 의심 · 고장 노드 cordon + taint, 원래 클러스터는 `devoops/exclude-clusters`, **펜싱은 안 함**. 4절 "같은 클러스터에 예비 GPU가 없다"의 컨트롤러 승격. `evacuateCluster`를 쓰면 멀쩡한 클러스터가 통째로 펜싱되므로 쓰지 않는다. 구현 전 현재 코드는 같은 클러스터에서 15분 대기 뒤 Failed.
+- **예비 소진 → `moveToOtherCluster`**(action 4종 중 하나로 ADR-19 제안 11/09. relocator.py 코드 반영, 시나리오 미실행): 의심 · 고장 노드 cordon + taint, 원래 클러스터는 `devoops/exclude-clusters`, **펜싱은 안 함**. 4절 "같은 클러스터에 예비 GPU가 없다"의 컨트롤러 승격. `evacuateCluster`를 쓰면 멀쩡한 클러스터가 통째로 펜싱되므로 쓰지 않는다. 구현 전 현재 코드는 같은 클러스터에서 15분 대기 뒤 Failed.
 - **SDC(의심 노드 다수) → `moveToOtherCluster`**: v1 `category`에 SDC를 넣지 않는다. 이벤트 한 건을 보는 분류기가 아니라 여러 건을 모으는 컨트롤러가 판단 · 승격 (김성모 동의, 자기 문서 1단계 수정 예정). 되돌릴 체크포인트 지정은 RelocationRequest 필드가 아니라 컨트롤러가 RR 바깥에서 한다.
 
 ### 3.2 전달 필드 대응

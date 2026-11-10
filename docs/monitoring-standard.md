@@ -56,7 +56,7 @@
 | MON-STD-06 | GPU 노드 | CPU (g4dn.xlarge 4 vCPU) `node_cpu_seconds_total` | | | | 경고 80% 5분 · 위험 95% | 실험 (stress-ng로 스텝 시간 꺾이는 점) | 데이터 로더 워커 수 조정 런북 | 가설 |
 | MON-STD-07 | GPU 노드 | 메모리 · 디스크 · 네트워크 `node_memory_*` · `node_filesystem_*` · `node_network_*` | | | | 위험 디스크 90% | 기준선 + 운영 경험 | 체크포인트 로컬 쓰기 실패 예방 런북 | 가설 |
 | MON-STD-16 | CPU 노드 | Prometheus Agent WAL 디스크 · `prometheus_agent_*` (WAL 경로 `node_filesystem_avail_bytes`) | | | | WAL 보존 상한 4h = VPN 단절 복구 상한 | 벤더 (Agent WAL 기본 보존 max 4h) + 실험 (VPN 단절) | VPN 점검 런북 | 가설 |
-| MON-STD-24 | Proxmox 호스트 (devoops · pve1~4) | 호스트 OS node-exporter (`job="pve-host"`, 중앙이 LAN 직접 pull): `up` · 루트 디스크 `node_filesystem_avail_bytes` · 온도 `node_hwmon_temp_celsius` | | | | 호스트 다운 5분 (`up==0`) · 디스크 경고 80% · 위험 90% · 온도 경고 80°C | 운영 경험 + 벤더 (CPU Tjmax 100°C) | 호스트 다운 = 그 위 VM(master·worker·monitoring) 전부 영향 → 인프라 담당 호출 런북 | 가설 |
+| MON-STD-24 | Proxmox 호스트 (devoops · pve1~4) | 호스트 OS node-exporter (`job="pve-host"`, 중앙이 LAN 직접 pull): `up` · 루트 디스크 `node_filesystem_avail_bytes` · 온도 `node_hwmon_temp_celsius` (CPU `chip=~"platform_coretemp.*"` / NVMe `chip=~"nvme.*"` 분리) | | | | 호스트 다운 5분 (`up==0`) · 디스크 경고 80% · 위험 90% · **CPU 온도 경고 80°C `for: 5m`** (pve4에 15분 주기 1샘플 60~88°C 스파이크가 있어 인스턴트 값 금지) · **NVMe 온도 경고 70°C** | 운영 경험 + 벤더 (CPU Tjmax 100°C · NVMe 스로틀 70~80°C) + 기준선 ([2026-11-06 1차 측정](measurements/2026-11-06-pve-host-temp.md): 덮개 닫힘 CPU 평균 31~40°C · NVMe 21~58°C, 덮개 열림 재측정 예정) | 호스트 다운 = 그 위 VM(master·worker·monitoring) 전부 영향 → 인프라 담당 호출 런북 | 가설 |
 
 ### 4.3 학습 Job
 
@@ -100,7 +100,7 @@
 
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
-| MON-STD-22 | 모니터링 VM | 디스크 (Loki · Tempo 로컬 30일 보존) · Alertmanager Watchdog 데드맨 수신 · 매니저 CronJob `/-/healthy` 프로브 | | | | 디스크 경고 80% · 위험 90% · Watchdog 미수신 5분 | 운영 경험 + 용량 계산 (6주 10GB 미만 추정) | 모니터링 VM 복구 런북 (부 담당이 재설치 가능하게) | 가설 |
+| MON-STD-22 | 모니터링 클러스터 (11/09 VM → k8s 3노드, ADR-18) | 노드 디스크 (Mimir · Loki · Tempo PVC, 30일 보존) `MonitoringNodeDisk*` · Alertmanager Watchdog 데드맨 수신 · 스크레이프 대상 `MonitoringTargetDown` · 매니저 CronJob 프로브 | | | | 디스크 경고 80% · 위험 90% · Watchdog 미수신 5분 | 운영 경험 + 용량 계산 (6주 10GB 미만 추정) | 모니터링 클러스터 복구 런북 `deploy/README.md` (부 담당이 재설치 가능하게) | 가설 |
 
 ### 4.9 플랫폼 SLO
 

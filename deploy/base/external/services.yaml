@@ -1,0 +1,39 @@
+# 클러스터 밖에서 들어오는 문. 서비스 VIP 172.30.0.35 하나를 포트로 나눠 쓴다(Mimir 9009는 mimir/service.yaml).
+# 차트가 만드는 Service는 클러스터 내부용(ClusterIP)으로 두고, 밖에는 꼭 필요한 포트만 여기서 연다:
+#   Loki  3100        로그 push(OTel 게이트웨이 · Fluent Bit) — gRPC 9095 · 9096은 내보내지 않는다
+#   Tempo 4317 · 4318 OTLP span 수신 — 조회 API 3200과 jaeger 포트는 내보내지 않는다(Grafana는 클러스터 안에서 조회)
+# 인증은 아직 없다(LAN 172.30.0.0/24와 VPN 뒤). 인증 · NetworkPolicy는 deploy/README.md "보안 메모" 참조
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki-external
+  labels:
+    app.kubernetes.io/name: loki
+  annotations:
+    kube-vip.io/loadbalancerIPs: "172.30.0.35"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    app.kubernetes.io/name: loki
+    app.kubernetes.io/component: single-binary
+  ports:
+    - {name: http, port: 3100, targetPort: 3100}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo-external
+  labels:
+    app.kubernetes.io/name: tempo
+  annotations:
+    kube-vip.io/loadbalancerIPs: "172.30.0.35"
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: Cluster
+  selector:
+    app.kubernetes.io/name: tempo
+    app.kubernetes.io/instance: tempo
+  ports:
+    - {name: otlp-grpc, port: 4317, targetPort: 4317}
+    - {name: otlp-http, port: 4318, targetPort: 4318}

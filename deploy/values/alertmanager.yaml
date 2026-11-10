@@ -1,0 +1,64 @@
+# compose/alertmanager/alertmanager.yml을 그대로 옮긴 것. 시크릿은 Secret alertmanager-secrets를 /run/secrets에 마운트해
+# compose 때와 같은 *_file 경로로 읽는다 (scripts/create-secrets.sh가 만든다. 레포에 없음)
+fullnameOverride: alertmanager
+replicaCount: 1                  # 3노드 확장 때 2 (가십, 과반 불필요)
+
+extraSecretMounts:
+  - name: secrets
+    mountPath: /run/secrets
+    secretName: alertmanager-secrets   # 키: slack_webhook_url · healthchecks_ping_url
+    readOnly: true
+
+persistence:
+  enabled: true
+  storageClass: local-path
+  size: 1Gi
+
+# 클러스터 밖 주소 172.30.0.35:9093 (복구 컨트롤러의 Watchdog 확인, 사람)
+service:
+  type: LoadBalancer
+  port: 9093
+  annotations:
+    kube-vip.io/loadbalancerIPs: "172.30.0.35"
+
+resources:
+  requests: {cpu: 20m, memory: 64Mi}
+  limits: {memory: 192Mi}
+
+# 설정 리로더 사이드카는 쓰지 않는다. 설정은 helm upgrade로만 바뀌고, 그때 Pod가 다시 뜨면 충분하다
+# (silence · 알림 기록은 PVC에 남는다)
+configmapReload:
+  enabled: false
+
+# 라우팅: Watchdog → healthchecks.io (데드맨), 나머지 → Slack #alerts-gpu
+# 분류기 라우트(pipeline=failover)는 분류기를 올릴 때 추가
+config:
+  global:
+    slack_api_url_file: /run/secrets/slack_webhook_url
+  templates: []
+  route:
+    receiver: slack
+    group_by: [alertname]
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - matchers: ["alertname = Watchdog"]
+        receiver: deadman
+        group_wait: 0s
+        group_interval: 1m
+        repeat_interval: 1m      # healthchecks.io 체크 period 1m · grace 4m → 미수신 5m에 알림
+  receivers:
+    - name: slack
+      slack_configs:
+        - channel: "#alerts-gpu"
+          send_resolved: true
+          title: '[{{ .Status | toUpper }}] {{ .CommonLabels.alertname }}'
+          text: >-
+            {{ range .Alerts }}• {{ .Annotations.summary }}
+            {{ if .Labels.instance }}({{ .Labels.instance }}){{ end }}
+            {{ end }}
+    - name: deadman
+      webhook_configs:
+        - url_file: /run/secrets/healthchecks_ping_url
+          send_resolved: false

@@ -1,0 +1,94 @@
+# compose의 grafana 서비스 + provisioning/datasources를 옮긴 것. 비밀번호는 Secret grafana-secrets (scripts/create-secrets.sh)
+fullnameOverride: grafana
+image:
+  tag: "13.3.0"                  # compose 때와 같은 버전으로 고정
+
+admin:
+  existingSecret: grafana-secrets
+  userKey: admin-user
+  passwordKey: admin-password
+
+# datasources의 ${PG_RO_PASSWORD}를 채우는 환경변수
+envValueFrom:
+  PG_RO_PASSWORD:
+    secretKeyRef:
+      name: grafana-secrets
+      key: pg-ro-password
+
+grafana.ini:
+  users:
+    allow_sign_up: false
+  auth.anonymous:
+    enabled: false
+
+persistence:
+  enabled: true
+  type: pvc
+  storageClassName: local-path
+  size: 2Gi
+deploymentStrategy:
+  type: Recreate                 # PVC가 ReadWriteOnce라 새 Pod와 옛 Pod가 동시에 잡을 수 없음
+
+# 클러스터 밖 주소 http://172.30.0.35:3000
+service:
+  type: LoadBalancer
+  port: 3000
+  annotations:
+    kube-vip.io/loadbalancerIPs: "172.30.0.35"
+
+testFramework:
+  enabled: false
+
+resources:
+  requests: {cpu: 50m, memory: 192Mi}
+  limits: {memory: 512Mi}
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      # uid는 compose 때의 prometheus를 유지한다(대시보드가 uid로 참조). 실체는 Mimir의 Prometheus 호환 API
+      - name: Mimir
+        uid: prometheus
+        type: prometheus
+        access: proxy
+        url: http://mimir.monitoring.svc.cluster.local:9009/prometheus
+        isDefault: true
+        editable: false
+      - name: Alertmanager
+        uid: alertmanager
+        type: alertmanager
+        access: proxy
+        url: http://alertmanager.monitoring.svc.cluster.local:9093
+        jsonData:
+          implementation: prometheus
+        editable: false
+      - name: Loki
+        uid: loki
+        type: loki
+        access: proxy
+        url: http://loki.monitoring.svc.cluster.local:3100
+        editable: false
+      - name: Tempo
+        uid: tempo
+        type: tempo
+        access: proxy
+        url: http://tempo.monitoring.svc.cluster.local:3200
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: loki   # trace에서 같은 시각의 로그로 건너가기
+        editable: false
+      # 데이터 파트 PostgreSQL (현수, 172.30.0.50). Job 대장 · 장애 사건 · 측정 이벤트 조회용 읽기 전용 계정
+      - name: PostgreSQL
+        uid: postgres
+        type: grafana-postgresql-datasource
+        url: 172.30.0.50:5432
+        user: grafana_ro
+        jsonData:
+          database: gpuf_data
+          sslmode: require          # 서버 ssl=on(자체 서명). 암호화만, 인증서 검증은 안 함. pg_hba는 모니터링 노드 172.30.0.31~33 허용 필요
+          postgresVersion: 1600
+          timescaledb: false
+        secureJsonData:
+          password: ${PG_RO_PASSWORD}
+        editable: false
