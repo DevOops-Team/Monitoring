@@ -40,7 +40,7 @@ Loki ──ruler 알람──▶ Alertmanager :9093 ──webhook(pipeline=failo
 ```
 
 - 분류기 출력은 HTTP가 아니라 Kafka다 (ADR-7). kind · 단위 테스트에서만 HTTP 스텁.
-- 독립 경로는 워커에 직접 닿는 probe가 아니다. 워커는 프라이빗 서브넷(공인 IP 없음), EKS API는 비공개 엔드포인트. 사이드카(rank 0)가 공인 엔드포인트로 갱신하는 DynamoDB 하트비트가 "워커가 살아 있다"의 증거다. 모니터링 VM에 DynamoDB 두 테이블 읽기 · EC2 `DescribeInstanceStatus` IAM 필요 (박기현).
+- 독립 경로는 워커에 직접 닿는 probe가 아니다. 워커는 프라이빗 서브넷(공인 IP 없음), EKS API는 비공개 엔드포인트. 사이드카(rank 0)가 공인 엔드포인트로 갱신하는 DynamoDB 하트비트가 "워커가 살아 있다"의 증거다. 분류기(모니터링 클러스터)가 DynamoDB 두 테이블 읽기 · EC2 `DescribeInstanceStatus`를 하려면 온프레 → AWS 자격 증명(Roles Anywhere) 필요 (박기현).
 - blackbox_exporter는 VPN 터널 내부 IP(169.254.x) · pfSense · 공인 DNS 확인용으로만 남긴다.
 
 ## 3-1. 관리 클러스터(온프레미스)는 어떻게 다른가
@@ -72,7 +72,7 @@ Loki ──ruler 알람──▶ Alertmanager :9093 ──webhook(pipeline=failo
 
 - [ ] (박기현) 노드 그룹 라벨 `devoops/gpu=true` · `devoops/node-group=system` · spare 라벨/taint를 Terraform에 (B4 때 요청한 `nvidia.com/gpu.present=true`는 이 권장안으로 대체)
 - [ ] (박기현) AMI journald 디스크 저장 여부 (`/var/log/journal` 존재)
-- [ ] (박기현) 모니터링 VM IAM: DynamoDB `devoops-job-fencing` · `devoops-job-progress` 읽기, `ec2:DescribeInstanceStatus`
+- [ ] (박기현) 분류기용 Roles Anywhere 역할: DynamoDB `devoops-job-fencing` · `devoops-job-progress` 읽기, `ec2:DescribeInstanceStatus` (모니터링 S3 역할 3개와 같은 방식)
 - [x] (김성모) 예비 taint 키 `devoops/spare=true:NoSchedule` · GPU 라벨 `devoops/gpu=true` 확정 (2026-11-05). monitoring ns 자원 예산 0.5코어 · 1Gi, nodeSelector `platform-worker=true`(관리 클러스터)도 그대로
 - [ ] (나) dcgm-exporter Helm values: `customMetrics` 전체 목록(B3 초안) + Xid 230 주기 5초, tolerations Exists
 - [ ] (나) EKS overlay: nodeSelector `devoops/node-group: system`, Agent WAL · 게이트웨이 큐를 gp3 PVC로, cluster 라벨 worker-a/b/c (워커별 ConfigMap `devoops-cluster-info`와 맞출지 확인)

@@ -1,6 +1,6 @@
 # 장애 이벤트 JSON v1 (경계 문서 2)
 
-분류기(모니터링 VM)가 Kafka `gpu.fault` 토픽(172.30.0.40:9092, 파티션 키 = `node`)에 발행하는 "사고 보고서 한 장" (ADR-7 · ADR-8, 2026-11-05 반영. 이전 "HTTP POST" 표기는 폐기).
+분류기(온프레 모니터링 클러스터 172.30.0.31~.33, ADR-18)가 Kafka `gpu.fault` 토픽(172.30.0.40/.41/.42:9092, 파티션 키 = `node`)에 발행하는 "사고 보고서 한 장" (ADR-7 · ADR-8, 2026-11-05 반영. 이전 "HTTP POST" 표기는 폐기).
 소비자는 둘: 복구 컨트롤러(매니저 k8s, 조치)와 수집기(김현수, DB 적재). 컨트롤러는 PromQL · LogQL · Xid 번호를 몰라도 이 문서만 보고 움직일 수 있어야 한다.
 전달 보장은 최소 한 번. 중복은 소비 측이 거른다 (수집기 = `event_id`, 컨트롤러 = `dedup_key`, 2.1절). HTTP POST는 kind · 단위 테스트의 컨트롤러 스텁에만 쓴다.
 
@@ -32,7 +32,7 @@
 | `cluster` · `az` | 문자열 | 예: `worker-a`, `ap-northeast-2a` |
 | `node` | 문자열 / null | site 이벤트는 null |
 | `gpu_uuid` | `GPU-…` / null | dcgm-exporter 레이블(pci_bus_id → UUID)로 채움 |
-| `job_id` | 문자열 / null | **학습 작업 ID** = 백엔드가 만드는 8자리 hex (예 `3f9a1c2e`). k8s JobSet 이름 `job-3f9a1c2e-g0003`이 아니다. 분류기는 노드 → Pod → JobSet 라벨 `devoops/job-id`로 찾고, 못 찾으면 null |
+| `job_id` | 문자열 / null | **학습 작업 ID** = 백엔드가 만드는 8자리 hex (예 `3f9a1c2e`). k8s JobSet 이름 `job-3f9a1c2e-g0003`이 아니다. 분류기는 **Mimir의 kube-state-metrics 지표**로 찾는다: `kube_pod_info{node}` → `kube_pod_labels{label_devoops_job_id, label_devoops_generation}` (각 클러스터 KSM이 remote_write로 보낸 것, KSM `--metric-labels-allowlist` 필요). EKS API를 직접 부르지 않으므로 VPN·EKS 권한이 없어도 되고, VPN이 끊겨도 마지막 매핑이 남는다 (2026-11-11 김현수 지적으로 정정). 못 찾으면 null |
 | `generation` | 정수 / null | 세대 번호. 원본은 DynamoDB 펜싱 테이블 `devoops-job-fencing` (ADR-6). Pod 라벨 `devoops/generation`에서 읽음 |
 | `source` | enum | `dcgm` · `dmesg`(커널 로그, journald 경유) · `pod` · `straggler` · `site` · `spot` |
 | `raw` | 객체 | 분류 근거 원본. `xid` · `exit_code` · `metric` · `value` · `log_line` (해당 없으면 null) |

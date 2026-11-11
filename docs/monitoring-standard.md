@@ -94,7 +94,7 @@
 | MON-STD-12 | Job API | RED: 5xx 비율 · 지연 p95 (Backend 계측, 노찬경) | | | | 경고 5xx 1% · p95 측정 × 2 · 위험 5xx 5% 5분 | 기준선 (6주) | Backend 재시작 런북 (노찬경) | 가설 |
 | MON-STD-13 | PostgreSQL | 연결 수 · 디스크 · `pg_up` (postgres_exporter, 별도 VM) | | | | 경고 연결 80% · 디스크 80% · 위험 up==0 1분 | 운영 경험 (postgres_exporter 기본값) + 기준선 | DB 런북 (김현수) | 가설 |
 | MON-STD-14 | 결과 제공 | 결과물 업로드 실패 · 다운로드 오류 (학습 Job 카운터 · Backend 로그) | | | | 경고 1회 · 위험 연속 3회 | 운영 경험 | S3 권한 · 네트워크 점검 런북 | 가설 |
-| MON-STD-23 | Kafka (172.30.0.40, 2주차 도입 ADR-7 · 8) | 브로커 지표 JMX Exporter(김현수) + consumer lag `kafka_consumergroup_lag` (kafka_exporter, 모니터링 VM 컨테이너). 그룹: 복구 컨트롤러 · `collector` | | | | 경고 lag 증가 5분 · 위험 브로커 `up==0` 1분 (브로커 1대, 복제 없음) | 운영 경험 (kafka_exporter 기본 룰) | 데이터 담당 호출 런북. 컨트롤러 lag 증가 = 복구 지연 | 가설 |
+| MON-STD-23 | Kafka (172.30.0.40, 2주차 도입 ADR-7 · 8) | 브로커 지표 JMX Exporter(김현수) + consumer lag `kafka_consumergroup_lag` (kafka_exporter, 모니터링 클러스터 Pod ×1). 그룹: 복구 컨트롤러 · `collector` | | | | 경고 lag 증가 5분 · 위험 브로커 `up==0` 1분 (브로커 1대, 복제 없음) | 운영 경험 (kafka_exporter 기본 룰) | 데이터 담당 호출 런북. 컨트롤러 lag 증가 = 복구 지연 | 가설 |
 
 ### 4.8 모니터링 서버 자체
 
