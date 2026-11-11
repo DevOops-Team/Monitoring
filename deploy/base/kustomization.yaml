@@ -21,3 +21,10 @@ configMapGenerator:
     files: [mimir/rules/self.yml, mimir/rules/recovery.yml]
     options:
       disableNameSuffixHash: true
+  # 대시보드도 해시 없이: Grafana 차트(values/grafana.yaml의 dashboardsConfigMaps)가 이 이름으로 마운트하고,
+  # Grafana가 디렉터리를 주기적으로 다시 읽으므로 재시작 없이 반영
+  - name: grafana-dashboards-infra
+    files:
+      - grafana/dashboards/infra/mon-self.json
+    options:
+      disableNameSuffixHash: true
