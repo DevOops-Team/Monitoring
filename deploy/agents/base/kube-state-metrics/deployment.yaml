@@ -28,6 +28,8 @@ spec:
             - --telemetry-port=8081
             # rbac.yaml의 ClusterRole과 같은 목록. 늘리면 둘 다 고친다
             - --resources=nodes,pods,namespaces,persistentvolumeclaims,deployments,daemonsets,statefulsets,replicasets,jobs
+            # kube_pod_labels는 기본적으로 라벨을 안 싣는다(카디널리티). 분류기가 Pod→job_id·세대를 Mimir에서 조회하려면 이 두 라벨만 허용
+            - --metric-labels-allowlist=pods=[devoops/job-id,devoops/generation]
           ports:
             - {name: http-metrics, containerPort: 8080}
             - {name: telemetry, containerPort: 8081}
