@@ -47,6 +47,9 @@ lint() {
   docker run --rm -v "$D/base/prometheus-agent:/etc/prometheus:ro" \
     -v "$tmp/token:/var/run/secrets/kubernetes.io/serviceaccount/token:ro" \
     --entrypoint promtool "$PROMETHEUS_IMAGE" check config --agent /etc/prometheus/prometheus.yml
+  echo "== Grafana 대시보드 JSON (문법 · uid · title, uid 중복)"
+  jq -e '.uid and .title' "$D"/base/grafana/dashboards/*/*.json > /dev/null
+  [[ -z "$(jq -r '.uid' "$D"/base/grafana/dashboards/*/*.json | sort | uniq -d)" ]] || { echo "대시보드 uid 중복" >&2; return 1; }
   echo "== kustomize 렌더 (deploy/base)"
   kubectl kustomize "$D/base" > "$tmp/base.yaml"
   echo "   리소스 $(grep -c '^kind:' "$tmp/base.yaml")개"
