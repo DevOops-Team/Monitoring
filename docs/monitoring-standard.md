@@ -79,6 +79,7 @@
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-11 | 알람 | 감지 지연 (주입 → 컨트롤러의 Kafka `gpu.fault` 소비, Tempo span) | | | | 경고 p95 측정값 × 1.5 | 실험 (4주 감지 지연 표) | 룰 `for` · Alertmanager `group_wait` 조정 | 가설 |
 | MON-STD-21 | 매니저 | Kueue 대기 Workload 수 `kueue_pending_workloads` · 컨트롤러 결정 지연 (`decide` span) | | | | | 기준선 + 트레이스 (Tempo) | 스케줄링 (김성모) · 컨트롤러 (한송이) 호출 런북 | 비움 |
+| MON-STD-25 | 복구 컨트롤러 | HOLD 판정 수 `recovery_hold_total{job_id, reason}` (platform/recovery-controller :8080, 새 HOLD 1회당 +1, 전역 Watchdog HOLD는 `job_id=""`). 첫 HOLD는 시계열이 값 1로 태어나 `increase()`가 0 → 룰은 증가 **또는** 새 시계열(직전 1시간 샘플 없음) | | | | 위험 새 HOLD 1건 (`for` 없음, 약 5분 발화. 꺼짐 = 해결 아님 → resolved 알림 안 보냄) | 운영 경험 (11/11 회의 결정: HOLD는 전부 사람 확인) | 컨트롤러 (한송이) 호출 런북. `reason`별 대응은 컨트롤러 문서 | 가설 |
 
 ### 4.6 네트워크 · 사이트
 
@@ -118,6 +119,7 @@
 | 번호 | 룰 이름 (`alert:` / Loki ruler) | 런북 | 대시보드 패널 | 확인일 |
 |---|---|---|---|---|
 | MON-STD-01 ~ 24 | | | | |
+| MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | | |
 | SLO-1 ~ 4 | | | | |
 
 ## 6. 채우는 순서와 변경 규칙
@@ -130,6 +132,6 @@
 | 5 SLO (5~6주) | SLO 행 목표 |
 | 6 검증 (6주) | 추적표 전 행, 상태 `측정 못 함` 정리 |
 
-- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 25).
+- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 26).
 - 값을 바꾸면 근거 링크를 같이 바꾼다. 근거 없는 변경은 가설 열로만.
 - 룰 annotation `standard` 값이 이 표에 없으면 CI에서 실패시킨다 (2단계에서 promtool 테스트에 추가).

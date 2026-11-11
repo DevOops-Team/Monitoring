@@ -20,6 +20,7 @@ tests:
           - exp_labels: {severity: critical, cluster: onprem-manager, job_id: job-a, reason: stage_timeout}
             exp_annotations:
               summary: '자동 복구 보류(HOLD): job job-a · 사유 stage_timeout — 사람 확인 필요'
+              standard: MON-STD-25
       - eval_time: 8m
         alertname: RecoveryHold
         exp_alerts: []
@@ -40,6 +41,7 @@ tests:
           - exp_labels: {severity: critical, cluster: onprem-manager, job_id: job-a, reason: stage_timeout}
             exp_annotations:
               summary: '자동 복구 보류(HOLD): job job-a · 사유 stage_timeout — 사람 확인 필요'
+              standard: MON-STD-25
 
   # 3) 수집이 10분 끊겼다 돌아옴(값 그대로): 옛 HOLD를 다시 울리면 안 된다
   - name: 수집 공백 뒤 옛 HOLD를 다시 울리지 않는다
@@ -73,6 +75,7 @@ tests:
           - exp_labels: {severity: critical, cluster: onprem-manager, job_id: job-a, reason: stage_timeout}
             exp_annotations:
               summary: '자동 복구 보류(HOLD): job job-a · 사유 stage_timeout — 사람 확인 필요'
+              standard: MON-STD-25
 
   # 5) 전역 Watchdog HOLD: job_id가 빈 값
   - name: job_id가 빈 전역 HOLD
@@ -87,3 +90,4 @@ tests:
           - exp_labels: {severity: critical, cluster: onprem-manager, reason: watchdog_missing_and_no_gpu_fault}
             exp_annotations:
               summary: '자동 복구 보류(HOLD): 전역(Watchdog) · 사유 watchdog_missing_and_no_gpu_fault — 사람 확인 필요'
+              standard: MON-STD-25

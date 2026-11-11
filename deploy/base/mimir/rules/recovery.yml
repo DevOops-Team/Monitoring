@@ -21,3 +21,4 @@ groups:
           severity: critical
         annotations:
           summary: '자동 복구 보류(HOLD): {{ if $labels.job_id }}job {{ $labels.job_id }}{{ else }}전역(Watchdog){{ end }} · 사유 {{ $labels.reason }} — 사람 확인 필요'
+          standard: MON-STD-25
