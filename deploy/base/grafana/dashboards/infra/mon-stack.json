@@ -1,6 +1,6 @@
 {
-  "uid": "mon-self",
-  "title": "모니터링 자체",
+  "uid": "mon-stack",
+  "title": "모니터링 스택",
   "tags": [
     "monitoring",
     "MON-STD-22"
@@ -16,30 +16,7 @@
   "refresh": "30s",
   "graphTooltip": 1,
   "templating": {
-    "list": [
-      {
-        "name": "cluster",
-        "label": "클러스터",
-        "type": "query",
-        "datasource": {
-          "type": "prometheus",
-          "uid": "prometheus"
-        },
-        "query": {
-          "query": "label_values(up, cluster)",
-          "refId": "var"
-        },
-        "refresh": 2,
-        "sort": 1,
-        "multi": true,
-        "includeAll": true,
-        "allValue": ".*",
-        "current": {
-          "text": "All",
-          "value": "$__all"
-        }
-      }
-    ]
+    "list": []
   },
   "annotations": {
     "list": []
@@ -49,7 +26,7 @@
     {
       "type": "stat",
       "title": "다운 대상",
-      "description": "MON-STD-22. up == 0인 스크레이프 대상 수. 5분 넘으면 MonitoringTargetDown 알람",
+      "description": "MON-STD-22. up == 0인 스크레이프 대상 수(모든 클러스터). 5분 넘으면 MonitoringTargetDown 알람",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -61,8 +38,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(up{cluster=~\"$cluster\"} == 0) or vector(0)",
-          "instant": true
+          "expr": "count(up == 0) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -97,10 +73,10 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "background",
-        "graphMode": "none",
+        "colorMode": "value",
+        "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "center"
+        "justifyMode": "auto"
       },
       "id": 1,
       "gridPos": {
@@ -113,7 +89,7 @@
     {
       "type": "stat",
       "title": "수집 대상",
-      "description": "Agent가 긁고 있는 대상 전체 수. 갑자기 줄면 대상이 사라진 것(다운과 다름)",
+      "description": "Agent들이 긁고 있는 대상 전체 수. 갑자기 줄면 대상이 사라진 것(다운과 다름)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -125,15 +101,15 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(up{cluster=~\"$cluster\"})",
-          "instant": true
+          "expr": "count(up)"
         }
       ],
       "fieldConfig": {
         "defaults": {
           "unit": "short",
           "color": {
-            "mode": "thresholds"
+            "mode": "fixed",
+            "fixedColor": "#8AB8FF"
           },
           "noValue": "-",
           "thresholds": {
@@ -157,10 +133,10 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "background",
-        "graphMode": "none",
+        "colorMode": "value",
+        "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "center"
+        "justifyMode": "auto"
       },
       "id": 2,
       "gridPos": {
@@ -185,8 +161,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(ALERTS{alertname=\"Watchdog\", alertstate=\"firing\"}) or vector(0)",
-          "instant": true
+          "expr": "count(ALERTS{alertname=\"Watchdog\", alertstate=\"firing\"}) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -235,10 +210,10 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "background",
+        "colorMode": "value",
         "graphMode": "none",
         "textMode": "auto",
-        "justifyMode": "center"
+        "justifyMode": "auto"
       },
       "id": 3,
       "gridPos": {
@@ -263,8 +238,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(ALERTS{alertstate=\"firing\", alertname!=\"Watchdog\"}) or vector(0)",
-          "instant": true
+          "expr": "count(ALERTS{alertstate=\"firing\", alertname!=\"Watchdog\"}) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -299,10 +273,10 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "background",
-        "graphMode": "none",
+        "colorMode": "value",
+        "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "center"
+        "justifyMode": "auto"
       },
       "id": 4,
       "gridPos": {
@@ -314,8 +288,8 @@
     },
     {
       "type": "stat",
-      "title": "remote_write 실패",
-      "description": "MON-STD-10. Agent가 Mimir로 보내다 버린 샘플(초당). 0이 정상, 0보다 크면 유실",
+      "title": "알림 발송 실패",
+      "description": "Alertmanager가 Slack · healthchecks.io로 보내다 실패한 횟수(최근 1시간). 0이 정상",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -327,8 +301,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(prometheus_remote_storage_samples_failed_total{cluster=~\"$cluster\"}[5m]))",
-          "instant": true
+          "expr": "sum(increase(alertmanager_notifications_failed_total{integration=~\"slack|webhook\"}[1h]))"
         }
       ],
       "fieldConfig": {
@@ -347,12 +320,12 @@
               },
               {
                 "color": "#F2495C",
-                "value": 0.001
+                "value": 1
               }
             ]
           },
           "mappings": [],
-          "decimals": 2
+          "decimals": 0
         },
         "overrides": []
       },
@@ -364,10 +337,10 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "background",
-        "graphMode": "none",
+        "colorMode": "value",
+        "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "center"
+        "justifyMode": "auto"
       },
       "id": 5,
       "gridPos": {
@@ -379,8 +352,8 @@
     },
     {
       "type": "stat",
-      "title": "전송 지연 (최대)",
-      "description": "MON-STD-10. 가장 최근에 긁은 샘플과 Mimir로 보낸 샘플의 시각 차. 경고 30초 · 위험 5분은 가설(VPN 단절 실험 전)",
+      "title": "노드 디스크 (최대)",
+      "description": "MON-STD-22. 모니터링 노드 3대 중 가장 찬 루트 디스크. 경고 80% · 위험 90%",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -392,13 +365,12 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(prometheus_remote_storage_highest_timestamp_in_seconds{cluster=~\"$cluster\"} - ignoring(remote_name, url) group_right prometheus_remote_storage_queue_highest_sent_timestamp_seconds{cluster=~\"$cluster\"})",
-          "instant": true
+          "expr": "max(1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=\"monitoring\", mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=\"monitoring\", mountpoint=\"/\"})"
         }
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "percentunit",
           "color": {
             "mode": "thresholds"
           },
@@ -412,11 +384,11 @@
               },
               {
                 "color": "#FF9830",
-                "value": 30
+                "value": 0.8
               },
               {
                 "color": "#F2495C",
-                "value": 300
+                "value": 0.9
               }
             ]
           },
@@ -432,10 +404,10 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "background",
-        "graphMode": "none",
+        "colorMode": "value",
+        "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "center"
+        "justifyMode": "auto"
       },
       "id": 6,
       "gridPos": {
@@ -460,8 +432,8 @@
     },
     {
       "type": "table",
-      "title": "대상 상태 (cluster × job)",
-      "description": "job마다 정상 수 / 전체 수. cluster가 비어 있는 행은 모니터링 클러스터 Agent가 LAN에서 직접 긁는 대상(Proxmox · Kafka · blackbox)",
+      "title": "대상 상태",
+      "description": "job마다 정상 수 / 전체 수. cluster가 비어 있는 행 = 모니터링 클러스터 Agent가 LAN에서 직접 긁는 대상(Proxmox · Kafka · blackbox). annotated-pods = prometheus.io/scrape 어노테이션을 단 Pod, namespace로 구분",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -473,7 +445,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (cluster, job) (up{cluster=~\"$cluster\"})",
+          "expr": "sum by (cluster, namespace, job) (up)",
           "instant": true,
           "format": "table"
         },
@@ -483,7 +455,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count by (cluster, job) (up{cluster=~\"$cluster\"})",
+          "expr": "count by (cluster, namespace, job) (up)",
           "instant": true,
           "format": "table"
         }
@@ -505,9 +477,10 @@
             },
             "indexByName": {
               "cluster": 0,
-              "job": 1,
-              "Value #A": 2,
-              "Value #B": 3
+              "namespace": 1,
+              "job": 2,
+              "Value #A": 3,
+              "Value #B": 4
             }
           }
         }
@@ -530,7 +503,7 @@
         "x": 0,
         "y": 5,
         "w": 12,
-        "h": 8
+        "h": 10
       }
     },
     {
@@ -589,675 +562,18 @@
         "x": 12,
         "y": 5,
         "w": 12,
-        "h": 8
+        "h": 10
       }
     },
     {
       "type": "row",
-      "title": "Prometheus Agent → Mimir (remote_write)",
+      "title": "저장소 (Mimir · Loki · Tempo)",
       "collapsed": false,
       "panels": [],
       "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 13,
-        "w": 24,
-        "h": 1
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "실패 샘플 (초당)",
-      "description": "MON-STD-10. 재시도해도 못 보내 버린 샘플. 0이 정상",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cluster) (rate(prometheus_remote_storage_samples_failed_total{cluster=~\"$cluster\"}[5m]))",
-          "legendFormat": "{{cluster}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "transparent",
-                "value": null
-              }
-            ]
-          },
-          "min": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 11,
-      "gridPos": {
-        "x": 0,
-        "y": 14,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "전송 지연",
-      "description": "MON-STD-10. Mimir가 느리거나 경로(VPN)가 끊기면 올라간다. 경고 30초는 가설",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max by (cluster) (prometheus_remote_storage_highest_timestamp_in_seconds{cluster=~\"$cluster\"} - ignoring(remote_name, url) group_right prometheus_remote_storage_queue_highest_sent_timestamp_seconds{cluster=~\"$cluster\"})",
-          "legendFormat": "{{cluster}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "thresholdsStyle": {
-              "mode": "dashed"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "transparent",
-                "value": null
-              },
-              {
-                "color": "#FF9830",
-                "value": 30
-              }
-            ]
-          },
-          "min": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 12,
-      "gridPos": {
-        "x": 12,
-        "y": 14,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "대기 샘플",
-      "description": "보내려고 큐에 쌓인 샘플 수. 평소 수백~수천에서 오르내리고, 계속 오르기만 하면 못 보내는 중",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max by (cluster) (prometheus_remote_storage_samples_pending{cluster=~\"$cluster\"})",
-          "legendFormat": "{{cluster}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "transparent",
-                "value": null
-              }
-            ]
-          },
-          "min": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 13,
-      "gridPos": {
-        "x": 0,
-        "y": 22,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "WAL 크기",
-      "description": "MON-STD-16. Agent가 디스크에 적어 둔 미전송 대비 기록. 단절 중에는 계속 커진다(보존 상한 4시간)",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "prometheus_tsdb_wal_storage_size_bytes{job=\"prometheus-agent\", cluster=~\"$cluster\"}",
-          "legendFormat": "{{cluster}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "bytes",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "transparent",
-                "value": null
-              }
-            ]
-          },
-          "min": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 14,
-      "gridPos": {
-        "x": 12,
-        "y": 22,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "row",
-      "title": "OTel 게이트웨이 (로그 · 트레이스)",
-      "collapsed": false,
-      "panels": [],
-      "id": 15,
-      "gridPos": {
-        "x": 0,
-        "y": 30,
-        "w": 24,
-        "h": 1
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "내보내기 큐 사용률",
-      "description": "Loki · Tempo로 보내려고 디스크 큐에 쌓인 비율. 0이 정상, 1에 닿으면 새 데이터를 버린다",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "max by (cluster, exporter) (otelcol_exporter_queue_size{cluster=~\"$cluster\"} / otelcol_exporter_queue_capacity{cluster=~\"$cluster\"})",
-          "legendFormat": "{{cluster}} {{exporter}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "transparent",
-                "value": null
-              }
-            ]
-          },
-          "min": 0,
-          "max": 1
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 16,
-      "gridPos": {
-        "x": 0,
-        "y": 31,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "수신 거절 · 실패 (초당)",
-      "description": "게이트웨이가 받지 못한 로그 · 스팬. 거절 = 메모리 한도 등으로 되돌려 보냄, 실패 = 처리 중 오류. 0이 정상",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cluster) (rate(otelcol_receiver_refused_log_records{cluster=~\"$cluster\"}[5m]))",
-          "legendFormat": "{{cluster}} 로그 거절"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cluster) (rate(otelcol_receiver_refused_spans{cluster=~\"$cluster\"}[5m]))",
-          "legendFormat": "{{cluster}} 스팬 거절"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cluster) (rate(otelcol_receiver_failed_log_records{cluster=~\"$cluster\"}[5m]))",
-          "legendFormat": "{{cluster}} 로그 실패"
-        },
-        {
-          "refId": "D",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cluster) (rate(otelcol_receiver_failed_spans{cluster=~\"$cluster\"}[5m]))",
-          "legendFormat": "{{cluster}} 스팬 실패"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "transparent",
-                "value": null
-              }
-            ]
-          },
-          "min": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 17,
-      "gridPos": {
-        "x": 12,
-        "y": 31,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "row",
-      "title": "Fluent Bit (노드 로그)",
-      "collapsed": false,
-      "panels": [],
-      "id": 18,
-      "gridPos": {
-        "x": 0,
-        "y": 39,
-        "w": 24,
-        "h": 1
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "출력 오류 · 버림 (초당)",
-      "description": "Fluent Bit가 게이트웨이로 보내다 실패한 것. 버린 레코드가 0보다 크면 로그 유실",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cluster) (rate(fluentbit_output_errors_total{cluster=~\"$cluster\"}[5m]))",
-          "legendFormat": "{{cluster}} 오류"
-        },
-        {
-          "refId": "B",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cluster) (rate(fluentbit_output_retries_failed_total{cluster=~\"$cluster\"}[5m]))",
-          "legendFormat": "{{cluster}} 재시도 실패"
-        },
-        {
-          "refId": "C",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cluster) (rate(fluentbit_output_dropped_records_total{cluster=~\"$cluster\"}[5m]))",
-          "legendFormat": "{{cluster}} 버린 레코드"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "transparent",
-                "value": null
-              }
-            ]
-          },
-          "min": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 19,
-      "gridPos": {
-        "x": 0,
-        "y": 40,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "timeseries",
-      "title": "처리한 로그 (초당)",
-      "description": "노드별로 내보낸 로그 줄 수. 한 노드만 0이면 그 노드의 Fluent Bit를 본다",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum by (cluster, node) (rate(fluentbit_output_proc_records_total{cluster=~\"$cluster\"}[5m]))",
-          "legendFormat": "{{cluster}} {{node}}"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 10,
-            "showPoints": "never",
-            "spanNulls": false,
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "transparent",
-                "value": null
-              }
-            ]
-          },
-          "min": 0
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "table",
-          "placement": "bottom",
-          "showLegend": true,
-          "calcs": [
-            "lastNotNull",
-            "max"
-          ]
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "id": 20,
-      "gridPos": {
-        "x": 12,
-        "y": 40,
-        "w": 12,
-        "h": 8
-      }
-    },
-    {
-      "type": "row",
-      "title": "저장소 (모니터링 클러스터)",
-      "collapsed": false,
-      "panels": [],
-      "id": 21,
-      "gridPos": {
-        "x": 0,
-        "y": 48,
+        "y": 15,
         "w": 24,
         "h": 1
       }
@@ -1325,10 +641,10 @@
           "sort": "desc"
         }
       },
-      "id": 22,
+      "id": 11,
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 16,
         "w": 8,
         "h": 8
       }
@@ -1396,10 +712,10 @@
           "sort": "desc"
         }
       },
-      "id": 23,
+      "id": 12,
       "gridPos": {
         "x": 8,
-        "y": 49,
+        "y": 16,
         "w": 8,
         "h": 8
       }
@@ -1467,10 +783,10 @@
           "sort": "desc"
         }
       },
-      "id": 24,
+      "id": 13,
       "gridPos": {
         "x": 16,
-        "y": 49,
+        "y": 16,
         "w": 8,
         "h": 8
       }
@@ -1490,7 +806,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "1 - node_filesystem_avail_bytes{job=\"node-exporter\", mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node-exporter\", mountpoint=\"/\"}",
+          "expr": "1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=\"monitoring\", mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=\"monitoring\", mountpoint=\"/\"}",
           "legendFormat": "{{node}}"
         }
       ],
@@ -1547,10 +863,10 @@
           "sort": "desc"
         }
       },
-      "id": 25,
+      "id": 14,
       "gridPos": {
         "x": 0,
-        "y": 57,
+        "y": 24,
         "w": 12,
         "h": 8
       }
@@ -1618,10 +934,336 @@
           "sort": "desc"
         }
       },
-      "id": 26,
+      "id": 15,
       "gridPos": {
         "x": 12,
-        "y": 57,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "알림 (Alertmanager)",
+      "collapsed": false,
+      "panels": [],
+      "id": 16,
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "알림 발송 (5분당)",
+      "description": "webhook = Watchdog를 healthchecks.io로 1분마다 보내는 생존 신호(계속 있는 것이 정상), slack = 사람용 알림",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (integration) (increase(alertmanager_notifications_total{integration=~\"slack|webhook\"}[5m]))",
+          "legendFormat": "{{integration}} 발송"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (integration) (increase(alertmanager_notifications_failed_total{integration=~\"slack|webhook\"}[5m]))",
+          "legendFormat": "{{integration}} 실패"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Alertmanager가 들고 있는 알람",
+      "description": "active = 발화 중, suppressed = 억제 · 무음 처리됨. active 1(Watchdog)이 평소 값",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (state) (alertmanager_alerts)",
+          "legendFormat": "{{state}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 12,
+        "y": 33,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "네트워크 probe (blackbox)",
+      "collapsed": false,
+      "panels": [],
+      "id": 19,
+      "gridPos": {
+        "x": 0,
+        "y": 41,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "state-timeline",
+      "title": "ping 성공 여부",
+      "description": "모니터링 클러스터 안에서 대상으로 ping. pfsense-lan = 온프레 게이트웨이(172.30.0.1), internet = 1.1.1.1. VPN 터널 대상은 AWS 재구축 뒤 추가(MON-STD-18)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "probe_success",
+          "legendFormat": "{{target_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#F2495C",
+                "value": null
+              },
+              {
+                "color": "#73BF69",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "실패",
+                  "index": 0
+                },
+                "1": {
+                  "text": "정상",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 0
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "showValue": "never",
+        "mergeValues": true,
+        "rowHeight": 0.8,
+        "legend": {
+          "showLegend": false
+        },
+        "tooltip": {
+          "mode": "single"
+        }
+      },
+      "id": 20,
+      "gridPos": {
+        "x": 0,
+        "y": 42,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "ping 응답 시간",
+      "description": "응답까지 걸린 시간. LAN은 1ms 안팎, 인터넷은 10ms 안팎이 평소 값",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "probe_duration_seconds",
+          "legendFormat": "{{target_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 21,
+      "gridPos": {
+        "x": 12,
+        "y": 42,
         "w": 12,
         "h": 8
       }
