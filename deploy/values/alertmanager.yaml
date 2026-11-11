@@ -30,7 +30,7 @@ resources:
 configmapReload:
   enabled: false
 
-# 라우팅: Watchdog → healthchecks.io (데드맨), 나머지 → Slack #alerts-gpu
+# 라우팅: Watchdog → healthchecks.io (데드맨), RecoveryHold → Slack(해결 알림 없음), 나머지 → Slack #alerts-gpu
 # 분류기 라우트(pipeline=failover)는 분류기를 올릴 때 추가
 config:
   global:
@@ -48,6 +48,11 @@ config:
         group_wait: 0s
         group_interval: 1m
         repeat_interval: 1m      # healthchecks.io 체크 period 1m · grace 4m → 미수신 5m에 알림
+      # HOLD는 "일어난 사건"이라 룰이 약 5분 발화하고 꺼진다. 꺼짐 = 해결이 아니므로 resolved를 보내지 않는 수신자로.
+      # job·사유별로 따로 묶어 여러 HOLD가 한 메시지에 뭉치지 않게 한다 (MON-STD-25)
+      - matchers: ["alertname = RecoveryHold"]
+        receiver: slack-event
+        group_by: [alertname, cluster, job_id, reason]
   receivers:
     - name: slack
       slack_configs:
@@ -57,6 +62,14 @@ config:
           text: >-
             {{ range .Alerts }}• {{ .Annotations.summary }}
             {{ if .Labels.instance }}({{ .Labels.instance }}){{ end }}
+            {{ end }}
+    - name: slack-event
+      slack_configs:
+        - channel: "#alerts-gpu"
+          send_resolved: false
+          title: '[HOLD] {{ .CommonLabels.alertname }}'
+          text: >-
+            {{ range .Alerts }}• {{ .Annotations.summary }}
             {{ end }}
     - name: deadman
       webhook_configs:
