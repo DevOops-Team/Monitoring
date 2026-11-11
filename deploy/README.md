@@ -24,6 +24,9 @@ ADR-18 1단계 상태: 저장소는 **복제 1 · PVC filesystem**. 3노드 복�
 
 수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`).
 룰: `base/mimir/rules/self.yml` 4개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown), Mimir ruler가 15초마다 평가.
+`base/mimir/rules/recovery.yml` 1개(`RecoveryHold`, MON-STD-25): 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화. 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
+라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
+**11/11 현재 `recovery.yml`과 `slack-event`는 레포에만 있고 클러스터 미적용**(컨트롤러 이미지 배포 뒤 적용).
 
 ## 적용 (처음 · 변경 · 재설치 모두 같은 명령)
 
@@ -38,7 +41,7 @@ scripts/create-secrets.sh        # 1회(값이 바뀌면 다시). 사람이 터�
 scripts/deploy-k8s.sh            # 검사(lint) → 적용. API 서버가 172.30.0.30이 아니면 거부한다
 ```
 
-- `scripts/deploy-k8s.sh --lint-only`: promtool(룰 · Agent 설정) · kustomize 렌더 · helm template · amtool만
+- `scripts/deploy-k8s.sh --lint-only`: promtool(룰 검사 · 룰 단위 테스트 · Agent 설정) · kustomize 렌더 · helm template · amtool만
 - `scripts/deploy-k8s.sh --kind`: 로컬 kind에 더미 Secret으로 올려 구조 확인(`kind create cluster` 뒤). kind에서는 LoadBalancer IP가 안 나오고, ICMP · 이미지 아키텍처가 실 노드와 달라 **kind 통과가 실 클러스터 통과를 뜻하지 않는다**
 - `CHART_CACHE=<폴더>`: `<차트>-<버전>.tgz`를 미리 받아 두고 쓰기(GitHub 릴리스 다운로드가 자주 504)
 - Secret 없이도 StorageClass · Mimir · Agent · node-exporter · Loki · Tempo · blackbox까지는 뜬다. Alertmanager · Grafana만 Secret을 기다린다
@@ -52,7 +55,7 @@ kubectl -n monitoring get pods,pvc,svc
 V=172.30.0.35
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=count by (job) (up == 1)'   # pve-host 5 · kubelet 3 · …
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up == 0'                    # 다운 대상
-curl -s  "http://$V:9009/prometheus/api/v1/rules"                                                     # 룰 4개, Watchdog firing이 정상
+curl -s  "http://$V:9009/prometheus/api/v1/rules"                                                     # 룰 4개(recovery.yml 적용 뒤 5개), Watchdog firing이 정상
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=probe_success'              # 2개 다 1
 kubectl -n monitoring port-forward svc/prometheus-agent 9090   # Agent 대상 상태 화면
 ```
@@ -63,7 +66,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | 바꾸는 것 | 파일 | 반영 |
 |---|---|---|
 | 스크레이프 대상 | `base/prometheus-agent/prometheus.yml` | `deploy-k8s.sh` → ConfigMap 이름이 바뀌어 Agent가 다시 뜸(WAL은 PVC에 남음) |
-| 알람 룰 | `base/mimir/rules/*.yml` (+ `kustomization.yaml`의 files) | `deploy-k8s.sh` → Mimir가 1분 안에 다시 읽음(재시작 없음) |
+| 알람 룰 | `base/mimir/rules/*.yml` (+ `kustomization.yaml`의 files, `scripts/deploy-k8s.sh` lint의 파일 목록, 테스트는 `base/mimir/tests/`) | `deploy-k8s.sh` → Mimir가 1분 안에 다시 읽음(재시작 없음) |
 | Mimir 설정 | `base/mimir/mimir.yaml` | Mimir 재시작(복제 1이라 그동안 수신 중단, Agent WAL이 버팀) |
 | Alertmanager 라우팅 | `values/alertmanager.yaml`의 `config` | helm upgrade로 Pod 재시작 |
 | 데이터소스 | `values/grafana.yaml` | helm upgrade |
