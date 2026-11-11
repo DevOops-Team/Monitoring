@@ -79,7 +79,7 @@
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-11 | 알람 | 감지 지연 (주입 → 컨트롤러의 Kafka `gpu.fault` 소비, Tempo span) | | | | 경고 p95 측정값 × 1.5 | 실험 (4주 감지 지연 표) | 룰 `for` · Alertmanager `group_wait` 조정 | 가설 |
 | MON-STD-21 | 매니저 | Kueue 대기 Workload 수 `kueue_pending_workloads` · 컨트롤러 결정 지연 (`decide` span) | | | | | 기준선 + 트레이스 (Tempo) | 스케줄링 (김성모) · 컨트롤러 (한송이) 호출 런북 | 비움 |
-| MON-STD-25 | 복구 컨트롤러 | HOLD 판정 수 `recovery_hold_total{job_id, reason}` (platform/recovery-controller :8080, 새 HOLD 1회당 +1, 전역 Watchdog HOLD는 `job_id=""`). 첫 HOLD는 시계열이 값 1로 태어나 `increase()`가 0 → 룰은 증가 **또는** 새 시계열(직전 1시간 샘플 없음) | | | | 위험 새 HOLD 1건 (`for` 없음, 약 5분 발화. 꺼짐 = 해결 아님 → resolved 알림 안 보냄) | 운영 경험 (11/11 회의 결정: HOLD는 전부 사람 확인) | 컨트롤러 (한송이) 호출 런북. `reason`별 대응은 컨트롤러 문서 | 가설 |
+| MON-STD-25 | 복구 컨트롤러 | HOLD 판정 수 `recovery_hold_total{job_id, reason}` (platform/recovery-controller :8080, 새 HOLD 1회당 +1, 전역 Watchdog HOLD는 `job_id=""`). 첫 HOLD는 시계열이 값 1로 태어나 `increase()`가 0 → 룰은 증가 **또는** 새 시계열(직전 1시간 샘플 없음) **또는** 최근 1시간 안에 재시작한 프로세스(`process_start_time_seconds`)의 새 시계열. **한계**: HOLD 뒤 수집 주기(15초) 안에 컨트롤러가 죽으면 알람 없음(지표 방식의 한계, 기록은 DynamoDB · Kafka `recovery.held`에 남음) · 알람은 발생만 알리고 미처리 건수는 모름 → 둘 다 Grafana HOLD 목록 패널로 보완 | | | | 위험 새 HOLD 1건 (`for` 없음, 약 5분 발화. 꺼짐 = 해결 아님 → resolved 알림 안 보냄) | 운영 경험 (11/11 회의 결정: HOLD는 전부 사람 확인) | 컨트롤러 (한송이) 호출 런북. `reason`별 대응은 컨트롤러 문서 | 가설 |
 
 ### 4.6 네트워크 · 사이트
 
