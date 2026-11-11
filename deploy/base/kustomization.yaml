@@ -18,6 +18,6 @@ configMapGenerator:
     files: [prometheus-agent/prometheus.yml]
   # 룰은 해시를 붙이지 않는다: Mimir ruler가 1분마다 디렉터리를 다시 읽으므로 재시작 없이 반영
   - name: mimir-rules
-    files: [mimir/rules/self.yml]
+    files: [mimir/rules/self.yml, mimir/rules/recovery.yml]
     options:
       disableNameSuffixHash: true

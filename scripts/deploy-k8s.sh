@@ -36,8 +36,11 @@ chart() {
 lint() {
   local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   echo "== promtool check rules (Mimir ruler가 읽을 룰)"
-  docker run --rm -v "$D/base/mimir/rules:/rules:ro" --entrypoint promtool "$PROMETHEUS_IMAGE" \
-    check rules /rules/self.yml
+  docker run --rm -v "$D/base/mimir:/mimir:ro" --entrypoint promtool "$PROMETHEUS_IMAGE" \
+    check rules /mimir/rules/self.yml /mimir/rules/recovery.yml
+  echo "== promtool test rules (룰 단위 테스트)"
+  docker run --rm -v "$D/base/mimir:/mimir:ro" --entrypoint promtool "$PROMETHEUS_IMAGE" \
+    test rules /mimir/tests/recovery_test.yml
   echo "== promtool check config --agent (Prometheus Agent)"
   # promtool은 credentials_file 존재까지 본다. Pod 안에만 있는 ServiceAccount 토큰 자리에 빈 파일을 마운트
   : > "$tmp/token"
