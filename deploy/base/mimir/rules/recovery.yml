@@ -1,0 +1,24 @@
+# 복구 컨트롤러가 사람에게 넘긴 사건(HOLD)을 Slack으로 알린다. 경로 = 컨트롤러 지표 → Agent → Mimir 룰 → Alertmanager (11/11 회의 결정).
+# 지표: recovery_hold_total{job_id, reason} (platform/recovery-controller :8080, 새 HOLD 판정 1회당 +1. 전역 Watchdog HOLD는 job_id="")
+groups:
+  - name: recovery
+    rules:
+      # 두 절을 or로 묶는다.
+      #  1) 이미 있던 시계열이 5분 안에 늘었다
+      #  2) 새 시계열이다: 카운터는 첫 HOLD 때 값 1로 태어나서 increase()로는 0으로 보인다(첫 HOLD 누락)
+      #     "새것" 판정은 5분 전 기준 직전 1시간에 샘플이 없었는지로 한다. 그냥 offset 5m만 쓰면
+      #     Agent 수집이 몇 분 끊겼다 돌아올 때 옛 HOLD가 전부 새것으로 보여 다시 울린다
+      # unless는 instance·pod까지 맞춰 본다(sum 전): 컨트롤러가 재시작하면 카운터가 0부터라, 같은 job·reason이어도 새 Pod의 시계열은 새 HOLD다
+      # 알람은 HOLD 뒤 약 5분 발화하고 꺼진다. 꺼짐 = 해결이 아니므로 Alertmanager에서 resolved 알림을 보내지 않는다
+      - alert: RecoveryHold
+        expr: >
+          sum by (cluster, job_id, reason) (
+              increase(recovery_hold_total[5m]) > 0
+            or
+              (recovery_hold_total unless last_over_time(recovery_hold_total[1h] offset 5m))
+          )
+        labels:
+          severity: critical
+        annotations:
+          summary: '자동 복구 보류(HOLD): {{ if $labels.job_id }}job {{ $labels.job_id }}{{ else }}전역(Watchdog){{ end }} · 사유 {{ $labels.reason }} — 사람 확인 필요'
+          standard: MON-STD-25

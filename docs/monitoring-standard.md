@@ -56,7 +56,7 @@
 | MON-STD-06 | GPU 노드 | CPU (g4dn.xlarge 4 vCPU) `node_cpu_seconds_total` | | | | 경고 80% 5분 · 위험 95% | 실험 (stress-ng로 스텝 시간 꺾이는 점) | 데이터 로더 워커 수 조정 런북 | 가설 |
 | MON-STD-07 | GPU 노드 | 메모리 · 디스크 · 네트워크 `node_memory_*` · `node_filesystem_*` · `node_network_*` | | | | 위험 디스크 90% | 기준선 + 운영 경험 | 체크포인트 로컬 쓰기 실패 예방 런북 | 가설 |
 | MON-STD-16 | CPU 노드 | Prometheus Agent WAL 디스크 · `prometheus_agent_*` (WAL 경로 `node_filesystem_avail_bytes`) | | | | WAL 보존 상한 4h = VPN 단절 복구 상한 | 벤더 (Agent WAL 기본 보존 max 4h) + 실험 (VPN 단절) | VPN 점검 런북 | 가설 |
-| MON-STD-24 | Proxmox 호스트 (devoops · pve1~4) | 호스트 OS node-exporter (`job="pve-host"`, 모니터링 클러스터 Agent가 LAN 직접 pull, 설치 · 설정은 `ansible/roles/node_exporter`): `up` · 루트 디스크 `node_filesystem_avail_bytes` · 온도 `node_hwmon_temp_celsius` (CPU `chip=~"platform_coretemp.*"` / NVMe `chip=~"nvme.*"` 분리) | `up` 5/5 · 루트 디스크 사용 12~53% (devoops 53%, 나머지 12~18%) · **CPU 온도 24h 평균 38~49°C · p95 41~53°C** (호스트당 VM 2~3대 가동 기준, 덮개 개폐는 ±2°C로 무관) · **NVMe 평균 22~53°C** (devoops만 50°C대, VM 4대 디스크 쓰기) | | | | 호스트 다운 5분 (`up==0`) · 디스크 경고 80% · 위험 90% · **CPU 온도 경고 80°C · 위험 90°C**, 평가는 `avg_over_time([5m])` 또는 `for: 5m` (pve1 · pve3에 하루 19회 1샘플 60~92°C 스파이크가 남아 인스턴트 값 금지) · **NVMe 온도 경고 70°C** | 벤더 (CPU Tjmax 100°C · NVMe 스로틀 70~80°C) + 기준선 **2회 누적 48h** ([1차 2026-11-06 덮개 닫힘 24h](measurements/2026-11-06-pve-host-temp.md) · 2차 2026-11-09~10 덮개 열림 24.1h, 같은 노트 7절) + 운영 경험 (11/02~11/10 pve4 15분 주기 스파이크 = pve4에만 깔린 `prometheus-node-exporter-collectors` 15분 타이머, 11/10 Ansible로 제거) | 호스트 다운 = 그 위 VM(master·worker·monitoring·kafka·pfsense) 전부 영향 → 인프라 담당 호출 런북 | 측정 중 (정상 확정, 경고 · 위험은 가설) |
+| MON-STD-24 | Proxmox 호스트 (devoops · pve1~4) | 호스트 OS node-exporter (`job="pve-host"`, 모니터링 클러스터 Agent가 LAN 직접 pull, 설치 · 설정은 `ansible/roles/node_exporter`): `up` · 루트 디스크 `node_filesystem_avail_bytes` · 온도 `node_hwmon_temp_celsius` (CPU `chip=~"platform_coretemp.*"` / NVMe `chip=~"nvme.*"` 분리) | `up` 5/5 · 루트 디스크 사용 12~53% (devoops 53%, 나머지 12~18%) · **CPU 온도 24h 평균 38~49°C · p95 41~53°C** (호스트당 VM 2~3대 가동 기준, 덮개 개폐는 ±2°C로 무관) · **NVMe 평균 22~53°C** (devoops만 50°C대, VM 4대 디스크 쓰기) | | | | 호스트 다운 5분 (`up==0`) · 디스크 경고 80% · 위험 90% · **CPU 온도 경고 80°C · 위험 90°C**, 평가는 `avg_over_time([5m])` 또는 `for: 5m` (pve1 · pve3에 하루 19회 1샘플 60~92°C 스파이크가 남아 인스턴트 값 금지) · **NVMe 온도 경고 70°C** | 벤더 (CPU Tjmax 100°C · NVMe 스로틀 70~80°C) + 기준선 **2회 누적 48h** ([1차 2026-11-06 덮개 닫힘 24h](measurements/2026-11-06-pve-host-temp.md) · 2차 2026-11-09~10 덮개 열림 24.1h, 같은 노트 7절) + 운영 경험 (11/02~11/10 pve4 15분 주기 스파이크 = pve4에만 깔린 `prometheus-node-exporter-collectors` 15분 타이머, 11/10 Ansible로 제거 → 11/11 재부팅 뒤에도 0회로 **확정**, 같은 노트 7-4) | 호스트 다운 = 그 위 VM(master·worker·monitoring·kafka·pfsense) 전부 영향 → 인프라 담당 호출 런북 | 측정 중 (정상 확정, 경고 · 위험은 가설) |
 
 ### 4.3 학습 Job
 
@@ -79,6 +79,7 @@
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-11 | 알람 | 감지 지연 (주입 → 컨트롤러의 Kafka `gpu.fault` 소비, Tempo span) | | | | 경고 p95 측정값 × 1.5 | 실험 (4주 감지 지연 표) | 룰 `for` · Alertmanager `group_wait` 조정 | 가설 |
 | MON-STD-21 | 매니저 | Kueue 대기 Workload 수 `kueue_pending_workloads` · 컨트롤러 결정 지연 (`decide` span) | | | | | 기준선 + 트레이스 (Tempo) | 스케줄링 (김성모) · 컨트롤러 (한송이) 호출 런북 | 비움 |
+| MON-STD-25 | 복구 컨트롤러 | HOLD 판정 수 `recovery_hold_total{job_id, reason}` (platform/recovery-controller :8080, 새 HOLD 1회당 +1, 전역 Watchdog HOLD는 `job_id=""`). 첫 HOLD는 시계열이 값 1로 태어나 `increase()`가 0 → 룰은 증가 **또는** 새 시계열(직전 1시간 샘플 없음) | | | | 위험 새 HOLD 1건 (`for` 없음, 약 5분 발화. 꺼짐 = 해결 아님 → resolved 알림 안 보냄) | 운영 경험 (11/11 회의 결정: HOLD는 전부 사람 확인) | 컨트롤러 (한송이) 호출 런북. `reason`별 대응은 컨트롤러 문서 | 가설 |
 
 ### 4.6 네트워크 · 사이트
 
@@ -118,6 +119,7 @@
 | 번호 | 룰 이름 (`alert:` / Loki ruler) | 런북 | 대시보드 패널 | 확인일 |
 |---|---|---|---|---|
 | MON-STD-01 ~ 24 | | | | |
+| MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | | |
 | SLO-1 ~ 4 | | | | |
 
 ## 6. 채우는 순서와 변경 규칙
@@ -130,6 +132,6 @@
 | 5 SLO (5~6주) | SLO 행 목표 |
 | 6 검증 (6주) | 추적표 전 행, 상태 `측정 못 함` 정리 |
 
-- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 25).
+- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 26).
 - 값을 바꾸면 근거 링크를 같이 바꾼다. 근거 없는 변경은 가설 열로만.
 - 룰 annotation `standard` 값이 이 표에 없으면 CI에서 실패시킨다 (2단계에서 promtool 테스트에 추가).
