@@ -43,6 +43,23 @@ resources:
   requests: {cpu: 50m, memory: 192Mi}
   limits: {memory: 512Mi}
 
+# 대시보드는 레포의 JSON 파일이 원본(base/grafana/dashboards/<폴더>/*.json → ConfigMap grafana-dashboards-<폴더>).
+# 화면에서 고친 것은 저장되지 않는다: 화면에서 편집 → Export JSON → 레포 파일 교체
+dashboardProviders:
+  dashboardproviders.yaml:
+    apiVersion: 1
+    providers:
+      - name: infra
+        orgId: 1
+        folder: 인프라
+        type: file
+        disableDeletion: true
+        allowUiUpdates: false
+        options:
+          path: /var/lib/grafana/dashboards/infra
+dashboardsConfigMaps:
+  infra: grafana-dashboards-infra
+
 datasources:
   datasources.yaml:
     apiVersion: 1

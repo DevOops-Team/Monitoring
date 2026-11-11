@@ -1,0 +1,66 @@
+# 노드마다 하나. 노드 OS 지표(CPU · 메모리 · 디스크 · 네트워크)를 노드 IP:9100으로 연다.
+# kubelet · cAdvisor는 컨테이너만 보므로 "노드 디스크가 찼나"는 이것 없이는 안 보인다.
+# 인자 · 마운트는 모니터링 클러스터가 쓰는 차트(prometheus-node-exporter 5.0.0) 렌더 결과와 같게 두어 두 클러스터의 지표가 같은 모양이 되게 한다.
+# hostNetwork · hostPID · 루트 파일시스템 읽기 전용 마운트: 컨테이너가 아니라 노드를 재야 해서 필요. 쓰는 곳은 없다
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  labels:
+    app.kubernetes.io/name: node-exporter
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: node-exporter
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: node-exporter
+    spec:
+      automountServiceAccountToken: false
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+        - operator: Exists          # control-plane · spare · faulty 어떤 taint든 전 노드
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        runAsGroup: 65534
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: node-exporter
+          image: quay.io/prometheus/node-exporter:v1.12.1
+          args:
+            - --path.procfs=/host/proc
+            - --path.sysfs=/host/sys
+            - --path.rootfs=/host/root
+            - --path.udev.data=/host/root/run/udev/data
+            - --web.listen-address=:9100
+            - --collector.filesystem.mount-points-exclude=^/(dev|proc|sys|run/containerd/.+|var/lib/docker/.+|var/lib/kubelet/.+)($|/)
+            - --collector.filesystem.fs-types-exclude=^(autofs|binfmt_misc|bpf|cgroup2?|configfs|debugfs|devpts|devtmpfs|fusectl|hugetlbfs|iso9660|mqueue|nsfs|overlay|proc|procfs|pstore|rpc_pipefs|securityfs|selinuxfs|squashfs|sysfs|tracefs|erofs)$
+          ports:
+            - {name: metrics, containerPort: 9100}
+          livenessProbe:
+            httpGet: {path: /, port: metrics}
+            periodSeconds: 30
+          readinessProbe:
+            httpGet: {path: /, port: metrics}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 20m, memory: 32Mi}
+            limits: {memory: 96Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: proc, mountPath: /host/proc, readOnly: true}
+            - {name: sys, mountPath: /host/sys, readOnly: true}
+            - {name: root, mountPath: /host/root, readOnly: true, mountPropagation: HostToContainer}
+      volumes:
+        - name: proc
+          hostPath: {path: /proc}
+        - name: sys
+          hostPath: {path: /sys}
+        - name: root
+          hostPath: {path: /}
