@@ -186,6 +186,7 @@ apply_agents_kind() {
     kubectl -n "$NS" rollout status deployment/"$d" --timeout=3m
   done
   kubectl -n "$NS" rollout status daemonset/fluent-bit --timeout=3m
+  kubectl -n "$NS" rollout status daemonset/node-exporter --timeout=3m
   kubectl -n "$NS" get pods
 }
 

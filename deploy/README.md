@@ -100,6 +100,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | kube-state-metrics v2.20.0 | Deployment ×1 | - | Agent가 긁음 |
 | Prometheus Agent v3.15.1 | Deployment ×1 | WAL `prometheus-agent/` | Mimir `172.30.0.35:9009` |
 | Fluent Bit 5.1.1 | DaemonSet (toleration Exists) | 책갈피 db · 미전송 청크 `fluent-bit/` | 게이트웨이 `otel-gateway:4318` |
+| node-exporter 1.12.1 | DaemonSet (toleration Exists, hostNetwork · 노드 IP:9100) | - | Agent가 긁음 |
 | OTel Collector contrib 0.164.0 | Deployment ×1 | file_storage 큐 `otel-gateway/` | Loki `172.30.0.35:3100/otlp` · Tempo `172.30.0.35:4317` |
 
 - `base/`는 모든 클러스터 공통. 다른 것(cluster · site 이름, nodeSelector, 버퍼 디스크)만 `overlays/<클러스터>/`에서 patch. 클러스터 이름은 Deployment env `CLUSTER_NAME` · `SITE`로 들어가 Agent `external_labels` · 게이트웨이 `resource` 프로세서가 읽는다
@@ -109,7 +110,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 
 확인:
 ```bash
-curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{cluster="onprem-manager"}'          # 6 job: kubelet · cadvisor · kube-state-metrics · prometheus-agent · otel-gateway · fluent-bit
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{cluster="onprem-manager"}'          # kubelet · cadvisor · kube-state-metrics · prometheus-agent · otel-gateway · fluent-bit · node-exporter(노드마다 1) · annotated-pods
 curl -sG "http://$V:3100/loki/api/v1/label/k8s_namespace_name/values" --data-urlencode 'query={k8s_cluster_name="onprem-manager"}'
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=otelcol_exporter_queue_size{cluster="onprem-manager"}'   # 0이 정상, 쌓이면 저장소 쪽 문제
 ```

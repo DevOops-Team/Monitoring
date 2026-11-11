@@ -46,6 +46,18 @@ scrape_configs:
         regex: "|POD"
         action: drop
 
+  # node-exporter DaemonSet: 노드 OS 지표. hostNetwork라 Pod 주소가 곧 노드 IP:9100.
+  # job · node 라벨은 모니터링 클러스터 쪽(deploy/base)과 같게 두어 대시보드 · 룰을 같이 쓴다
+  - job_name: node-exporter
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_name]
+        regex: node-exporter;metrics
+        action: keep
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+
   # kube-state-metrics: Pod · 노드 · 워크로드 상태. 헤드리스 Service의 엔드포인트를 긁는다
   - job_name: kube-state-metrics
     kubernetes_sd_configs:

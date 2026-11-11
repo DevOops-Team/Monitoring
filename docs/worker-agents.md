@@ -22,7 +22,7 @@
 |---|---|---|---|---|
 | dcgm-exporter | DaemonSet | `devoops/gpu: "true"` | `[{operator: Exists}]` | GPU 노드 전부(예비 포함). Xid 필드 230 수집 5초 (fault-event ±45초 창 전제) |
 | NVML 사이드카 (호출 지연 · Xid 이벤트) | DaemonSet | `devoops/gpu: "true"` | `[{operator: Exists}]` | dcgm과 같은 노드 |
-| node-exporter | DaemonSet | 없음 | `[{operator: Exists}]` | 시스템 · GPU · 예비 전부 |
+| node-exporter | DaemonSet | 없음 | `[{operator: Exists}]` | 시스템 · GPU · 예비 전부. hostNetwork라 노드 IP:9100, `job="node-exporter"` · `node` 라벨은 모니터링 클러스터와 같다 (`deploy/agents/base/node-exporter/`) |
 | Fluent Bit (Pod 로그 · journald 커널 로그) | DaemonSet | 없음 | `[{operator: Exists}]` | 전 노드. 호스트 `/var/log` · `/run/log` 읽기 전용, 책갈피 db · 미전송 버퍼는 hostPath `/var/lib/monitoring-agents/fluent-bit`. 커널 로그는 systemd 입력 `_TRANSPORT=kernel`(cursor 책갈피). 출력은 OTLP → 게이트웨이(저장소 주소를 모른다) |
 | OTel Collector 게이트웨이 (로그 · 앱 span 수신) | Deployment ×1 | `devoops/node-group: system` | 없음 | 클러스터의 출구 한 곳. file_storage 영속 큐로 저장소 · VPN 중단을 버팀. 트레이스는 SDK에 디스크 버퍼가 없어 이게 유일한 보호. 클러스터 이름 라벨(`k8s.cluster.name`)을 여기서 붙임 |
 | Prometheus Agent | Deployment ×1 | `devoops/node-group: system` | 없음 | 스팟 회수 때 수집 파이프 생존. `external_labels: {cluster: worker-a}`(env `CLUSTER_NAME`). WAL은 EKS는 PVC(gp3), 관리 클러스터는 hostPath |
