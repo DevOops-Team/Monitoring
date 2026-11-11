@@ -1,17 +1,19 @@
 # 클러스터 수집 층 배치 규약 — 워커 EKS · 관리 클러스터
 
-워커 EKS 3개(AZ별)와 관리 클러스터(온프레미스)에 올릴 모니터링 구성 요소가 **어느 노드에, 어떤 toleration으로** 뜨는지 한 장. 매니페스트는 `deploy/agents/`(base 공통 + overlays/{onprem,kind}, EKS overlay는 재구축 뒤). ADR-18(11/08)로 Alloy는 폐기, **Fluent Bit DaemonSet + OTel Collector 게이트웨이**로 바뀌었다. 노드 라벨 · taint는 김성모 "쿠버네티스 아키텍처 초안" 6절(2026-11-05 v5, 권장안)과 ADR-2 · 4를 따른다. 매니페스트는 이 표대로 쓴다.
+워커 EKS 3개(AZ별)와 관리 클러스터(온프레미스)에 올릴 모니터링 구성 요소가 **어느 노드에, 어떤 toleration으로** 뜨는지 한 장. 매니페스트는 `deploy/agents/`(base 공통 + overlays/{onprem,kind}, EKS overlay는 재구축 뒤). ADR-18(11/08)로 Alloy는 폐기, **Fluent Bit DaemonSet + OTel Collector 게이트웨이**로 바뀌었다. 노드 라벨 · taint는 김성모 "쿠버네티스 아키텍처 초안" 6절(2026-11-05 v5, 권장안)과 ADR-2 · 4, **ADR-25(2026-11-11: GPU 노드는 고정 관리형 노드그룹, Karpenter 안 씀)**를 따른다. 매니페스트는 이 표대로 쓴다.
 
 ## 1. 노드 종류와 taint
 
 | 노드 | 라벨 | taint | 누가 뜨나 |
 |---|---|---|---|
-| 시스템 노드 (온디맨드 CPU) | `devoops/node-group=system` | 없음 | Kueue · JobSet · Karpenter · CoreDNS · **Prometheus Agent · kube-state-metrics · OTel 게이트웨이** |
-| GPU 노드 (g4dn 스팟) | `devoops/gpu=true` | `nvidia.com/gpu=present:NoSchedule` | 학습 Pod · **device plugin · dcgm-exporter · node-exporter · Fluent Bit · NVML 사이드카** |
-| 예비 GPU 노드 | 위 + `devoops/spare=true` | 위 + `devoops/spare=true:NoSchedule` | 자리 표시 Pod · 복구 Pod · **GPU 노드와 같은 DaemonSet 전부** |
+| 시스템 노드 (온디맨드 CPU) | `devoops/node-group=system` | 없음 | Kueue · JobSet · CoreDNS · **Prometheus Agent · kube-state-metrics · OTel 게이트웨이** |
+| GPU 노드 (노드그룹 `gpu-training` 4대, g4dn.xlarge · g4dn.2xlarge) | `devoops/gpu=true` | `nvidia.com/gpu=present:NoSchedule` (ADR-25 표는 "없음" → 박기현 Terraform 확인) | 학습 Pod · **device plugin · dcgm-exporter · node-exporter · Fluent Bit · NVML 사이드카** |
+| 예비 GPU 노드 (노드그룹 `gpu-spare` 1대) | 위 + `devoops/spare=true` | 위 + `devoops/spare:NoSchedule` | 복구 Pod · **GPU 노드와 같은 DaemonSet 전부**. 자리 표시 Pod는 없다(taint만으로 비워 둠, ADR-25) |
 
 - 예비 taint 키는 `devoops/spare`다. 이전 설계의 `gpu-failover/spare`는 폐기 (2026-11-05).
-- 학습 Pod의 GPU · spare toleration은 템플릿이 아니라 Kueue ResourceFlavor가 넣는다. 우리 매니페스트와 무관.
+- spare toleration은 재배치 실행기(relocator)가 재제출하는 복구 잡(`queue-recovery`)에만 붙인다. 다른 잡이 달면 관리 클러스터 정책이 거부한다 (김성모 11/10). 우리 매니페스트와 무관.
+- 우리 DaemonSet은 toleration이 `operator: Exists`라 GPU taint 유무 · spare taint 값 표기(`=true` 유무)가 어떻게 정해져도 뜬다.
+- **인스턴스 타입이 섞인다** (ADR-25, 스팟 용량 확보용): g4dn.xlarge(4 vCPU)와 g4dn.2xlarge(8 vCPU). GPU는 둘 다 T4 1장이라 dcgm · 스트래글러 주 신호(compute)는 그대로 비교되지만, CPU에 묶인 지표(`train_data_wait_seconds`, 노드 CPU 사용률)는 타입별로 봐야 한다 → EKS overlay에서 kube-state-metrics `--metric-labels-allowlist`에 `nodes=[node.kubernetes.io/instance-type]`를 넣어 `kube_node_labels`로 조인한다.
 - 라벨 · taint 키는 김성모가 확정함 (2026-11-05, Slack). Terraform 반영은 인프라(박기현).
 
 ## 2. 구성 요소별 배치
@@ -75,6 +77,8 @@ Loki ──ruler 알람──▶ Alertmanager :9093 ──webhook(pipeline=failo
 - [ ] (박기현) 분류기용 Roles Anywhere 역할: DynamoDB `devoops-job-fencing` · `devoops-job-progress` 읽기, `ec2:DescribeInstanceStatus` (모니터링 S3 역할 3개와 같은 방식)
 - [x] (김성모) 예비 taint 키 `devoops/spare=true:NoSchedule` · GPU 라벨 `devoops/gpu=true` 확정 (2026-11-05). monitoring ns 자원 예산 0.5코어 · 1Gi, nodeSelector `platform-worker=true`(관리 클러스터)도 그대로
 - [ ] (나) dcgm-exporter Helm values: `customMetrics` 전체 목록(B3 초안) + Xid 230 주기 5초, tolerations Exists
+- [ ] (박기현 · 김성모) 관리형 노드그룹은 스팟 회수를 자체 처리한다(ADR-25). 그러면 분류기에 줄 **스팟 회수 신호의 출처**(지금 표는 aws-node-termination-handler IMDS 모드)를 유지할지, 노드그룹 이벤트로 바꿀지 (MON-STD-19)
+- [ ] (나) EKS overlay: KSM 노드 라벨 허용(`node.kubernetes.io/instance-type`), Karpenter 지표는 수집 대상 아님
 - [ ] (나) EKS overlay: nodeSelector `devoops/node-group: system`, Agent WAL · 게이트웨이 큐를 gp3 PVC로, cluster 라벨 worker-a/b/c (워커별 ConfigMap `devoops-cluster-info`와 맞출지 확인)
 - [ ] (나) 관리 클러스터 적용 뒤 커널 로그 확인 `{k8s_cluster_name="onprem-manager", service_name="kernel"}` (kind엔 kernel journal이 없어 미확인)
 - [ ] (노찬경) AppProject `gpu-platform`에 Monitoring 레포 · `monitoring` destination, ArgoCD UI 읽기 계정
