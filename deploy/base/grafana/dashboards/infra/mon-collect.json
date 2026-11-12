@@ -102,7 +102,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 1,
@@ -169,7 +169,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 2,
@@ -239,7 +239,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 3,
@@ -309,7 +309,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 4,
@@ -376,7 +376,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 5,
@@ -443,7 +443,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 6,
