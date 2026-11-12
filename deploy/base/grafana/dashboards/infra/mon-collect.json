@@ -100,7 +100,10 @@
         "colorMode": "value",
         "graphMode": "none",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 1,
       "gridPos": {
@@ -164,7 +167,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 2,
       "gridPos": {
@@ -231,7 +237,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 3,
       "gridPos": {
@@ -298,7 +307,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 4,
       "gridPos": {
@@ -362,7 +374,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 5,
       "gridPos": {
@@ -426,7 +441,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 6,
       "gridPos": {
