@@ -25,6 +25,8 @@ configMapGenerator:
   # Grafana가 디렉터리를 주기적으로 다시 읽으므로 재시작 없이 반영
   - name: grafana-dashboards-infra
     files:
-      - grafana/dashboards/infra/mon-self.json
+      - grafana/dashboards/infra/mon-stack.json
+      - grafana/dashboards/infra/mon-collect.json
+      - grafana/dashboards/infra/pve-hosts.json
     options:
       disableNameSuffixHash: true
