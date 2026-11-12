@@ -27,5 +27,6 @@ configMapGenerator:
     files:
       - grafana/dashboards/infra/mon-stack.json
       - grafana/dashboards/infra/mon-collect.json
+      - grafana/dashboards/infra/pve-hosts.json
     options:
       disableNameSuffixHash: true
