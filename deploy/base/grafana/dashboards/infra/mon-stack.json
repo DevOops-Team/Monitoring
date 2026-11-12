@@ -78,7 +78,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 1,
@@ -141,7 +141,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 2,
@@ -155,7 +155,7 @@
     {
       "type": "stat",
       "title": "Watchdog",
-      "description": "MON-STD-22. 항상 발화가 정상인 데드맨 스위치. 꺼지면 룰 평가(Mimir ruler)가 멈춘 것",
+      "description": "MON-STD-22. 항상 Firing이 정상인 데드맨 스위치. 꺼지면 룰 평가(Mimir ruler)가 멈춘 것",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -221,7 +221,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 3,
@@ -234,8 +234,8 @@
     },
     {
       "type": "stat",
-      "title": "발화 중 알람",
-      "description": "Watchdog를 뺀 발화 중 알람 수. 목록은 아래 표",
+      "title": "Firing 알람",
+      "description": "Watchdog를 뺀 Firing 알람 수. 목록은 아래 표",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -287,7 +287,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 4,
@@ -354,7 +354,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 5,
@@ -424,7 +424,7 @@
         "textMode": "auto",
         "justifyMode": "auto",
         "text": {
-          "valueSize": 28
+          "valueSize": 36
         }
       },
       "id": 6,
@@ -526,8 +526,8 @@
     },
     {
       "type": "table",
-      "title": "발화 중 알람",
-      "description": "Mimir ruler가 지금 발화 중으로 보는 알람. Watchdog 한 줄은 항상 있는 것이 정상",
+      "title": "Firing 알람",
+      "description": "Mimir ruler가 지금 Firing으로 보는 알람. Watchdog 한 줄은 항상 있는 것이 정상",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1056,7 +1056,7 @@
     {
       "type": "timeseries",
       "title": "Alertmanager가 들고 있는 알람",
-      "description": "active = 발화 중, suppressed = 억제 · 무음 처리됨. active 1(Watchdog)이 평소 값",
+      "description": "active = Firing, suppressed = 억제 · 무음 처리됨. active 1(Watchdog)이 평소 값",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
