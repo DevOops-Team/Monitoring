@@ -29,5 +29,6 @@ configMapGenerator:
       - grafana/dashboards/infra/mon-collect.json
       - grafana/dashboards/infra/pve-hosts.json
       - grafana/dashboards/infra/kafka-jmx.json
+      - grafana/dashboards/infra/k8s-nodes.json
     options:
       disableNameSuffixHash: true
