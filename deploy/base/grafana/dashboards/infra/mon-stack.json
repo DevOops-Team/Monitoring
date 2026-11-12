@@ -76,7 +76,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 1,
       "gridPos": {
@@ -89,7 +92,7 @@
     {
       "type": "stat",
       "title": "수집 대상",
-      "description": "Agent들이 긁고 있는 대상 전체 수. 갑자기 줄면 대상이 사라진 것(다운과 다름)",
+      "description": "Agent들이 긁는 /metrics 주소(대상)의 수. 지표 개수가 아니다(대상 하나가 수백~수천 시계열을 내보냄, 시계열 수는 아래 'Mimir 활성 시계열'). 갑자기 줄면 대상이 사라진 것(다운과 다름)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -136,7 +139,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 2,
       "gridPos": {
@@ -189,11 +195,11 @@
               "type": "value",
               "options": {
                 "0": {
-                  "text": "꺼짐",
+                  "text": "Not firing",
                   "index": 0
                 },
                 "1": {
-                  "text": "발화 중",
+                  "text": "Firing",
                   "index": 1
                 }
               }
@@ -213,7 +219,10 @@
         "colorMode": "value",
         "graphMode": "none",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 3,
       "gridPos": {
@@ -276,7 +285,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 4,
       "gridPos": {
@@ -340,7 +352,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 5,
       "gridPos": {
@@ -407,7 +422,10 @@
         "colorMode": "value",
         "graphMode": "area",
         "textMode": "auto",
-        "justifyMode": "auto"
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 28
+        }
       },
       "id": 6,
       "gridPos": {
