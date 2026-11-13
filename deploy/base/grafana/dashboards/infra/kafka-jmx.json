@@ -91,8 +91,8 @@
     },
     {
       "type": "stat",
-      "title": "활성 컨트롤러",
-      "description": "KRaft 컨트롤러 쿼럼(브로커 3대가 겸함) 중 리더 수. 정확히 1이 정상. 0 = 리더 선출 · 토픽 변경이 멈춤, 2 이상 = 두 대가 서로 리더라고 믿는 상태",
+      "title": "컨트롤러",
+      "description": "활성 컨트롤러 수. KRaft 컨트롤러 쿼럼(브로커 3대가 겸함) 중 리더 수. 정확히 1이 정상. 0 = 리더 선출 · 토픽 변경이 멈춤, 2 이상 = 두 대가 서로 리더라고 믿는 상태",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -161,8 +161,8 @@
     },
     {
       "type": "stat",
-      "title": "오프라인 파티션",
-      "description": "리더가 없는 파티션 수. 1 이상이면 그 파티션은 읽기 · 쓰기 모두 안 된다",
+      "title": "오프라인",
+      "description": "오프라인 파티션(리더가 없는 파티션) 수. 1 이상이면 그 파티션은 읽기 · 쓰기 모두 안 된다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -227,8 +227,8 @@
     },
     {
       "type": "stat",
-      "title": "복제 부족 파티션",
-      "description": "복제본 중 일부가 리더를 못 따라가는 파티션 수. 브로커 재시작 직후 잠깐 오르는 것은 정상",
+      "title": "복제 부족",
+      "description": "복제 부족 파티션 수. 복제본 중 일부가 리더를 못 따라가는 파티션 수. 브로커 재시작 직후 잠깐 오르는 것은 정상",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -293,8 +293,8 @@
     },
     {
       "type": "stat",
-      "title": "min.insync 미달",
-      "description": "동기 복제본이 min.insync.replicas보다 적은 파티션 수. acks=all로 보내는 프로듀서는 이 파티션에 쓰기 실패",
+      "title": "ISR 미달",
+      "description": "min.insync 미달 파티션 수. 동기 복제본(ISR)이 min.insync.replicas보다 적은 파티션 수. acks=all로 보내는 프로듀서는 이 파티션에 쓰기 실패",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -359,7 +359,7 @@
     },
     {
       "type": "stat",
-      "title": "차단된 브로커",
+      "title": "차단 브로커",
       "description": "컨트롤러에 하트비트가 끊겨 차단(fenced)된 브로커 수. 프로세스는 살아 있어도 파티션을 맡지 못한다",
       "datasource": {
         "type": "prometheus",

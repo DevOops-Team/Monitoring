@@ -137,7 +137,7 @@
     },
     {
       "type": "stat",
-      "title": "CPU 사용 (최대)",
+      "title": "CPU 최대",
       "description": "가장 바쁜 노드의 CPU 사용률(5분 평균). 온프레 CPU 노드 임계값은 표준에 아직 없음",
       "datasource": {
         "type": "prometheus",
@@ -200,7 +200,7 @@
     },
     {
       "type": "stat",
-      "title": "메모리 사용 (최대)",
+      "title": "메모리 최대",
       "description": "가장 메모리를 많이 쓰는 노드(MemAvailable 기준). 임계값은 표준에 아직 없음",
       "datasource": {
         "type": "prometheus",
@@ -263,7 +263,7 @@
     },
     {
       "type": "stat",
-      "title": "루트 디스크 (최대)",
+      "title": "디스크 최대",
       "description": "MON-STD-22 · 07. 가장 찬 루트 디스크. 경고 80% · 위험 90%",
       "datasource": {
         "type": "prometheus",
@@ -333,7 +333,7 @@
     },
     {
       "type": "stat",
-      "title": "OOM kill (1시간)",
+      "title": "OOM kill",
       "description": "커널이 메모리 부족으로 프로세스를 죽인 횟수(최근 1시간). 컨테이너 limit 초과로 죽은 것도 여기 잡힌다",
       "datasource": {
         "type": "prometheus",
@@ -400,8 +400,8 @@
     },
     {
       "type": "stat",
-      "title": "시계 미동기 노드",
-      "description": "NTP 동기가 안 된 노드 수. 감지 · 복구 시간(ADR-15)은 서로 다른 노드의 시각을 빼서 재므로 시계가 어긋나면 측정이 틀어진다",
+      "title": "NTP 끊김",
+      "description": "시간 동기(NTP)가 끊긴 노드 수. 노드 시계는 NTP 서버에 맞춰 계속 보정되는데, 커널이 \"지금 보정이 안 되고 있다\"고 보고한 노드를 센다. 0이 정상. 감지 · 복구 시간(ADR-15)은 서로 다른 노드의 시각을 빼서 재므로 시계가 어긋나면 측정이 틀어진다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"

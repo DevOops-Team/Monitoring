@@ -115,8 +115,8 @@
     },
     {
       "type": "stat",
-      "title": "remote_write 실패",
-      "description": "MON-STD-10. Agent가 Mimir로 보내다 버린 샘플(초당). 0이 정상, 0보다 크면 유실",
+      "title": "전송 실패",
+      "description": "MON-STD-10. remote_write 실패: Agent가 Mimir로 보내다 버린 샘플(초당). 0이 정상, 0보다 크면 유실",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -182,8 +182,8 @@
     },
     {
       "type": "stat",
-      "title": "전송 지연 (최대)",
-      "description": "MON-STD-10. 가장 최근에 긁은 샘플과 Mimir로 보낸 샘플의 시각 차. 경고 30초 · 위험 5분은 가설(VPN 단절 실험 전)",
+      "title": "전송 지연",
+      "description": "MON-STD-10. 전송 지연(Agent 중 최대): 가장 최근에 긁은 샘플과 Mimir로 보낸 샘플의 시각 차. 경고 30초 · 위험 5분은 가설(VPN 단절 실험 전)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -252,8 +252,8 @@
     },
     {
       "type": "stat",
-      "title": "게이트웨이 큐 (최대)",
-      "description": "OTel 게이트웨이가 Loki · Tempo로 못 보내고 쌓아 둔 비율. 0이 정상, 100%면 새 데이터를 버린다",
+      "title": "OTel 큐",
+      "description": "OTel 게이트웨이 큐(최대): 게이트웨이가 Loki · Tempo로 못 보내고 쌓아 둔 비율. 0이 정상, 100%면 새 데이터를 버린다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -322,8 +322,8 @@
     },
     {
       "type": "stat",
-      "title": "게이트웨이 수신 거절",
-      "description": "게이트웨이가 되돌려 보낸 로그 · 스팬(초당). 0이 정상",
+      "title": "OTel 거절",
+      "description": "OTel 게이트웨이가 수신을 거절해 되돌려 보낸 로그 · 스팬(초당). 0이 정상",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -389,8 +389,8 @@
     },
     {
       "type": "stat",
-      "title": "Fluent Bit 버린 로그",
-      "description": "재시도 끝에 버린 로그 줄(초당). 0이 정상, 0보다 크면 로그 유실",
+      "title": "버린 로그",
+      "description": "Fluent Bit가 재시도 끝에 버린 로그 줄(초당). 0이 정상, 0보다 크면 로그 유실",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
