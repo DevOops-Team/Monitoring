@@ -1,0 +1,14 @@
+# 대시보드용 레코딩 룰. 이름이 _total로 안 끝나는 카운터에 increase() · rate()를 대시보드에서 직접 쓰면
+# Mimir가 PromQL 안내(info)를 붙이고 Grafana가 그 아이콘을 타일 제목 칸에 띄워 제목이 잘린다.
+# 같은 계산을 여기서 미리 해 두고 타일은 결과 지표를 읽는다(카운터 리셋 보정은 increase() · rate() 그대로)
+groups:
+  - name: dashboard-records
+    rules:
+      # 「Kubernetes 노드」 OOM kill 타일
+      - record: instance:node_vmstat_oom_kill:increase1h
+        expr: increase(node_vmstat_oom_kill{job="node-exporter"}[1h])
+      # 「수집 파이프라인」 OTel 거절 타일
+      - record: instance:otelcol_receiver_refused_log_records:rate5m
+        expr: rate(otelcol_receiver_refused_log_records{job="otel-gateway"}[5m])
+      - record: instance:otelcol_receiver_refused_spans:rate5m
+        expr: rate(otelcol_receiver_refused_spans{job="otel-gateway"}[5m])
