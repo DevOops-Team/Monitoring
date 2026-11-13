@@ -58,6 +58,18 @@ scrape_configs:
       - {source_labels: [__meta_kubernetes_endpointslice_endpoint_topology_kubernetes_io_hostname], target_label: node}
       - {source_labels: [__meta_kubernetes_pod_node_name], regex: (.+), target_label: node}
 
+  # kube-state-metrics 차트(values/kube-state-metrics.yaml). job 이름을 관리 클러스터와 같게 두어 대시보드 쿼리를 함께 쓴다.
+  # node 라벨은 붙이지 않는다: KSM 지표가 자기 node 라벨(Pod가 뜬 노드)을 갖고 있어서 덮어쓰면 틀어진다
+  - job_name: kube-state-metrics
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_label_app_kubernetes_io_name, __meta_kubernetes_endpointslice_port_name]
+        regex: kube-state-metrics;http
+        action: keep
+      - {target_label: cluster, replacement: monitoring}
+
   - job_name: mimir
     static_configs:
       - targets: ["mimir.monitoring.svc.cluster.local:9009"]
