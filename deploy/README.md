@@ -28,7 +28,7 @@ ADR-18 1단계 상태: 저장소는 **복제 1 · PVC filesystem**. 3노드 복�
 `base/mimir/rules/recovery.yml` 1개(`RecoveryHold`, MON-STD-25): 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화. 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
 `base/mimir/rules/records.yml` 레코딩 룰 3개: 대시보드 타일(OOM kill · OTel 거절)용. `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
-**11/11 현재 `recovery.yml`과 `slack-event`는 레포에만 있고 클러스터 미적용**(컨트롤러 이미지 배포 뒤 적용).
+`recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 컨트롤러 이미지가 배포되어 `recovery_hold_total`이 수집되기 전까지는 발화하지 않는다.
 
 ## 적용 (처음 · 변경 · 재설치 모두 같은 명령)
 
@@ -57,18 +57,38 @@ kubectl -n monitoring get pods,pvc,svc
 V=172.30.0.35
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=count by (job) (up == 1)'   # pve-host 5 · kubelet 3 · …
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up == 0'                    # 다운 대상
-curl -s  "http://$V:9009/prometheus/api/v1/rules"                                                     # 룰 4개(recovery.yml 적용 뒤 5개), Watchdog firing이 정상
+curl -s  "http://$V:9009/prometheus/api/v1/rules"                                                     # 알람 룰 5개 + 레코딩 룰 3개, Watchdog firing이 정상
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=probe_success'              # 2개 다 1
 kubectl -n monitoring port-forward svc/prometheus-agent 9090   # Agent 대상 상태 화면
 ```
 Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`에 Watchdog. Grafana `http://172.30.0.35:3000` 로그인 후 데이터소스 Mimir · Loki · Tempo.
+
+## 대시보드 (Grafana 폴더 「인프라」)
+
+레포의 JSON이 원본이다. `base/grafana/dashboards/infra/*.json` → kustomize가 ConfigMap `grafana-dashboards-infra`로 만들고 → Grafana 차트(`values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`)가 디렉터리로 마운트한다. Grafana가 디렉터리를 주기적으로 다시 읽어 **재시작 없이 약 1분 안에 반영**된다(sidecar 안 씀).
+
+| uid | 제목 | 보는 것 | 변수 |
+|---|---|---|---|
+| `mon-stack` | 모니터링 스택 | 수집 대상 up · 알람(Watchdog · Firing) · 저장소 유입량 · 노드 디스크 · Alertmanager 발송 · blackbox ping | - |
+| `mon-collect` | 수집 파이프라인 | Agent remote_write · WAL, Fluent Bit 출력, OTel 게이트웨이 큐 · 거절 | cluster |
+| `pve-hosts` | Proxmox 호스트 | 5대 온도(5분 평균) · 자원 · nic0 · 배터리 · AC | host |
+| `kafka-jmx` | Kafka 브로커 | 브로커 · 컨트롤러 · 파티션 복제 · 처리량 · 요청 p99 · JVM | - |
+| `k8s-nodes` | Kubernetes 노드 | 두 클러스터 노드 9대의 자원 · PSI · 디스크 · NIC · OOM · NTP | cluster · node |
+| `k8s-workloads` | Kubernetes 워크로드 | Pod 상태 · 재시작 · 대기 사유 · 마지막 종료 코드 · 워크로드 복제 · 학습 Pod | cluster · namespace |
+
+- **화면에서 고친 것은 저장되지 않는다**(`allowUiUpdates: false`). 고치는 흐름: 화면에서 편집 → 「Export → JSON」 → 레포 파일 교체 → 커밋 → 적용
+- 새 대시보드는 `kustomization.yaml`의 `grafana-dashboards-infra` files에도 넣는다. lint가 JSON 문법 · `uid` · `title` · uid 중복을 본다
+- uid를 바꾸거나 파일을 지우면 옛 대시보드가 Grafana에 남을 수 있다(11/11 `mon-self` → 분리 때). 남아 있으면 화면에서 지운다
+- 타일(폭 4칸) 제목은 한 줄로만 나오고 넘치면 "…"로 잘린다. 제목은 짧게, 자세한 뜻은 설명(ⓘ)에 둔다. 이름이 `_total`로 안 끝나는 카운터에 `increase()` · `rate()`를 쓰면 PromQL 안내 아이콘이 제목 칸을 차지하므로, 타일에서는 레코딩 룰(`base/mimir/rules/records.yml`)을 읽는다
+- 색: 정상 `#73BF69` · 경고 `#FF9830` · 위험 `#F2495C` · 좋고 나쁨이 없는 값 `#8AB8FF`. 점선 임계선은 MON-STD에 값이 있는 패널에만 긋는다
 
 ## 설정을 바꿀 때
 
 | 바꾸는 것 | 파일 | 반영 |
 |---|---|---|
 | 스크레이프 대상 | `base/prometheus-agent/prometheus.yml` | `deploy-k8s.sh` → ConfigMap 이름이 바뀌어 Agent가 다시 뜸(WAL은 PVC에 남음) |
-| 알람 룰 | `base/mimir/rules/*.yml` (+ `kustomization.yaml`의 files, `scripts/deploy-k8s.sh` lint의 파일 목록, 테스트는 `base/mimir/tests/`) | `deploy-k8s.sh` → Mimir가 1분 안에 다시 읽음(재시작 없음) |
+| 알람 · 레코딩 룰 | `base/mimir/rules/*.yml` (+ `kustomization.yaml`의 files, `scripts/deploy-k8s.sh` lint의 파일 목록, 테스트는 `base/mimir/tests/`) | `deploy-k8s.sh` → Mimir가 1분 안에 다시 읽음(재시작 없음) |
+| 대시보드 | `base/grafana/dashboards/infra/*.json` (+ `kustomization.yaml`의 files) | `kubectl apply -k deploy/base` 또는 `deploy-k8s.sh` → Grafana가 1분 안에 다시 읽음(재시작 없음) |
 | Mimir 설정 | `base/mimir/mimir.yaml` | Mimir 재시작(복제 1이라 그동안 수신 중단, Agent WAL이 버팀) |
 | Alertmanager 라우팅 | `values/alertmanager.yaml`의 `config` | helm upgrade로 Pod 재시작 |
 | 데이터소스 | `values/grafana.yaml` | helm upgrade |
