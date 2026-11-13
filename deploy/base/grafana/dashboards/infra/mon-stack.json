@@ -300,7 +300,7 @@
     },
     {
       "type": "stat",
-      "title": "알림 발송 실패",
+      "title": "알림 실패",
       "description": "Alertmanager가 Slack · healthchecks.io로 보내다 실패한 횟수(최근 1시간). 0이 정상",
       "datasource": {
         "type": "prometheus",
@@ -367,7 +367,7 @@
     },
     {
       "type": "stat",
-      "title": "노드 디스크 (최대)",
+      "title": "디스크 최대",
       "description": "MON-STD-22. 모니터링 노드 3대 중 가장 찬 루트 디스크. 경고 80% · 위험 90%",
       "datasource": {
         "type": "prometheus",
