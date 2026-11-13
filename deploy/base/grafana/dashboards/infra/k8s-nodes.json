@@ -334,7 +334,7 @@
     {
       "type": "stat",
       "title": "OOM kill",
-      "description": "커널이 메모리 부족으로 프로세스를 죽인 횟수(최근 1시간). 컨테이너 limit 초과로 죽은 것도 여기 잡힌다",
+      "description": "커널이 메모리 부족으로 프로세스를 죽인 횟수(최근 1시간). 컨테이너 limit 초과로 죽은 것도 여기 잡힌다. 1시간 안에 재부팅한 노드는 재부팅 전 횟수가 빠진다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -346,7 +346,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(node_vmstat_oom_kill{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}[1h]))"
+          "expr": "sum(clamp_min(node_vmstat_oom_kill{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"} - node_vmstat_oom_kill{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"} offset 1h, 0)) or vector(0)"
         }
       ],
       "fieldConfig": {
