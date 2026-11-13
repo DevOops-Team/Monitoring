@@ -95,7 +95,7 @@
 | MON-STD-12 | Job API | RED: 5xx 비율 · 지연 p95 (Backend 계측, 노찬경) | | | | 경고 5xx 1% · p95 측정 × 2 · 위험 5xx 5% 5분 | 기준선 (6주) | Backend 재시작 런북 (노찬경) | 가설 |
 | MON-STD-13 | PostgreSQL | 연결 수 · 디스크 · `pg_up` (postgres_exporter, 별도 VM) | | | | 경고 연결 80% · 디스크 80% · 위험 up==0 1분 | 운영 경험 (postgres_exporter 기본값) + 기준선 | DB 런북 (김현수) | 가설 |
 | MON-STD-14 | 결과 제공 | 결과물 업로드 실패 · 다운로드 오류 (학습 Job 카운터 · Backend 로그) | | | | 경고 1회 · 위험 연속 3회 | 운영 경험 | S3 권한 · 네트워크 점검 런북 | 가설 |
-| MON-STD-23 | Kafka (172.30.0.40, 2주차 도입 ADR-7 · 8) | 브로커 지표 JMX Exporter(김현수) + consumer lag `kafka_consumergroup_lag` (kafka_exporter, 모니터링 클러스터 Pod ×1). 그룹: 복구 컨트롤러 · `collector` | | | | 경고 lag 증가 5분 · 위험 브로커 `up==0` 1분 (브로커 1대, 복제 없음) | 운영 경험 (kafka_exporter 기본 룰) | 데이터 담당 호출 런북. 컨트롤러 lag 증가 = 복구 지연 | 가설 |
+| MON-STD-23 | Kafka (브로커 3대 172.30.0.40 ~ .42, KRaft 컨트롤러 겸함, 2주차 도입 ADR-7 · 8) | 브로커 지표 JMX Exporter(김현수, :7071, `job="kafka-jmx"`) + consumer lag `kafka_consumergroup_lag` (kafka_exporter, 모니터링 클러스터 Pod ×1). 그룹: 복구 컨트롤러 · `collector` | | | | 경고 lag 증가 5분 · 위험 브로커 `up==0` 1분 (2026-11-12 확인: 브로커 3대 · 파티션 복제 3벌. 「브로커 1대, 복제 없음」 전제로 정한 값이라 재검토 필요) | 운영 경험 (kafka_exporter 기본 룰) | 데이터 담당 호출 런북. 컨트롤러 lag 증가 = 복구 지연 | 가설 |
 
 ### 4.8 모니터링 서버 자체
 
@@ -118,8 +118,17 @@
 
 | 번호 | 룰 이름 (`alert:` / Loki ruler) | 런북 | 대시보드 패널 | 확인일 |
 |---|---|---|---|---|
-| MON-STD-01 ~ 24 | | | | |
-| MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | | |
+| MON-STD-06 · 07 | | | 「Kubernetes 노드」 CPU · 메모리 · 루트 디스크 · 네트워크 (지금은 온프레 노드만, EKS GPU 노드는 overlay 연결 뒤) | 2026-11-13 |
+| MON-STD-10 | | | 「수집 파이프라인」 타일 전송 실패 · 전송 지연, 그래프 실패 샘플 · 전송 지연(30초 선) · 대기 샘플 | 2026-11-13 |
+| MON-STD-15 | (`absent_over_time` 룰 미구현) | | 「수집 파이프라인」 타일 Agent | 2026-11-13 |
+| MON-STD-16 | | | 「수집 파이프라인」 WAL 크기 | 2026-11-13 |
+| MON-STD-18 | | | 「모니터링 스택」 ping 성공 여부 · 응답 시간 (pfSense · 인터넷만, VPN 대상은 AWS 재구축 뒤) | 2026-11-13 |
+| MON-STD-20 | | | 「Kubernetes 워크로드」 마지막 종료(exit 75 = STOP 표시) · 학습 Pod | 2026-11-13 |
+| MON-STD-22 | `Watchdog` · `MonitoringNodeDiskWarning` · `MonitoringNodeDiskCritical` · `MonitoringTargetDown` (`deploy/base/mimir/rules/self.yml`) | | 「모니터링 스택」 타일 다운 대상 · Watchdog · 디스크 최대, 그래프 노드 루트 디스크 사용률(80 · 90% 선) | 2026-11-13 |
+| MON-STD-23 | | | 「Kafka 브로커」 전체 (consumer lag은 kafka_exporter 도입 뒤) | 2026-11-13 |
+| MON-STD-24 | | | 「Proxmox 호스트」 전체 (온도는 5분 평균, 80 · 90°C · NVMe 70°C 선) | 2026-11-13 |
+| MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | (HOLD 목록 패널은 v_incidents 대시보드 때) | |
+| 나머지 01 ~ 05 · 08 · 09 · 11 ~ 14 · 17 · 19 · 21 | | | | |
 | SLO-1 ~ 4 | | | | |
 
 ## 6. 채우는 순서와 변경 규칙
