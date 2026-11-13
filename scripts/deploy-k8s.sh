@@ -73,6 +73,8 @@ lint() {
   # shellcheck disable=SC2046
   helm template node-exporter $(chart prometheus-community/prometheus-node-exporter "$NODE_EXPORTER_CHART") -n "$NS" -f "$D/values/node-exporter.yaml" > /dev/null
   # shellcheck disable=SC2046
+  helm template kube-state-metrics $(chart prometheus-community/kube-state-metrics "$KSM_CHART") -n "$NS" -f "$D/values/kube-state-metrics.yaml" > /dev/null
+  # shellcheck disable=SC2046
   helm template grafana $(chart grafana-community/grafana "$GRAFANA_CHART") -n "$NS" -f "$D/values/grafana.yaml" > /dev/null
   # shellcheck disable=SC2046
   helm template alertmanager $(chart prometheus-community/alertmanager "$ALERTMANAGER_CHART") -n "$NS" \
@@ -149,10 +151,13 @@ SC
   # kind에는 LoadBalancer에 IP를 주는 것이 없어 helm --wait가 끝나지 않는다 → kind에서만 ClusterIP로
   local svc_override=()
   [[ "$MODE" == kind ]] && svc_override=(--set service.type=ClusterIP)
-  echo "== 차트 (node-exporter)"
+  echo "== 차트 (node-exporter · kube-state-metrics)"
   # shellcheck disable=SC2046
   helm upgrade --install node-exporter $(chart prometheus-community/prometheus-node-exporter "$NODE_EXPORTER_CHART") \
     -n "$NS" -f "$D/values/node-exporter.yaml" --wait --timeout 5m
+  # shellcheck disable=SC2046
+  helm upgrade --install kube-state-metrics $(chart prometheus-community/kube-state-metrics "$KSM_CHART") \
+    -n "$NS" -f "$D/values/kube-state-metrics.yaml" --wait --timeout 5m
   for f in loki tempo blackbox; do
     [[ -f "$D/values/$f.yaml" ]] || continue
     case "$f" in

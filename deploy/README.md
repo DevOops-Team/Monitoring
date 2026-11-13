@@ -16,13 +16,14 @@ ADR-18 1단계 상태: 저장소는 **복제 1 · PVC filesystem**. 3노드 복�
 | Alertmanager v0.34.2 | Helm `prometheus-community/alertmanager` | 1 | 1Gi | monitoring2 | `alertmanager.monitoring.svc:9093` | `172.30.0.35:9093` |
 | Grafana 13.3.0 | Helm `grafana-community/grafana` | 1 | 2Gi | monitoring2 | `grafana.monitoring.svc:3000` | `http://172.30.0.35:3000` |
 | node-exporter 1.12.1 | Helm | 노드마다 | - | 3대 | - | - |
+| kube-state-metrics v2.20.0 (11/13 추가) | Helm `prometheus-community/kube-state-metrics` | 1 | - | - | `kube-state-metrics:8080` | - |
 | blackbox_exporter v0.29.1 | Helm | 1 | - | monitoring2 | `blackbox-exporter:9115` | - |
 
 - 버전은 `versions.env` 한 곳에. Grafana · Loki · Tempo 차트는 2026-01부터 `grafana-community/helm-charts`(옛 `grafana/*`는 deprecated)
 - PVC는 local-path라 **만들어진 노드에 묶인다.** 그 노드가 죽으면 해당 저장소가 멈춘다(복제 1 단계의 한계, 3노드 복제에서 해소). cAdvisor는 따로 안 깔고 kubelet 내장 것을 긁는다
 - 밖으로 나가는 문은 전부 `type: LoadBalancer` + `kube-vip.io/loadbalancerIPs: "172.30.0.35"`, 포트로 공유. Loki · Tempo는 차트 Service를 내부용으로 두고 `base/external/services.yaml`이 필요한 포트만 연다
 
-수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`).
+수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`).
 룰: `base/mimir/rules/self.yml` 4개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown), Mimir ruler가 15초마다 평가.
 `base/mimir/rules/recovery.yml` 1개(`RecoveryHold`, MON-STD-25): 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화. 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
