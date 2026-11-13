@@ -335,7 +335,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(otelcol_receiver_refused_log_records{cluster=~\"$cluster\"}[5m])) + (sum(rate(otelcol_receiver_refused_spans{cluster=~\"$cluster\"}[5m])) or vector(0))"
+          "expr": "(sum(clamp_min(otelcol_receiver_refused_log_records{cluster=~\"$cluster\"} - otelcol_receiver_refused_log_records{cluster=~\"$cluster\"} offset 5m, 0)) + (sum(clamp_min(otelcol_receiver_refused_spans{cluster=~\"$cluster\"} - otelcol_receiver_refused_spans{cluster=~\"$cluster\"} offset 5m, 0)) or vector(0))) / 300"
         }
       ],
       "fieldConfig": {
