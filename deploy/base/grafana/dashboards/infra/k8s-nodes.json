@@ -346,7 +346,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(node_vmstat_oom_kill{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}[1h]))"
+          "expr": "sum(instance:node_vmstat_oom_kill:increase1h{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"})"
         }
       ],
       "fieldConfig": {

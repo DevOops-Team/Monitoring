@@ -37,7 +37,7 @@ lint() {
   local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   echo "== promtool check rules (Mimir ruler가 읽을 룰)"
   docker run --rm -v "$D/base/mimir:/mimir:ro" --entrypoint promtool "$PROMETHEUS_IMAGE" \
-    check rules /mimir/rules/self.yml /mimir/rules/recovery.yml
+    check rules /mimir/rules/self.yml /mimir/rules/recovery.yml /mimir/rules/records.yml
   echo "== promtool test rules (룰 단위 테스트)"
   docker run --rm -v "$D/base/mimir:/mimir:ro" --entrypoint promtool "$PROMETHEUS_IMAGE" \
     test rules /mimir/tests/recovery_test.yml

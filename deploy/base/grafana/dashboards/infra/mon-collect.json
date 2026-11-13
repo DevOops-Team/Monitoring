@@ -335,7 +335,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(otelcol_receiver_refused_log_records{cluster=~\"$cluster\"}[5m])) + (sum(rate(otelcol_receiver_refused_spans{cluster=~\"$cluster\"}[5m])) or vector(0))"
+          "expr": "sum(instance:otelcol_receiver_refused_log_records:rate5m{cluster=~\"$cluster\"}) + (sum(instance:otelcol_receiver_refused_spans:rate5m{cluster=~\"$cluster\"}) or vector(0))"
         }
       ],
       "fieldConfig": {

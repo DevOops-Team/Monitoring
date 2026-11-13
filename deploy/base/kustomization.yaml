@@ -18,7 +18,7 @@ configMapGenerator:
     files: [prometheus-agent/prometheus.yml]
   # 룰은 해시를 붙이지 않는다: Mimir ruler가 1분마다 디렉터리를 다시 읽으므로 재시작 없이 반영
   - name: mimir-rules
-    files: [mimir/rules/self.yml, mimir/rules/recovery.yml]
+    files: [mimir/rules/self.yml, mimir/rules/recovery.yml, mimir/rules/records.yml]
     options:
       disableNameSuffixHash: true
   # 대시보드도 해시 없이: Grafana 차트(values/grafana.yaml의 dashboardsConfigMaps)가 이 이름으로 마운트하고,
