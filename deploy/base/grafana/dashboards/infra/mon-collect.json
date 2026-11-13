@@ -322,8 +322,8 @@
     },
     {
       "type": "stat",
-      "title": "OTel 거절",
-      "description": "OTel 게이트웨이가 수신을 거절해 되돌려 보낸 로그 · 스팬(초당). 0이 정상",
+      "title": "GW 거절",
+      "description": "OTel 게이트웨이(GW)가 수신을 거절해 되돌려 보낸 로그 · 스팬(초당). 0이 정상. 제목 옆 안내 아이콘(카운터 이름 경고)은 무시해도 된다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -335,7 +335,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "(sum(clamp_min(otelcol_receiver_refused_log_records{cluster=~\"$cluster\"} - otelcol_receiver_refused_log_records{cluster=~\"$cluster\"} offset 5m, 0)) + (sum(clamp_min(otelcol_receiver_refused_spans{cluster=~\"$cluster\"} - otelcol_receiver_refused_spans{cluster=~\"$cluster\"} offset 5m, 0)) or vector(0))) / 300"
+          "expr": "sum(rate(otelcol_receiver_refused_log_records{cluster=~\"$cluster\"}[5m])) + (sum(rate(otelcol_receiver_refused_spans{cluster=~\"$cluster\"}[5m])) or vector(0))"
         }
       ],
       "fieldConfig": {
