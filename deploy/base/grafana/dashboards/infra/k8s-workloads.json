@@ -1,0 +1,1079 @@
+{
+  "uid": "k8s-workloads",
+  "title": "Kubernetes 워크로드",
+  "tags": [
+    "kubernetes",
+    "kube-state-metrics",
+    "MON-STD-20"
+  ],
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "graphTooltip": 1,
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "클러스터",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(up{job=\"kube-state-metrics\"}, cluster)",
+          "refId": "var"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "namespace",
+        "label": "네임스페이스",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(kube_namespace_status_phase{cluster=~\"$cluster\"}, namespace)",
+          "refId": "var"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "panels": [
+    {
+      "type": "stat",
+      "title": "NotReady",
+      "description": "Ready가 아닌 노드 수. 노드가 NotReady면 그 위 Pod가 새로 뜨지 못하고 5분 뒤 다른 노드로 쫓겨난다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(kube_node_status_condition{cluster=~\"$cluster\", condition=\"Ready\", status=\"true\"} == 0) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#F2495C",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "비정상 Pod",
+      "description": "Pending · Failed · Unknown 상태인 Pod 수. 끝난 Job(Succeeded)은 정상이라 뺀다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kube_pod_status_phase{cluster=~\"$cluster\", namespace=~\"$namespace\", phase=~\"Pending|Failed|Unknown\"}) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#FF9830",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "대기 중",
+      "description": "시작하지 못하고 기다리는 컨테이너 수(CrashLoopBackOff · ImagePullBackOff · CreateContainerConfigError 등). 뜨는 중인 ContainerCreating · PodInitializing은 뺀다. 사유는 아래 「대기 중 컨테이너」 표",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kube_pod_container_status_waiting_reason{cluster=~\"$cluster\", namespace=~\"$namespace\", reason!~\"ContainerCreating|PodInitializing\"}) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#F2495C",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "재시작",
+      "description": "최근 1시간 동안 컨테이너가 다시 시작된 횟수. 어느 Pod인지는 아래 「재시작」 그래프와 「마지막 종료」 표",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[1h])) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#FF9830",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "복제 부족",
+      "description": "준비된 복제 수가 원하는 수보다 적은 Deployment · StatefulSet · DaemonSet 수. 배포 · 재시작 중 잠깐 오르는 것은 정상",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count((max by (cluster, namespace, kind, workload) (label_replace(label_replace(max by (cluster, namespace, deployment) (kube_deployment_spec_replicas{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"Deployment\", \"\", \"\"), \"workload\", \"$1\", \"deployment\", \"(.+)\") or label_replace(label_replace(max by (cluster, namespace, statefulset) (kube_statefulset_replicas{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"StatefulSet\", \"\", \"\"), \"workload\", \"$1\", \"statefulset\", \"(.+)\") or label_replace(label_replace(max by (cluster, namespace, daemonset) (kube_daemonset_status_desired_number_scheduled{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"DaemonSet\", \"\", \"\"), \"workload\", \"$1\", \"daemonset\", \"(.+)\"))) - (max by (cluster, namespace, kind, workload) (label_replace(label_replace(max by (cluster, namespace, deployment) (kube_deployment_status_replicas_available{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"Deployment\", \"\", \"\"), \"workload\", \"$1\", \"deployment\", \"(.+)\") or label_replace(label_replace(max by (cluster, namespace, statefulset) (kube_statefulset_status_replicas_ready{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"StatefulSet\", \"\", \"\"), \"workload\", \"$1\", \"statefulset\", \"(.+)\") or label_replace(label_replace(max by (cluster, namespace, daemonset) (kube_daemonset_status_number_ready{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"DaemonSet\", \"\", \"\"), \"workload\", \"$1\", \"daemonset\", \"(.+)\"))) > 0) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#FF9830",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Pod 수",
+      "description": "Running 상태인 Pod 수. 갑자기 줄면 노드나 워크로드가 빠진 것",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(kube_pod_status_phase{cluster=~\"$cluster\", namespace=~\"$namespace\", phase=\"Running\"})"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#8AB8FF"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "row",
+      "title": "네임스페이스",
+      "collapsed": false,
+      "panels": [],
+      "id": 7,
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "table",
+      "title": "네임스페이스별 요약",
+      "description": "네임스페이스 목록은 ADR-13(10개) + kube-system · metallb-system 등. 누적 재시작은 Pod가 생긴 뒤 전체 횟수(Pod가 새로 만들어지면 0부터)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, namespace) (kube_pod_status_phase{cluster=~\"$cluster\", namespace=~\"$namespace\", phase=\"Running\"})",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, namespace) (kube_pod_status_phase{cluster=~\"$cluster\", namespace=~\"$namespace\", phase=~\"Pending|Failed|Unknown\"})",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, namespace) (increase(kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[1h]))",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, namespace) (kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"})",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "Running",
+              "Value #B": "비정상",
+              "Value #C": "재시작 (1시간)",
+              "Value #D": "재시작 (누적)"
+            },
+            "indexByName": {
+              "cluster": 0,
+              "namespace": 1,
+              "Value #A": 2,
+              "Value #B": 3,
+              "Value #C": 4,
+              "Value #D": 5
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "-"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "재시작.*"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 9
+      }
+    },
+    {
+      "type": "row",
+      "title": "추이",
+      "collapsed": false,
+      "panels": [],
+      "id": 9,
+      "gridPos": {
+        "x": 0,
+        "y": 14,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "상태별 Pod 수",
+      "description": "Running이 대부분이고 Pending · Failed가 0이 평소 값. Succeeded는 끝난 Job Pod",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (phase) (kube_pod_status_phase{cluster=~\"$cluster\", namespace=~\"$namespace\"})",
+          "legendFormat": "{{phase}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 15,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "재시작 (네임스페이스별, 5분)",
+      "description": "5분마다 다시 시작된 컨테이너 수. 재시작이 있던 네임스페이스만 선이 생긴다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (namespace) (increase(kube_pod_container_status_restarts_total{cluster=~\"$cluster\", namespace=~\"$namespace\"}[5m])) > 0",
+          "legendFormat": "{{namespace}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "x": 12,
+        "y": 15,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "문제 컨테이너 (MON-STD-20)",
+      "collapsed": false,
+      "panels": [],
+      "id": 12,
+      "gridPos": {
+        "x": 0,
+        "y": 23,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "table",
+      "title": "대기 중 컨테이너",
+      "description": "지금 시작하지 못하고 있는 컨테이너와 사유. 비어 있으면 정상",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, namespace, pod, container, reason) (kube_pod_container_status_waiting_reason{cluster=~\"$cluster\", namespace=~\"$namespace\", reason!~\"ContainerCreating|PodInitializing\"} == 1)",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            },
+            "renameByName": {},
+            "indexByName": {
+              "cluster": 0,
+              "namespace": 1,
+              "pod": 2,
+              "container": 3,
+              "reason": 4
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "-"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 13,
+      "gridPos": {
+        "x": 0,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "table",
+      "title": "마지막 종료",
+      "description": "MON-STD-20. 한 번이라도 종료된 적 있는 컨테이너의 마지막 종료 사유 · 코드. exit 75 = STOP(세대 불일치로 스스로 멈춤, 펜싱 정상 동작) · 137 = SIGKILL(OOMKilled면 메모리 초과) · 0 = 정상 종료",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, namespace, pod, container) (kube_pod_container_status_last_terminated_exitcode{cluster=~\"$cluster\", namespace=~\"$namespace\"}) * on (cluster, namespace, pod, container) group_left (reason) max by (cluster, namespace, pod, container, reason) (kube_pod_container_status_last_terminated_reason{cluster=~\"$cluster\", namespace=~\"$namespace\"} == 1)",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "종료 코드"
+            },
+            "indexByName": {
+              "cluster": 0,
+              "namespace": 1,
+              "pod": 2,
+              "container": 3,
+              "reason": 4,
+              "Value": 5
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "-"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "종료 코드"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "75": {
+                        "text": "75 (STOP)",
+                        "index": 0
+                      },
+                      "137": {
+                        "text": "137 (SIGKILL)",
+                        "index": 1
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 14,
+      "gridPos": {
+        "x": 12,
+        "y": 24,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "워크로드",
+      "collapsed": false,
+      "panels": [],
+      "id": 15,
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "table",
+      "title": "워크로드 복제",
+      "description": "Deployment · StatefulSet · DaemonSet마다 원하는 수와 준비된 수. 두 값이 다르면 배포 중이거나 Pod가 못 뜬 것",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, namespace, kind, workload) (label_replace(label_replace(max by (cluster, namespace, deployment) (kube_deployment_spec_replicas{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"Deployment\", \"\", \"\"), \"workload\", \"$1\", \"deployment\", \"(.+)\") or label_replace(label_replace(max by (cluster, namespace, statefulset) (kube_statefulset_replicas{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"StatefulSet\", \"\", \"\"), \"workload\", \"$1\", \"statefulset\", \"(.+)\") or label_replace(label_replace(max by (cluster, namespace, daemonset) (kube_daemonset_status_desired_number_scheduled{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"DaemonSet\", \"\", \"\"), \"workload\", \"$1\", \"daemonset\", \"(.+)\"))",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, namespace, kind, workload) (label_replace(label_replace(max by (cluster, namespace, deployment) (kube_deployment_status_replicas_available{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"Deployment\", \"\", \"\"), \"workload\", \"$1\", \"deployment\", \"(.+)\") or label_replace(label_replace(max by (cluster, namespace, statefulset) (kube_statefulset_status_replicas_ready{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"StatefulSet\", \"\", \"\"), \"workload\", \"$1\", \"statefulset\", \"(.+)\") or label_replace(label_replace(max by (cluster, namespace, daemonset) (kube_daemonset_status_number_ready{cluster=~\"$cluster\", namespace=~\"$namespace\"}), \"kind\", \"DaemonSet\", \"\", \"\"), \"workload\", \"$1\", \"daemonset\", \"(.+)\"))",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value #A": "원하는 수",
+              "Value #B": "준비됨"
+            },
+            "indexByName": {
+              "cluster": 0,
+              "namespace": 1,
+              "kind": 2,
+              "workload": 3,
+              "Value #A": 4,
+              "Value #B": 5
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "-"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 16,
+      "gridPos": {
+        "x": 0,
+        "y": 33,
+        "w": 24,
+        "h": 10
+      }
+    },
+    {
+      "type": "row",
+      "title": "학습 Job (MON-STD-20)",
+      "collapsed": false,
+      "panels": [],
+      "id": 17,
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "table",
+      "title": "학습 Pod",
+      "description": "devoops/job-id 라벨이 붙은 Pod(분류기가 Pod → 작업 · 세대를 찾는 데 쓰는 것). 학습 Job이 돌 때만 채워진다. 종료 코드는 위 「마지막 종료」 표",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, namespace, pod, label_devoops_job_id, label_devoops_generation) (kube_pod_labels{cluster=~\"$cluster\", label_devoops_job_id!=\"\"})",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "Value": true
+            },
+            "renameByName": {
+              "label_devoops_job_id": "job_id",
+              "label_devoops_generation": "세대"
+            },
+            "indexByName": {
+              "cluster": 0,
+              "namespace": 1,
+              "label_devoops_job_id": 2,
+              "label_devoops_generation": 3,
+              "pod": 4
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "-"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 24,
+        "h": 6
+      }
+    }
+  ]
+}
