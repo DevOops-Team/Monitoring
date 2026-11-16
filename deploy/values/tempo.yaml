@@ -1,4 +1,4 @@
-# Tempo 단일 바이너리(ADR-18 1단계). 저장은 PVC local, 수신은 OTLP만.
+# Tempo 단일 바이너리(ADR-18 1단계). 블록은 S3(접두어 tempo/), PVC에는 WAL만 남는다. 수신은 OTLP만.
 fullnameOverride: tempo
 tempo:
   reportingEnabled: false
@@ -8,6 +8,63 @@ tempo:
   resources:
     requests: {cpu: 50m, memory: 256Mi}
     limits: {memory: 768Mi}
+  storage:
+    trace:
+      backend: s3
+      s3:
+        bucket: devoops-prod-monitoring-947027666399-us-east-2
+        endpoint: s3.us-east-2.amazonaws.com
+        region: us-east-2
+        # 버킷을 Mimir · Loki와 같이 쓴다. 끝의 /는 일부러 붙였다: Tempo는 시작할 때 이 값 그대로 목록을 조회하는데,
+        # 역할의 ListBucket 조건이 s3:prefix = tempo/* 라서 'tempo'로는 403이 난다. 객체 키를 만들 때는 path.Join이 /를 정리한다
+        prefix: tempo/
+  # Tempo의 S3 클라이언트(minio-go)는 Mimir · Loki와 달리 EC2 메타데이터 주소를 바꿀 수 없다(TEST_IAM_ENDPOINT는 테스트용).
+  # 대신 AWS 자격 증명 파일을 읽으므로, 사이드카가 그 파일을 갱신하고 Tempo는 요청마다 다시 읽는다
+  extraEnv:
+    - {name: AWS_SHARED_CREDENTIALS_FILE, value: /aws/credentials}
+  extraVolumeMounts:
+    - {name: aws-credentials, mountPath: /aws, readOnly: true}
+
+# S3 임시 키 공급. 인증서(Secret tempo-s3-cert)로 IAM Roles Anywhere에서 1시간짜리 키를 받아 /aws/credentials에 쓴다.
+# 둘로 나눈 이유: 첫 컨테이너가 파일을 한 번 쓰고 끝나야 Tempo가 뜬다(Tempo는 시작할 때 키가 없으면 죽는다).
+# 둘째는 restartPolicy: Always = 사이드카로 남아 만료 전에 파일을 갱신한다
+initContainers:
+  - name: aws-credentials-init
+    image: public.ecr.aws/rolesanywhere/credential-helper:1.8.5-2026.08.24.20.52
+    args: &helper_args
+      - update
+      - --once
+      - --certificate=/cert/client.pem
+      - --private-key=/cert/client.key
+      - --trust-anchor-arn=arn:aws:rolesanywhere:us-east-2:947027666399:trust-anchor/e64f2c94-9faa-4510-9e0d-b04c71170678
+      - --profile-arn=arn:aws:rolesanywhere:us-east-2:947027666399:profile/1bb6f08f-fa74-49f2-89fe-14b907aecaef
+      - --role-arn=arn:aws:iam::947027666399:role/devoops-prod-onprem-tempo
+    env: &helper_env
+      - {name: AWS_SHARED_CREDENTIALS_FILE, value: /aws/credentials}
+    resources: &helper_resources
+      requests: {cpu: 10m, memory: 32Mi}
+      limits: {memory: 64Mi}
+    volumeMounts: &helper_mounts
+      - {name: s3-cert, mountPath: /cert, readOnly: true}
+      - {name: aws-credentials, mountPath: /aws}
+  - name: aws-credentials
+    image: public.ecr.aws/rolesanywhere/credential-helper:1.8.5-2026.08.24.20.52
+    restartPolicy: Always
+    args:
+      - update
+      - --certificate=/cert/client.pem
+      - --private-key=/cert/client.key
+      - --trust-anchor-arn=arn:aws:rolesanywhere:us-east-2:947027666399:trust-anchor/e64f2c94-9faa-4510-9e0d-b04c71170678
+      - --profile-arn=arn:aws:rolesanywhere:us-east-2:947027666399:profile/1bb6f08f-fa74-49f2-89fe-14b907aecaef
+      - --role-arn=arn:aws:iam::947027666399:role/devoops-prod-onprem-tempo
+    env: *helper_env
+    resources: *helper_resources
+    volumeMounts: *helper_mounts
+extraVolumes:
+  - name: s3-cert
+    secret: {secretName: tempo-s3-cert}   # scripts/create-secrets.sh s3-certs
+  - name: aws-credentials
+    emptyDir: {medium: Memory}            # 키를 디스크에 남기지 않는다
 
 persistence:
   enabled: true
