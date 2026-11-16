@@ -146,8 +146,8 @@ SC
     helm upgrade --install local-path-provisioner $(chart containeroo/local-path-provisioner "$LOCAL_PATH_CHART") \
       -n local-path-storage --create-namespace -f "$D/values/local-path.yaml" --wait --timeout 5m
   fi
-  # Mimir · Loki Pod가 인증서 Secret을 마운트한다. 없으면 ContainerCreating에서 멈추므로 먼저 본다(kind도 진짜 인증서가 필요)
-  for s in mimir-s3-cert loki-s3-cert; do
+  # Mimir · Loki · Tempo Pod가 인증서 Secret을 마운트한다. 없으면 ContainerCreating에서 멈추므로 먼저 본다(kind도 진짜 인증서가 필요)
+  for s in mimir-s3-cert loki-s3-cert tempo-s3-cert; do
     kubectl -n "$NS" get secret "$s" > /dev/null 2>&1 \
       || { echo "Secret 없음: $s → 먼저 scripts/create-secrets.sh s3-certs <폴더> 를 실행하라" >&2; exit 1; }
   done
