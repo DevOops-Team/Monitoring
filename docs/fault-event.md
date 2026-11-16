@@ -29,7 +29,7 @@
 | `event_id` | 32자 hex | 이벤트 ID. **`traceparent`의 trace-id와 같은 값** (스키마로는 못 막아서 분류기 테스트로 검증). 전부 0은 거부 |
 | `traceparent` | W3C | trace-id · parent-id가 전부 0이면 W3C 무효 값이라 거부. 컨트롤러는 이걸 부모로 `decide` span을 연다 → 분류기 · 컨트롤러 · 학습 Job span이 한 trace로 이어짐 |
 | `ts` | UTC 시각 | **원본 신호 발생 시각** (커널 로그 시각 등). 분류기가 받은 시각 아님 → 감지 지연 = 분류기 span 시작 − `ts` |
-| `cluster` · `az` | 문자열 | 예: `worker-a`, `ap-northeast-2a` |
+| `cluster` · `az` | 문자열 | 예: `eks-a`, `us-east-2a` (클러스터 이름은 ADR-32의 `eks-a` · `b` · `c`) |
 | `node` | 문자열 / null | site 이벤트는 null |
 | `gpu_uuid` | `GPU-…` / null | dcgm-exporter 레이블(pci_bus_id → UUID)로 채움 |
 | `job_id` | 문자열 / null | **학습 작업 ID** = 백엔드가 만드는 8자리 hex (예 `3f9a1c2e`). k8s JobSet 이름 `job-3f9a1c2e-g0003`이 아니다. 분류기는 **Mimir의 kube-state-metrics 지표**로 찾는다: `kube_pod_info{node}` → `kube_pod_labels{label_devoops_job_id, label_devoops_generation}` (각 클러스터 KSM이 remote_write로 보낸 것, KSM `--metric-labels-allowlist` 필요). EKS API를 직접 부르지 않으므로 VPN·EKS 권한이 없어도 되고, VPN이 끊겨도 마지막 매핑이 남는다 (2026-11-11 김현수 지적으로 정정). 못 찾으면 null |
@@ -37,7 +37,7 @@
 | `source` | enum | `dcgm` · `dmesg`(커널 로그, journald 경유) · `pod` · `straggler` · `site` · `spot` |
 | `raw` | 객체 | 분류 근거 원본. `xid` · `exit_code` · `metric` · `value` · `log_line` (해당 없으면 null) |
 | `correlated` | 배열 | 상관 창 안에서 함께 본 다른 알람 (`alert` · `source` · `ts`) |
-| `collector_healthy` | bool | 분류 시점에 그 노드의 수집 경로(Agent · Alloy)가 살아 있었나 |
+| `collector_healthy` | bool | 분류 시점에 그 노드의 수집 경로(Prometheus Agent · Fluent Bit · OTel 게이트웨이)가 살아 있었나 |
 | `dedup_key` | 문자열 | 같은 사건 식별 키. `대상\|코드\|기준 시각(epoch 초)`. 규칙은 2.1절 |
 | `category` | enum | `hw` · `hw_warn` · `driver` · `app` · `infra` · `site` · `network` · `straggler` |
 | `confidence` | 0~1 | 분류 확신도. Xid 하나로 원인 확정 불가(NVIDIA 공식 입장)라서 둠 |
@@ -51,7 +51,7 @@
 
 ### 2.1 중복 처리 규칙
 
-같은 사건이 여러 번 올 수 있다. 경로가 둘(커널 로그 · DCGM)이고, Alloy 재시작이나 Alertmanager 재전송도 있다.
+같은 사건이 여러 번 올 수 있다. 경로가 둘(커널 로그 · DCGM)이고, Fluent Bit · 게이트웨이 재시작이나 Alertmanager 재전송도 있다.
 
 **키 만들기 (분류기)**
 
@@ -86,7 +86,7 @@
 | `restart_in_place` | GPU 멀쩡, 프로그램만 문제 | 세대 +1 → 옛 JobSet 정리 · 중단 확인 → **같은 클러스터로 고정한**(`devoops/target-cluster`, 같은 노드는 보장 안 함) 새 JobSet 재제출 → 승인 체크포인트에서 이어 감. Pod 재시작이 아니다: torchrun · Job · JobSet · Kueue 자동 재시작은 전부 꺼져 있고 재시작 주체는 컨트롤러뿐 (ADR-12) |
 | `isolate_migrate` | 이 GPU 못 씀 | 노드 cordon + taint `devoops/faulty` → 세대 +1 → 옛 JobSet 정리 · 중단 확인 → 같은 클러스터 예비 GPU(taint `devoops/spare`)로 새 JobSet |
 | `reset_then_migrate` | 이 GPU 리셋 필요 | 먼저 다른 노드로 이전 → 빈 노드에서 GPU 리셋 → 성공하면 예비로 복귀, 실패하면 폐기 |
-| `evacuate_preemptive` | 곧 죽거나 느려짐 (스팟 2분 통보, 스트래글러) | 노드 격리 → 세대 +1 → 옛 실행 종료 확인 → 같은 클러스터 예비 GPU로 새 JobSet, **마지막 승인본에서 재개**. "지금 저장하고 옮기기"(스팟 120초 마지막 저장, ADR-28)는 아직 구현 전 |
+| `evacuate_preemptive` | 곧 죽거나 느려짐 (스팟 2분 통보, 스트래글러) | 노드 격리 → 세대 +1 → 옛 실행 종료 확인 → 같은 클러스터 예비 GPU로 새 JobSet, **마지막 승인본에서 재개**. 스팟 회수 예고 때도 마지막 저장을 기다리지 않는다(ADR-36, 11/13. ADR-28의 120초 마지막 저장은 폐기) |
 | `fence_evacuate` | 클러스터 전체가 사라짐 (AZ 장애) | 클러스터 펜싱(`devoops/fenced=true`) → 세대 +1 (옛 Job이 살아 있어도 승인 못 하게) → 옛 실행 중단을 확인할 수 없으므로 확인 어노테이션을 기다렸다가 다른 AZ 클러스터에서 재개 |
 | `refuse` | 같은 Job이 같은 버그로 반복 사망 | 재시도 중단, 사용자에게 실패 알림 |
 | `hold` | 애매함, 지켜봐야 함 | 아무것도 안 함. 반복되면 다음 이벤트에서 결정 |
@@ -105,7 +105,7 @@
 | `restart_in_place` | `RETRY_GROUP` | `restartInPlace` | 세대 +1 · 새 JobSet은 공통. `devoops/target-cluster`로 **같은 클러스터 고정**(같은 노드 보장 아님), Recovery 큐로 4·5·7단계를 밟는다. 그사이 자리가 다른 Job으로 차면 다른 클러스터로 넘어가지 않고 기다린다. 15분을 넘기면 `AdmitDelayed`로 표시하고 계속 지켜보며, JobSet이 사라졌을 때만 Failed (김성모 11/11) |
 | `isolate_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 노드 cordon + `devoops/faulty` → 같은 클러스터 예비로 |
 | `reset_then_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 컨트롤러 입장에선 `isolate_migrate`와 같다. GPU 리셋은 한송이 6절대로 **별도 운영 액션**(격리 뒤 수동 · 후속), 자동 리셋 안 함 |
-| `evacuate_preemptive` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 스팟 2분 통보 · 스트래글러. 세대를 먼저 올리고 **마지막 승인본에서 재개**한다 (ADR-19 v5, 컨트롤러 contracts.md). 사전 저장 뒤 옮기는 `PLANNED_MIGRATE`는 **보류**(컨트롤러에서 현재 HOLD). ADR-28의 120초 마지막 저장이 구현되면 이 행을 다시 본다 |
+| `evacuate_preemptive` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 스팟 2분 통보 · 스트래글러. 세대를 먼저 올리고 **마지막 승인본에서 재개**한다 (ADR-19 v5, 컨트롤러 contracts.md). 사전 저장 뒤 옮기는 `PLANNED_MIGRATE`는 **보류**(컨트롤러에서 현재 HOLD). 스팟 회수 예고의 이 순서(승인본 확정 → 세대 +1 → 옛 실행 종료 → 재개)는 ADR-36(11/13)으로 확정됐다. ADR-28은 폐기 |
 | `fence_evacuate` | `FENCE_AND_EVACUATE` | `evacuateCluster` | 클러스터 펜싱(`devoops/fenced=true`) → 옛 실행 권한 차단. 펜싱 확인은 `devoops/old-execution-stopped=true` 어노테이션만이 아니라 **실제 차단 근거**(세대 +1 반영 · 하트비트 끊김)까지. `evacuateCluster`는 이 행 전용 |
 | `refuse` | `NEEDS_CONFIG_FIX` (결과 state `REJECTED`) | 없음 (복구 안 함) | 사용자에게 실패 알림. 자동 복구 한도(3회) 초과 · init 종료 코드 5 · 6도 같은 `REJECTED`로 끝난다. Slack 알림은 HOLD만 있고 `REJECTED` 알림은 협의 중(11/11, 카운터 추가되면 MON-STD-25에 포함). 자동 재시작이 전부 꺼져 있어 JobSet이 Failed → Kueue Workload 종료 → 쿼터 자동 반납될 것으로 봄(김성모, 미검증). 멈춘 채 안 죽는 Job만 별도 처리 |
 | `hold` | `HOLD` | 없음 | 상태 저장 · 알림. Kafka `recovery.action` `type=recovery.held`, Slack은 Mimir 룰 `RecoveryHold`(MON-STD-25, ADR-27). HOLD는 그 사건의 최종 상태이고 자동 재개하지 않는다 |
