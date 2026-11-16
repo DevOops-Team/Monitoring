@@ -146,9 +146,11 @@ SC
     helm upgrade --install local-path-provisioner $(chart containeroo/local-path-provisioner "$LOCAL_PATH_CHART") \
       -n local-path-storage --create-namespace -f "$D/values/local-path.yaml" --wait --timeout 5m
   fi
-  # Mimir Pod가 인증서 Secret을 마운트한다. 없으면 ContainerCreating에서 멈추므로 먼저 본다(kind도 진짜 인증서가 필요)
-  kubectl -n "$NS" get secret mimir-s3-cert > /dev/null 2>&1 \
-    || { echo "Secret 없음: mimir-s3-cert → 먼저 scripts/create-secrets.sh s3-certs <폴더> 를 실행하라" >&2; exit 1; }
+  # Mimir · Loki Pod가 인증서 Secret을 마운트한다. 없으면 ContainerCreating에서 멈추므로 먼저 본다(kind도 진짜 인증서가 필요)
+  for s in mimir-s3-cert loki-s3-cert; do
+    kubectl -n "$NS" get secret "$s" > /dev/null 2>&1 \
+      || { echo "Secret 없음: $s → 먼저 scripts/create-secrets.sh s3-certs <폴더> 를 실행하라" >&2; exit 1; }
+  done
   echo "== 자체 매니페스트 (namespace · Mimir · Prometheus Agent)"
   kubectl apply -k "$D/base"
   # kind에는 LoadBalancer에 IP를 주는 것이 없어 helm --wait가 끝나지 않는다 → kind에서만 ClusterIP로
