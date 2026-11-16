@@ -48,7 +48,7 @@ scripts/deploy-k8s.sh            # 검사(lint) → 적용. API 서버가 172.30
 - `CHART_CACHE=<폴더>`: `<차트>-<버전>.tgz`를 미리 받아 두고 쓰기(GitHub 릴리스 다운로드가 자주 504)
 - Secret 없이도 StorageClass · Mimir · Agent · node-exporter · Loki · Tempo · blackbox까지는 뜬다. Alertmanager · Grafana만 Secret을 기다린다
 
-시크릿(레포에 없음): `alertmanager-secrets`(`slack_webhook_url` · `healthchecks_ping_url`), `grafana-secrets`(`admin-user` · `admin-password` · `pg-ro-password`). 값 출처는 Slack 앱 `Alertmanager` / healthchecks.io 체크 `alertmanager-watchdog`(period 1분 · grace 4분) / 현수(grafana_ro).
+시크릿(레포에 없음): `alertmanager-secrets`(`slack_webhook_url` · `healthchecks_ping_url`), `grafana-secrets`(`admin-user` · `admin-password` · `pg-ro-password`). 값 출처는 Slack 앱 `Alertmanager` / healthchecks.io 체크 `alertmanager-watchdog`(period 1분 · grace 4분) / 현수(grafana_ro). S3용 인증서는 `scripts/create-secrets.sh s3-certs <폴더>`로 따로: `mimir-s3-cert` · `loki-s3-cert` · `tempo-s3-cert`(`client.pem` · `client.key`, 기현이 준 ZIP, 만료 2027-01-15).
 
 ## 확인
 
