@@ -3,7 +3,9 @@
 #   - 필드 목록을 우리 것으로(counters.csv), 수집 주기 30초 → 5초 (fault-event dedup ±45초 창의 전제)
 #   - GPU 노드에만, 어떤 taint든 통과 (nvidia.com/gpu · devoops/spare · devoops/faulty)
 #   - Service 없음: Agent의 annotated-pods 잡이 어노테이션을 보고 Pod를 직접 긁는다
-# root · SYS_ADMIN은 공식 예시 그대로. 드라이버는 노드(AL2023 NVIDIA AMI)의 것을 쓴다
+#   - SYS_ADMIN 뺌: 공식 예시가 프로파일링 지표(DCGM_FI_PROF_*)에만 필요하다고 적었고 counters.csv에 그 지표가 없다. 넣게 되면 같이 되살린다
+# root는 공식 예시 그대로 둔다(capability는 전부 뺀 상태). 비root · 읽기 전용 루트는 GPU 노드에서 기동을 확인한 뒤에 바꾼다
+# 드라이버는 노드(AL2023 NVIDIA AMI)의 것을 쓴다
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -24,6 +26,8 @@ spec:
     spec:
       automountServiceAccountToken: false
       priorityClassName: system-node-critical
+      securityContext:
+        seccompProfile: {type: RuntimeDefault}
       nodeSelector:
         devoops/gpu: "true"
       tolerations:
@@ -52,7 +56,7 @@ spec:
             runAsNonRoot: false
             runAsUser: 0
             allowPrivilegeEscalation: false
-            capabilities: {add: [SYS_ADMIN], drop: [ALL]}
+            capabilities: {drop: [ALL]}
           volumeMounts:
             - {name: counters, mountPath: /etc/dcgm-exporter/custom, readOnly: true}
             - {name: pod-resources, mountPath: /var/lib/kubelet/pod-resources, readOnly: true}
@@ -60,4 +64,4 @@ spec:
         - name: counters
           configMap: {name: dcgm-exporter-counters}
         - name: pod-resources
-          hostPath: {path: /var/lib/kubelet/pod-resources}
+          hostPath: {path: /var/lib/kubelet/pod-resources, type: Directory}
