@@ -12,7 +12,8 @@ loki:
     bucketNames:
       chunks: devoops-prod-monitoring-947027666399-us-east-2
       ruler: devoops-prod-monitoring-947027666399-us-east-2   # 차트가 값을 요구할 뿐, 룰은 아래 rulerConfig.storage.type: local이라 버킷을 안 쓴다
-    # 옛 aws 클라이언트는 청크에 접두어를 못 붙인다. 버킷을 Mimir · Tempo와 같이 쓰고 역할이 loki/* 만 허용하므로 thanos 클라이언트를 쓴다
+    # Loki 안의 S3 접속 코드를 옛것(자체 aws 클라이언트)에서 새것(Thanos 프로젝트의 objstore 라이브러리)으로 바꾼다.
+    # Thanos 자체를 쓰는 것은 아니다. 옛 코드는 청크에 접두어를 못 붙이는데, 버킷을 Mimir · Tempo와 같이 쓰고 역할이 loki/* 만 허용한다
     use_thanos_objstore: true
     object_store:
       type: s3
