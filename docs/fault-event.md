@@ -137,7 +137,7 @@
 | 같은 클러스터에 예비 GPU가 없다 | `isolate_migrate` | `moveToOtherCluster`로 다른 클러스터 이전 (펜싱 없음, 3.1절) |
 | `confidence`가 낮다 (예: 0.5 미만) | `isolate_migrate` | `hold`로 낮춤 |
 | 이 Job이 이미 복구 중이다 | 무엇이든 | 무시 (중복 처리 방지) |
-| VPN 단절인지 AZ 장애인지 아직 모른다 | `fence_evacuate` | `hold` 후 독립 경로(DynamoDB `heartbeat_at` · progress 갱신, EC2 상태 조회)를 보고 결정. 워커는 프라이빗 서브넷이라 공인망에서 직접 probe할 수 없다 (MON-STD-18) |
+| VPN 단절인지 AZ 장애인지 아직 모른다 | `fence_evacuate` | `hold` 후 VPN 터널을 우회하는 별도 경로(DynamoDB `heartbeat_at` · progress 갱신, EC2 상태 조회)를 보고 결정. 워커는 프라이빗 서브넷이라 공인망에서 직접 probe할 수 없다. 이 경로도 pfSense · 회선은 VPN과 공유하므로, 조회 자체가 실패하면 하트비트가 멈춘 것으로 보지 않고 `hold`를 유지한다 (MON-STD-18) |
 | `restart_in_place`를 3번(가정값, 상한은 한송이 미확정) 했는데 또 같은 에러 | `restart_in_place` | `refuse`로 올림 |
 
 ## 5. 예시 목록
