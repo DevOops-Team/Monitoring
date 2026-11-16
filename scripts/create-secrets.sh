@@ -4,11 +4,33 @@
 # 만드는 것: Secret alertmanager-secrets(slack_webhook_url · healthchecks_ping_url),
 #           Secret grafana-secrets(admin-user · admin-password · pg-ro-password)
 # 값이 바뀌면 다시 실행하면 덮어쓴다. 그 뒤 해당 Pod를 재시작: kubectl -n monitoring rollout restart sts/alertmanager deploy/grafana
+#
+# S3용 인증서만: KUBECONFIG=<admin.conf> scripts/create-secrets.sh s3-certs <인증서 ZIP을 푼 폴더>
+# 만드는 것: Secret mimir-s3-cert · loki-s3-cert · tempo-s3-cert (각각 client.pem · client.key, IAM Roles Anywhere용)
+# 폴더 안에서 경로에 앱 이름(mimir · loki · tempo)이 들어간 client.pem과 그 옆 client.key를 찾는다. 위 비밀번호들은 묻지 않는다
 set -euo pipefail
 
 NS=monitoring
 echo "대상: $(kubectl config current-context) $(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')"
 kubectl get ns "$NS" > /dev/null 2>&1 || kubectl create ns "$NS"
+
+if [[ "${1:-}" == s3-certs ]]; then
+  dir="${2:?사용: $0 s3-certs <인증서 ZIP을 푼 폴더>}"
+  for app in mimir loki tempo; do
+    pem="$(find "$dir" -path "*$app*" -name client.pem)"
+    key="$(dirname "$pem")/client.key"
+    [[ -f "$pem" && -f "$key" ]] || { echo "$app: client.pem · client.key 한 쌍을 못 찾았다 (찾은 것: ${pem:-없음})" >&2; exit 1; }
+    # 역할이 인증서 CN으로 제한된다 → 다른 앱 인증서를 넣으면 AccessDenied. 올리기 전에 CN을 본다
+    info="$(openssl x509 -in "$pem" -noout -subject -enddate)"
+    [[ "$info" == *"devoops-prod-$app"* ]] || { echo "$app: 인증서 CN이 devoops-prod-$app 가 아니다: $info" >&2; exit 1; }
+    echo "$app: $(echo "$info" | tr '\n' ' ')"
+    kubectl -n "$NS" create secret generic "$app-s3-cert" \
+      --from-file=client.pem="$pem" --from-file=client.key="$key" \
+      --dry-run=client -o yaml | kubectl apply -f -
+  done
+  echo "완료. 확인: kubectl -n $NS get secret mimir-s3-cert loki-s3-cert tempo-s3-cert"
+  exit 0
+fi
 
 tmp="$(mktemp -d)"; chmod 700 "$tmp"; trap 'rm -rf "$tmp"' EXIT
 
