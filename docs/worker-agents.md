@@ -38,11 +38,12 @@ GPU 노드: dcgm-exporter · node-exporter · NVML 사이드카 ──/metrics�
 전 노드: journald 커널 로그 · Pod 로그 ──Fluent Bit(책갈피 · 디스크 버퍼)──OTLP──▶ OTel 게이트웨이(시스템 노드, 디스크 큐) ──▶ Loki :3100/otlp
 앱 SDK(분류기 · 컨트롤러 · 사이드카 span) ──OTLP──▶ OTel 게이트웨이 ──▶ Tempo :4317
 Loki ──ruler 알람──▶ Alertmanager :9093 ──webhook(pipeline=failover)──▶ 분류기(모니터링 클러스터) ──Kafka gpu.fault(172.30.0.40:9092, 키=node)──▶ 복구 컨트롤러 · 수집기
-분류기 ──공인망──▶ DynamoDB heartbeat_at · progress, EC2 DescribeInstanceStatus   ← VPN 단절 vs AZ 장애 독립 경로 (MON-STD-18)
+분류기 ──공인망──▶ DynamoDB heartbeat_at · progress, EC2 DescribeInstanceStatus   ← VPN 단절 vs AZ 장애를 가르는, VPN 터널을 우회하는 별도 경로 (MON-STD-18)
 ```
 
 - 분류기 출력은 HTTP가 아니라 Kafka다 (ADR-7). kind · 단위 테스트에서만 HTTP 스텁.
-- 독립 경로는 워커에 직접 닿는 probe가 아니다. 워커는 프라이빗 서브넷(공인 IP 없음), EKS API는 비공개 엔드포인트. 사이드카(rank 0)가 공인 엔드포인트로 갱신하는 DynamoDB 하트비트가 "워커가 살아 있다"의 증거다. 분류기(모니터링 클러스터)가 DynamoDB 두 테이블 읽기 · EC2 `DescribeInstanceStatus`를 하려면 온프레 → AWS 자격 증명(Roles Anywhere) 필요 (박기현).
+- 이 경로는 VPN 터널만 우회한다. 온프레 LAN · pfSense · Wi-Fi · 회선은 VPN과 공유하므로 물리적으로 독립된 경로가 아니다 (2026-11-15 박기현 확인: 온프레 → S3 · DynamoDB는 pfSense WAN 인터넷 경로, BGP로 받은 AWS 경로 없음. AWS VPN을 삭제한 상태에서 확인했고 재구축 뒤 재확인 예정). 그래서 DynamoDB **조회 실패**는 하트비트가 멈춘 것으로 치지 않는다 (MON-STD-18).
+- 이 경로는 워커에 직접 닿는 probe가 아니다. 워커는 프라이빗 서브넷(공인 IP 없음), EKS API는 비공개 엔드포인트. 사이드카(rank 0)가 공인 엔드포인트로 갱신하는 DynamoDB 하트비트가 "워커가 살아 있다"의 증거다. 분류기(모니터링 클러스터)가 DynamoDB 두 테이블 읽기 · EC2 `DescribeInstanceStatus`를 하려면 온프레 → AWS 자격 증명(Roles Anywhere) 필요 (박기현).
 - blackbox_exporter는 VPN 터널 내부 IP(169.254.x) · pfSense · 공인 DNS 확인용으로만 남긴다.
 
 ## 3-1. 관리 클러스터(온프레미스)는 어떻게 다른가
