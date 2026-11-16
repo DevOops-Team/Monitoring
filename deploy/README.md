@@ -46,7 +46,7 @@ scripts/deploy-k8s.sh            # 검사(lint) → 적용. API 서버가 172.30
 - `scripts/deploy-k8s.sh --lint-only`: promtool(룰 검사 · 룰 단위 테스트 · Agent 설정) · kustomize 렌더 · helm template · amtool만
 - `scripts/deploy-k8s.sh --kind`: 로컬 kind에 더미 Secret으로 올려 구조 확인(`kind create cluster` 뒤). kind에서는 LoadBalancer IP가 안 나오고, ICMP · 이미지 아키텍처가 실 노드와 달라 **kind 통과가 실 클러스터 통과를 뜻하지 않는다**
 - `CHART_CACHE=<폴더>`: `<차트>-<버전>.tgz`를 미리 받아 두고 쓰기(GitHub 릴리스 다운로드가 자주 504)
-- Mimir는 S3 인증서 Secret(`mimir-s3-cert`)이 있어야 뜬다(없으면 스크립트가 적용 전에 멈춘다, kind도 진짜 인증서 필요). Agent · node-exporter · Loki · Tempo · blackbox는 Secret 없이 뜨고, Alertmanager · Grafana는 자기 Secret을 기다린다
+- Mimir · Loki는 S3 인증서 Secret(`mimir-s3-cert` · `loki-s3-cert`)이 있어야 뜬다(없으면 스크립트가 적용 전에 멈춘다, kind도 진짜 인증서 필요). Agent · node-exporter · Tempo · blackbox는 Secret 없이 뜨고, Alertmanager · Grafana는 자기 Secret을 기다린다
 
 시크릿(레포에 없음): `alertmanager-secrets`(`slack_webhook_url` · `healthchecks_ping_url`), `grafana-secrets`(`admin-user` · `admin-password` · `pg-ro-password`). 값 출처는 Slack 앱 `Alertmanager` / healthchecks.io 체크 `alertmanager-watchdog`(period 1분 · grace 4분) / 현수(grafana_ro). S3용 인증서는 `scripts/create-secrets.sh s3-certs <폴더>`로 따로: `mimir-s3-cert` · `loki-s3-cert` · `tempo-s3-cert`(`client.pem` · `client.key`, 기현이 준 ZIP, 만료 2027-01-15).
 
