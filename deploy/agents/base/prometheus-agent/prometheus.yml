@@ -9,6 +9,10 @@ global:
 remote_write:
   # 모니터링 클러스터 서비스 VIP. LAN이든 VPN 너머든 같은 주소. 끊기면 WAL(기본 최대 약 2시간치)에 쌓였다가 복구 뒤 전송
   - url: http://172.30.0.35:9009/api/v1/push
+    queue_config:
+      # Mimir가 수신 한도로 거절(429)하면 기본 동작은 그 샘플을 버리는 것이다. 버리지 않고 WAL에 둔 채 다시 보낸다
+      # (11/16 Mimir 재시작 직후 밀린 전송이 한도에 걸려 8.8만 샘플을 잃었다). 한도를 넘는 동안은 도착이 늦어질 뿐이다
+      retry_on_http_429: true
 
 scrape_configs:
   - job_name: prometheus-agent

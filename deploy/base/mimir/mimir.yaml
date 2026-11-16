@@ -67,6 +67,12 @@ ruler_storage:
 
 limits:
   compactor_blocks_retention_period: 30d   # compose --storage.tsdb.retention.time=30d 와 동일
+  # 수신 한도. 넘은 요청은 429로 거절되고 Prometheus는 429를 다시 보내지 않아 그 샘플은 사라진다.
+  # 기본값(10000/s · burst 200000 · 시계열 150000)은 11/16 실측(평소 6200/s, 시계열 10만)에 여유가 없었다:
+  # Mimir 재시작 뒤 Agent가 밀린 것을 한꺼번에 보내자 1분 동안 8.8만 샘플이 거절됐다. EKS Agent가 붙기 전에 올린다
+  ingestion_rate: 50000                    # 초당 샘플
+  ingestion_burst_size: 1000000            # 재시작 · 단절 복구 직후 몰리는 양
+  max_global_series_per_user: 300000       # 메모리 안 시계열 수. 더 올리려면 Pod 메모리(2Gi)도 같이 본다
 
 # 진행 중인 쿼리 기록 파일. 기본값은 작업 디렉터리라 비루트 계정이 못 쓴다 → PVC로
 activity_tracker:
