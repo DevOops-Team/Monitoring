@@ -42,11 +42,14 @@
 | `category` | enum | `hw` · `hw_warn` · `driver` · `app` · `infra` · `site` · `network` · `straggler` |
 | `confidence` | 0~1 | 분류 확신도. Xid 하나로 원인 확정 불가(NVIDIA 공식 입장)라서 둠 |
 | `suggested_action` | enum | 아래 3절 8개 |
+| `straggler_evidence` | 객체 (선택) | 스트래글러 판정 근거. `category: straggler`일 때만 넣는다. `duration_seconds`(느린 상태가 이어진 시간) · `cause_node`(원인 노드, **이벤트의 `node`와 같은 값** — 스키마로는 못 막아서 분류기 테스트로 검증) · `estimated_gain_seconds`(순절감 = 그대로 둘 때 손해 − 이전 비용 C, 음수 가능). 시간은 전부 **정수 초**. 필드 이름은 컨트롤러 FSDP-002와 같다 |
 
 스키마가 강제하는 규칙 두 개:
 
 - `collector_healthy: false`면 `suggested_action`은 `hold`만 허용 (site 제외: 사이트 장애면 수집 경로가 죽는 게 당연함)
 - `category: site`면 `node` · `gpu_uuid`는 null
+- `category: straggler` + `suggested_action: evacuate_preemptive`면 `straggler_evidence` 필수, `duration_seconds` ≥ 600 · `estimated_gain_seconds` ≥ 1 (ADR-37, 컨트롤러 조건과 같은 값)
+- `straggler_evidence`는 `category: straggler`에만 허용. `hold`에는 값 제한 없이 넣을 수 있다(HOLD 이유 확인용)
 - `dedup_key`는 `대상|코드|10자리 epoch 초` 형식만 허용 (ISO 시각 문자열 금지: `…11Z`와 `…11.000Z`가 다른 키가 되는 것 방지)
 
 ### 2.1 중복 처리 규칙
@@ -105,7 +108,7 @@
 | `restart_in_place` | `RETRY_GROUP` | `restartInPlace` | 세대 +1 · 새 JobSet은 공통. `devoops/target-cluster`로 **같은 클러스터 고정**(같은 노드 보장 아님), Recovery 큐로 4·5·7단계를 밟는다. 그사이 자리가 다른 Job으로 차면 다른 클러스터로 넘어가지 않고 기다린다. 15분을 넘기면 `AdmitDelayed`로 표시하고 계속 지켜보며, JobSet이 사라졌을 때만 Failed (김성모 11/11) |
 | `isolate_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 노드 cordon + `devoops/faulty` → 같은 클러스터 예비로 |
 | `reset_then_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 컨트롤러 입장에선 `isolate_migrate`와 같다. GPU 리셋은 한송이 6절대로 **별도 운영 액션**(격리 뒤 수동 · 후속), 자동 리셋 안 함 |
-| `evacuate_preemptive` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 스팟 2분 통보 · 스트래글러. 세대를 먼저 올리고 **마지막 승인본에서 재개**한다 (ADR-19 v5, 컨트롤러 contracts.md). 사전 저장 뒤 옮기는 `PLANNED_MIGRATE`는 **보류**(컨트롤러에서 현재 HOLD). 스팟 회수 예고의 이 순서(승인본 확정 → 세대 +1 → 옛 실행 종료 → 재개)는 ADR-36(11/13)으로 확정됐다. ADR-28은 폐기 |
+| `evacuate_preemptive` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 스팟 2분 통보 · 스트래글러. 세대를 먼저 올리고 **마지막 승인본에서 재개**한다 (ADR-19 v5, 컨트롤러 contracts.md). 사전 저장 뒤 옮기는 `PLANNED_MIGRATE`는 **보류**(컨트롤러에서 현재 HOLD). 스팟 회수 예고의 이 순서(승인본 확정 → 세대 +1 → 옛 실행 종료 → 재개)는 ADR-36(11/13)으로 확정됐다. ADR-28은 폐기. **스트래글러는 조건부**(ADR-37, 11/16): 분류기는 느린 상태가 600초 이상 이어지고 「그대로 둘 때 손해 ≥ 2 × 이전 비용 C」일 때만 이 값을 내고, 아니면 `category: straggler` + `hold`로 낸다. C(실측 전 900초 가정)와 안전 계수 2는 **분류기**가 계산해 `straggler_evidence.estimated_gain_seconds`에 순절감으로 넣고, 컨트롤러는 양수인지만 본다. 예비 용량 · 작업당 1회 · 수집 정상 · 정책 활성화(기본 OFF)는 **컨트롤러**가 최종 확인한다 |
 | `fence_evacuate` | `FENCE_AND_EVACUATE` | `evacuateCluster` | 클러스터 펜싱(`devoops/fenced=true`) → 옛 실행 권한 차단. 펜싱 확인은 `devoops/old-execution-stopped=true` 어노테이션만이 아니라 **실제 차단 근거**(세대 +1 반영 · 하트비트 끊김)까지. `evacuateCluster`는 이 행 전용 |
 | `refuse` | `NEEDS_CONFIG_FIX` (결과 state `REJECTED`) | 없음 (복구 안 함) | 사용자에게 실패 알림. 자동 복구 한도(3회) 초과 · init 종료 코드 5 · 6도 같은 `REJECTED`로 끝난다. Slack 알림은 HOLD만 있고 `REJECTED` 알림은 협의 중(11/11, 카운터 추가되면 MON-STD-25에 포함). 자동 재시작이 전부 꺼져 있어 JobSet이 Failed → Kueue Workload 종료 → 쿼터 자동 반납될 것으로 봄(김성모, 미검증). 멈춘 채 안 죽는 Job만 별도 처리 |
 | `hold` | `HOLD` | 없음 | 상태 저장 · 알림. Kafka `recovery.action` `type=recovery.held`, Slack은 Mimir 룰 `RecoveryHold`(MON-STD-25, ADR-27). HOLD는 그 사건의 최종 상태이고 자동 재개하지 않는다 |
@@ -150,8 +153,9 @@
 | `04-hwwarn-xid63-none` | Xid 63 (페이지 리타이어) | hw_warn → none |
 | `05-infra-spot-evacuate` | 스팟 회수 2분 통보 | infra → evacuate_preemptive |
 | `06-site-az-fence` | 클러스터 스크레이프 끊김 + 공인망 프로브 실패 | site → fence_evacuate |
-| `07-straggler-evacuate` | 스텝 시간 p99 1.8배 + 클럭 스로틀 | straggler → evacuate_preemptive |
+| `07-straggler-evacuate` | 랭크 계산 시간이 중앙값의 1.6배로 720초 지속 + 클럭 스로틀. 손해 2,880초 ≥ 2 × 900 → 순절감 1,980초 | straggler → evacuate_preemptive |
 | `08-hold-collector-down` | DCGM 필드 230만 바뀜, 로그 경로 죽음 | hw → hold |
+| `09-straggler-hold` | 같은 1.6배 · 720초지만 남은 스텝이 적어 손해 600초 < 2 × 900 → 순절감 −300초 | straggler → hold |
 
 01과 08은 같은 사건이다. 로그 경로가 죽어 DCGM 경로(08, 14:02:40)가 먼저 와서 `hold`, 로그 경로가 살아나 커널 로그(01, 14:02:11)가 뒤늦게 와서 `isolate_migrate`. `ts` 차이 29초 < 45초라 01은 08의 키를 재사용하고, 08은 키를 소비하지 않았으므로 01이 처리된다.
 
@@ -160,7 +164,7 @@
 ## 6. 확인 필요 (v1 확정 전)
 
 - [ ] (한송이) 3절 · 4절 동작이 컨트롤러 설계와 맞나 — 2026-11-05 확인됨: Kafka `gpu.fault` 소비, 봉투 `occurred_at`=판정 시각 · `payload.ts`=원본 시각 구분, exit 75 이벤트 없음, dcgm 5초는 확정값(±45초 창 전제). 나머지는 매핑표(11/12)와 함께
-- [ ] (한송이) 스트래글러를 `evacuate_preemptive`로 처리해도 되나, 별도 값(`isolate_straggler` 등)이 필요한가
+- [x] (한송이) 스트래글러를 `evacuate_preemptive`로 처리해도 되나, 별도 값(`isolate_straggler` 등)이 필요한가 — 2026-11-16 확정: 별도 값 없이 `evacuate_preemptive` + `straggler_evidence`(조건 미충족은 `hold`, 이때도 evidence 포함 가능). ADR-37 채택, 컨트롤러 정책 스위치 기본 OFF
 - [ ] (한송이) `refuse`는 컨트롤러가 반복 횟수로 올리는 것만 있나, 분류기가 직접 추천할 경우도 있나
 - [ ] (한송이) 소프트웨어 `restart_in_place` 재시도 상한은 미확정 (2026-11-05). 4절의 3회는 가정값으로 유지. 정해지면 `refuse` 승격 횟수와 같은 값으로 맞춤
 - [ ] (김현수) DB 컬럼 매핑: `raw` · `correlated`는 JSONB 한 칸으로 충분한가
