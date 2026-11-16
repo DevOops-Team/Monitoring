@@ -1,0 +1,31 @@
+{
+  "schema_version": "1",
+  "event_id": "2c9e1f0a6b7d4e8f9a0b1c2d3e4f5a6b",
+  "traceparent": "00-2c9e1f0a6b7d4e8f9a0b1c2d3e4f5a6b-8a1b2c3d4e5f6a7b-01",
+  "ts": "2026-11-18T15:10:05Z",
+  "cluster": "worker-a",
+  "az": "ap-northeast-2a",
+  "node": "ip-10-0-1-23",
+  "gpu_uuid": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7",
+  "job_id": "3f9a1c2e",
+  "generation": 4,
+  "source": "straggler",
+  "raw": {
+    "xid": null,
+    "exit_code": null,
+    "metric": "train_rank_compute_seconds_ratio",
+    "value": 1.6,
+    "log_line": null
+  },
+  "correlated": [],
+  "collector_healthy": true,
+  "dedup_key": "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7|straggler|1795014605",
+  "category": "straggler",
+  "confidence": 0.75,
+  "suggested_action": "hold",
+  "straggler_evidence": {
+    "duration_seconds": 720,
+    "cause_node": "ip-10-0-1-23",
+    "estimated_gain_seconds": -300
+  }
+}

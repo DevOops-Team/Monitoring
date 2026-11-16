@@ -221,6 +221,32 @@
         "hold",
         "none"
       ]
+    },
+    "straggler_evidence": {
+      "description": "스트래글러 판정 근거. category가 straggler일 때만 넣는다. evacuate_preemptive면 필수(ADR-37), hold에도 넣을 수 있다(HOLD 이유 확인용). 시간은 정수 초",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "duration_seconds",
+        "cause_node",
+        "estimated_gain_seconds"
+      ],
+      "properties": {
+        "duration_seconds": {
+          "description": "느린 상태가 이어진 시간(초)",
+          "type": "integer",
+          "minimum": 0
+        },
+        "cause_node": {
+          "description": "느린 원인 노드. 이벤트의 node와 같은 값(스키마로는 못 막아서 분류기 테스트로 검증)",
+          "type": "string",
+          "minLength": 1
+        },
+        "estimated_gain_seconds": {
+          "description": "순절감(초) = 그대로 둘 때 손해 − 이전 비용 C. C는 분류기가 넣는다(실측 전 900초 가정, ADR-37). 옮기는 게 손해면 음수",
+          "type": "integer"
+        }
+      }
     }
   },
   "allOf": [
@@ -260,6 +286,49 @@
           },
           "gpu_uuid": {
             "const": null
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "category": {
+            "const": "straggler"
+          },
+          "suggested_action": {
+            "const": "evacuate_preemptive"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "straggler_evidence"
+        ],
+        "properties": {
+          "straggler_evidence": {
+            "properties": {
+              "duration_seconds": {
+                "minimum": 600
+              },
+              "estimated_gain_seconds": {
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "required": [
+          "straggler_evidence"
+        ]
+      },
+      "then": {
+        "properties": {
+          "category": {
+            "const": "straggler"
           }
         }
       }
