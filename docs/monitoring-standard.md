@@ -40,11 +40,13 @@
 
 ### 4.1 GPU
 
+GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.8.4 고정). 4.9.0부터 기본 지표 23개의 이름과 11개의 단위가 바뀌므로(예: `DCGM_FI_DEV_GPU_TEMP` → `DCGM_FI_DEV_GPU_TEMP_CELSIUS`, 사용률 % → 0~1) 버전을 올리면 이 절을 같이 고친다.
+
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
-| MON-STD-01 | GPU | 온도 `DCGM_FI_DEV_GPU_TEMP` | | | | 경고 Slowdown Temp − 10 · 위험 Slowdown Temp | 벤더 (`nvidia-smi -q -d TEMPERATURE`) + 기준선 | 클럭 제한 사유 확인 → MON-STD-02 · 08 | 가설 |
-| MON-STD-02 | GPU | 클럭 제한 사유 `DCGM_FI_DEV_CLOCKS_EVENT_REASONS` | | | | 정상 0 · 경고 thermal/power 비트 · 위험 HW slowdown 비트 | 벤더 (DCGM 필드 문서) | `evacuate_preemptive` 입력 (스트래글러) | 가설 |
-| MON-STD-03 | GPU | ECC SBE 증가율 `DCGM_FI_DEV_ECC_SBE_VOL_TOTAL` · `DCGM_FI_DEV_RETIRED_PENDING` | | | | 정상 0/h · 위험 Xid 63 기록 또는 RETIRED_PENDING=1 | 벤더 (XID 문서) + 논문 · 트레이스. SBE 빈도는 15장 · 수 시간으로는 분포가 안 나와 기준선 측정 대상 아님 | `evacuate_preemptive` | 가설 |
+| MON-STD-01 | GPU | 온도 `DCGM_FI_DEV_GPU_TEMP`. 한계 = `DCGM_FI_DEV_GPU_MAX_OP_TEMP` · `DCGM_FI_DEV_SLOWDOWN_TEMP` (커스텀 CSV에서 켬) | | | | 경고 Max Operating Temp 이상 · 위험 Slowdown Temp 이상. 숫자를 룰에 적지 않고 GPU가 보고하는 한계 지표와 비교 (T4 실제 값은 GPU 노드에서 확인) | 벤더 (nvidia-smi 문서 Temperature: Max Operating = 소프트웨어가 클럭을 낮추기 시작, Slowdown = 하드웨어가 낮춤, Shutdown = 꺼짐) + 기준선 | 클럭 제한 사유 확인 → MON-STD-02 · 08 | 가설 |
+| MON-STD-02 | GPU | 클럭 제한 사유 `DCGM_EXP_CLOCK_EVENTS_COUNT` (사유별 시계열, 커스텀 CSV에서 켬). 보조 = 누적 감속 시간 `DCGM_FI_DEV_THERMAL_VIOLATION` · `DCGM_FI_DEV_POWER_VIOLATION` (ns, T4 지원 여부 확인 필요) | | | | 정상 = 감속 사유 없음 (Idle 사유는 무시: 학습이 없는 GPU는 항상 켜짐) · 경고 SW Power Cap · SW Thermal · 위험 HW Slowdown (HW Thermal · HW Power Brake가 같이 켬). 사유 라벨 값은 GPU 노드에서 확인 | 벤더 (nvidia-smi 문서 Clocks Event Reasons: HW Slowdown = 코어 클럭 2배 이상 감소) | `evacuate_preemptive` 입력 (스트래글러) | 가설 |
+| MON-STD-03 | GPU | ECC SBE 증가율 `DCGM_FI_DEV_ECC_SBE_AGG_TOTAL` (volatile `_VOL_`은 드라이버 재로드 때 0으로 돌아가 쓰지 않음) · `DCGM_FI_DEV_RETIRED_PENDING` | | | | 정상 0/h · 위험 Xid 63 기록 또는 RETIRED_PENDING=1 | 벤더 (XID 문서, nvidia-smi 문서 Page Retirement: 폐기됐지만 아직 차단되지 않은 페이지는 여전히 할당될 수 있다) + 논문 · 트레이스. SBE 빈도는 15장 · 수 시간으로는 분포가 안 나와 기준선 측정 대상 아님 | `evacuate_preemptive` | 가설 |
 | MON-STD-04 | GPU | XID. 메인 = journald 커널 로그 `NVRM: Xid` (Loki ruler) · 보조 = `DCGM_FI_DEV_XID_ERRORS` (필드 230, 수집 5초) | | | | 경고 앱 코드 Xid 1회 · 위험 HW Xid 1회 | 벤더 (NVIDIA XID Errors 원인 열) | 분류기 룰 테이블 → [fault-event.md 3절](fault-event.md) | 가설 |
 | MON-STD-05 | GPU | 사용률 · 메모리 `DCGM_FI_DEV_GPU_UTIL` · `DCGM_FI_DEV_FB_USED` (학습 중) | | | | 경고 사용률 p50 − 2σ 이하 5분 | 기준선 | 데이터 공급 병목 점검 런북 | 가설 |
 | MON-STD-17 | GPU | NVML 사이드카: NVML 호출 지연 히스토그램 · `nvmlDeviceRegisterEvents` XID 카운터 (계측 필요) | | | | | 기준선 | `collector_healthy` 판단 입력 (지연 급증 = 드라이버 응답 이상) | 비움 |
@@ -53,7 +55,7 @@
 
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
-| MON-STD-06 | GPU 노드 | CPU (g4dn.xlarge 4 vCPU · g4dn.2xlarge 8 vCPU, ADR-25. 사용률은 비율이라 임계값은 공통, 기준선은 타입별로 `kube_node_labels` 조인) `node_cpu_seconds_total` | | | | 경고 80% 5분 · 위험 95% | 실험 (stress-ng로 스텝 시간 꺾이는 점) | 데이터 로더 워커 수 조정 런북 | 가설 |
+| MON-STD-06 | GPU 노드 | CPU (g4dn.xlarge 4 vCPU · g4dn.2xlarge 8 vCPU, ADR-25. 사용률은 비율이라 임계값은 공통, 기준선은 타입별로 `kube_node_labels` 조인) `node_cpu_seconds_total` | | | | 경고 80% 5분 · 위험 95% | 실험 (`stress-ng --cpu 0 --cpu-load N`으로 스텝 시간 꺾이는 점. `--cpu-load`는 워커당 비율이라 x축은 설정값이 아니라 실제 사용률) | 데이터 로더 워커 수 조정 런북 | 가설 |
 | MON-STD-07 | GPU 노드 | 메모리 · 디스크 · 네트워크 `node_memory_*` · `node_filesystem_*` · `node_network_*` | | | | 위험 디스크 90% | 기준선 + 운영 경험 | 체크포인트 로컬 쓰기 실패 예방 런북 | 가설 |
 | MON-STD-16 | CPU 노드 | Prometheus Agent WAL 디스크 · `prometheus_agent_*` (WAL 경로 `node_filesystem_avail_bytes`) | | | | WAL 보존 상한 4h = VPN 단절 복구 상한 | 벤더 (Agent WAL 기본 보존 max 4h) + 실험 (VPN 단절) | VPN 점검 런북 | 가설 |
 | MON-STD-24 | Proxmox 호스트 (devoops · pve1~4) | 호스트 OS node-exporter (`job="pve-host"`, 모니터링 클러스터 Agent가 LAN 직접 pull, 설치 · 설정은 `ansible/roles/node_exporter`): `up` · 루트 디스크 `node_filesystem_avail_bytes` · 온도 `node_hwmon_temp_celsius` (CPU `chip=~"platform_coretemp.*"` / NVMe `chip=~"nvme.*"` 분리) | `up` 5/5 · 루트 디스크 사용 12~53% (devoops 53%, 나머지 12~18%) · **CPU 온도 24h 평균 38~49°C · p95 41~53°C** (호스트당 VM 2~3대 가동 기준, 덮개 개폐는 ±2°C로 무관) · **NVMe 평균 22~53°C** (devoops만 50°C대, VM 4대 디스크 쓰기) | | | | 호스트 다운 5분 (`up==0`) · 디스크 경고 80% · 위험 90% · **CPU 온도 경고 80°C · 위험 90°C**, 평가는 `avg_over_time([5m])` 또는 `for: 5m` (pve1 · pve3에 하루 19회 1샘플 60~92°C 스파이크가 남아 인스턴트 값 금지) · **NVMe 온도 경고 70°C** | 벤더 (CPU Tjmax 100°C · NVMe 스로틀 70~80°C) + 기준선 **2회 누적 48h** ([1차 2026-11-06 덮개 닫힘 24h](measurements/2026-11-06-pve-host-temp.md) · 2차 2026-11-09~10 덮개 열림 24.1h, 같은 노트 7절) + 운영 경험 (11/02~11/10 pve4 15분 주기 스파이크 = pve4에만 깔린 `prometheus-node-exporter-collectors` 15분 타이머, 11/10 Ansible로 제거 → 11/11 재부팅 뒤에도 0회로 **확정**, 같은 노트 7-4) | 호스트 다운 = 그 위 VM(master·worker·monitoring·kafka·pfsense) 전부 영향 → 인프라 담당 호출 런북 | 측정 중 (정상 확정, 경고 · 위험은 가설) |
