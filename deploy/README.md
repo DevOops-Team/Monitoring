@@ -18,13 +18,15 @@ ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/
 | node-exporter 1.12.1 | Helm | 노드마다 | - | 3대 | - | - |
 | kube-state-metrics v2.20.0 (11/13 추가) | Helm `prometheus-community/kube-state-metrics` | 1 | - | - | `kube-state-metrics:8080` | - |
 | blackbox_exporter v0.29.1 | Helm | 1 | - | monitoring2 | `blackbox-exporter:9115` | - |
+| kafka_exporter v1.11.0 (11/17 추가) | Helm `prometheus-community/prometheus-kafka-exporter` | 1 | - | - | `kafka-exporter:9308` | - |
+| postgres_exporter v0.20.1 (11/17 추가) | Helm `prometheus-community/prometheus-postgres-exporter` | 1 | - | - | `postgres-exporter:80` | - |
 
 - 버전은 `versions.env` 한 곳에. Grafana · Loki · Tempo 차트는 2026-01부터 `grafana-community/helm-charts`(옛 `grafana/*`는 deprecated)
 - PVC는 local-path라 **만들어진 노드에 묶인다.** 그 노드가 죽으면 해당 저장소가 멈춘다(복제 1 단계의 한계, 3노드 복제에서 해소). cAdvisor는 따로 안 깔고 kubelet 내장 것을 긁는다
 - Mimir · Loki · Tempo의 PVC에는 WAL · 아직 안 올린 최근 데이터 · 캐시만 있다. 오래 두는 데이터는 S3에 있고 보존 30일은 각 앱 설정이 지킨다(버킷에는 수명 규칙 없음). S3 키는 Pod 안 `aws-credentials` 사이드카가 인증서(IAM Roles Anywhere)로 1시간짜리를 받아 준다
 - 밖으로 나가는 문은 전부 `type: LoadBalancer` + `kube-vip.io/loadbalancerIPs: "172.30.0.35"`, 포트로 공유. Loki · Tempo는 차트 Service를 내부용으로 두고 `base/external/services.yaml`이 필요한 포트만 연다
 
-수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`).
+수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`) · Kafka · DB VM 4대(`job="vm-host"`) · kafka_exporter · postgres_exporter(아래 「Kafka · DB VM 수집」).
 룰: `base/mimir/rules/self.yml` 4개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown), Mimir ruler가 15초마다 평가.
 `base/mimir/rules/recovery.yml` 1개(`RecoveryHold`, MON-STD-25): 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화. 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
 `base/mimir/rules/records.yml` 레코딩 룰 3개: 대시보드 타일(OOM kill · OTel 거절)용. `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
@@ -35,9 +37,9 @@ ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/
 
 **평소: ArgoCD.** 이 레포 `main`에 머지하면 관리 클러스터의 ArgoCD가 모니터링 클러스터에 반영한다(11/17부터). 손으로 돌릴 명령이 없다.
 
-- Application 9개는 Gitops 레포 `bootstrap/onprem/applications/gpu-monitoring-*.yaml`(프로젝트 `gpu-monitoring`, 대상 클러스터 `monitoring`)
+- Application 11개는 Gitops 레포 `bootstrap/onprem/applications/gpu-monitoring-*.yaml`(프로젝트 `gpu-monitoring`, 대상 클러스터 `monitoring`). **새 Application은 같은 폴더 `kustomization.yaml`의 resources에도 넣는다**(파일만 두면 gpu-root가 만들지 않는다, 11/17 kafka-exporter에서 겪음)
   - `gpu-monitoring-base`: 이 레포 `deploy/base`(kustomize: Mimir · Prometheus Agent · 밖으로 여는 Service · 룰 · 대시보드)
-  - 나머지 8개(`local-path` · `node-exporter` · `kube-state-metrics` · `loki` · `tempo` · `blackbox` · `alertmanager` · `grafana`): 차트 버전은 Gitops Application의 `targetRevision`, 값은 이 레포 `deploy/values/*.yaml`
+  - 나머지 10개(`local-path` · `node-exporter` · `kube-state-metrics` · `loki` · `tempo` · `blackbox` · `alertmanager` · `grafana` · `kafka-exporter` · `postgres-exporter`): 차트 버전은 Gitops Application의 `targetRevision`, 값은 이 레포 `deploy/values/*.yaml`
 - 자동 sync이고 `prune` · `selfHeal`은 끈다. 저장소 리소스를 자동으로 지우지 않고, 아래 비상 경로로 넣은 변경을 ArgoCD가 되돌리지 않는다(Git이 바뀔 때만 반영)
 - prune을 꺼서 **이름이 바뀐 옛 리소스는 남는다.** `mimir.yaml` · `prometheus.yml`을 고치면 ConfigMap 이름(해시)이 바뀌고 옛 ConfigMap이 남아 Application이 OutOfSync로 보일 수 있다. 확인한 뒤 옛 것을 손으로 지운다
 - Secret은 ArgoCD가 다루지 않는다. 지금처럼 `scripts/create-secrets.sh`
@@ -61,7 +63,7 @@ scripts/deploy-k8s.sh            # 검사(lint) → 적용. API 서버가 172.30
 - `CHART_CACHE=<폴더>`: `<차트>-<버전>.tgz`를 미리 받아 두고 쓰기(GitHub 릴리스 다운로드가 자주 504)
 - Mimir · Loki · Tempo는 S3 인증서 Secret(`mimir-s3-cert` · `loki-s3-cert` · `tempo-s3-cert`)이 있어야 뜬다(없으면 스크립트가 적용 전에 멈춘다, kind도 진짜 인증서 필요). Agent · node-exporter · blackbox는 Secret 없이 뜨고, Alertmanager · Grafana는 자기 Secret을 기다린다
 
-시크릿(레포에 없음): `alertmanager-secrets`(`slack_webhook_url` · `healthchecks_ping_url`), `grafana-secrets`(`admin-user` · `admin-password` · `pg-ro-password`). 값 출처는 Slack 앱 `Alertmanager` / healthchecks.io 체크 `alertmanager-watchdog`(period 1분 · grace 4분) / 현수(grafana_ro). S3용 인증서는 `scripts/create-secrets.sh s3-certs <폴더>`로 따로: `mimir-s3-cert` · `loki-s3-cert` · `tempo-s3-cert`(`client.pem` · `client.key`, 기현이 준 ZIP, 만료 2027-01-15).
+시크릿(레포에 없음): `alertmanager-secrets`(`slack_webhook_url` · `healthchecks_ping_url`), `grafana-secrets`(`admin-user` · `admin-password` · `pg-ro-password`). 값 출처는 Slack 앱 `Alertmanager` / healthchecks.io 체크 `alertmanager-watchdog`(period 1분 · grace 4분) / 현수(grafana_ro). postgres_exporter 비밀번호는 `scripts/create-secrets.sh postgres-exporter`로 따로: `postgres-exporter-secrets`(`password`, 현수). S3용 인증서는 `scripts/create-secrets.sh s3-certs <폴더>`로 따로: `mimir-s3-cert` · `loki-s3-cert` · `tempo-s3-cert`(`client.pem` · `client.key`, 기현이 준 ZIP, 만료 2027-01-15).
 
 ## 확인
 
@@ -109,6 +111,28 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | 데이터소스 | `values/grafana.yaml` | Grafana 재시작 |
 | 이미지 버전 | `base/` YAML의 image (+ `versions.env`) | kind에서 먼저 |
 | 차트 버전 | `versions.env` **와** Gitops Application의 `targetRevision` 두 곳 | kind에서 먼저. 한쪽만 올리면 비상 경로와 ArgoCD가 서로 다른 버전을 깐다 |
+
+## Kafka · DB VM 수집 (11/17)
+
+Kafka VM 3대(.40~.42)와 DB VM(.50)에서 받는 것은 셋이다.
+
+| 무엇 | 어디서 도나 | 잡 | 주로 보는 것 |
+|---|---|---|---|
+| OS 지표 | VM의 node-exporter(apt 패키지 1.7.0, `ansible/playbooks/service-vms.yml`) | `vm-host`(`host` = `kafka1`~`kafka3` · `db`) | CPU · 메모리 · 디스크 |
+| 컨슈머 그룹 lag | 모니터링 클러스터 `kafka-exporter`(브로커 3대 :9092에 원격 접속, 평문) | `kafka-exporter` | `kafka_consumergroup_lag{consumergroup="data-collector"}` |
+| PostgreSQL 상태 | 모니터링 클러스터 `postgres-exporter`(.50 `gpuf_data`, 계정 `postgres_exporter`, sslmode require) | `postgres-exporter` | `pg_up` · 연결 수 · DB 크기 |
+
+- lag를 보는 이유: 수집기(관리 클러스터 `data-system/collector`)는 `/metrics`가 없어 밀리는지 알 방법이 lag뿐이다. 값 `-1`은 그 파티션에 커밋한 오프셋이 아직 없다는 뜻이라 룰 · 패널에서 거른다
+- `pg_up`이 0이고 `up{job="postgres-exporter"}`가 1이면 exporter는 살아 있고 DB 접속만 안 되는 것이다. `kubectl -n monitoring logs deploy/postgres-exporter`에 이유가 나온다(비밀번호 · `pg_hba`는 모니터링 노드 .31~.33만 허용)
+- **새 exporter를 붙이는 순서**: ① Secret(필요하면) → ② Gitops Application(+ kustomization 등록) → ③ 이 레포의 values · 스크레이프 잡을 main에. ③이 먼저 들어가면 Agent가 없는 대상을 긁어 5분 뒤 `MonitoringTargetDown`이 난다(11/17 kafka-exporter에서 19분 동안 `up` 0)
+- VM 접속은 VM 이름과 같은 일반 계정 + sudo(`-k --ask-become-pass`). root SSH 로그인은 막혀 있다
+
+확인:
+```bash
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{job=~"vm-host|kafka-exporter|postgres-exporter"}'                          # 6개 1
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kafka_consumergroup_lag_sum{consumergroup="data-collector"}'                  # 토픽마다 값
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=pg_up'                                                                        # 1
+```
 
 ## PVC에 남은 데이터를 S3로 올리기 (11/17에 한 것)
 
@@ -198,4 +222,4 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{clu
 
 ## 다음
 
-~~S3 백엔드~~(11/16) → ~~ArgoCD 원격 등록~~(11/17) → ~~관리 클러스터용 수집 층~~(11/10) → replicas 3 + anti-affinity(Mimir · Loki는 replication_factor 3) → EKS overlay → 분류기 · kafka_exporter · Loki 룰(Xid).
+~~S3 백엔드~~(11/16) → ~~ArgoCD 원격 등록~~(11/17) → ~~관리 클러스터용 수집 층~~(11/10) → replicas 3 + anti-affinity(Mimir · Loki는 replication_factor 3) → EKS overlay → 분류기 · ~~kafka_exporter~~(11/17) · Loki 룰(Xid).
