@@ -57,6 +57,13 @@ pipeline:
             exclude:
               - _TRANSPORT ^kernel$
               - _SYSTEMD_UNIT ^fluent-bit\.service$
+          # 실행 명령줄 · 실행 파일 경로는 보내지 않는다: 인자로 넘긴 비밀번호 · 토큰이 Loki(무인증) · S3에 30일 남는 것을 막는다
+          - name: content_modifier
+            action: delete
+            key: _CMDLINE
+          - name: content_modifier
+            action: delete
+            key: _EXE
 {{ resource('journal') }}
   outputs:
     # 본문 = MESSAGE, 나머지 journald 필드(_SYSTEMD_UNIT · PRIORITY …)는 로그 속성 → Loki 구조화 메타데이터.
