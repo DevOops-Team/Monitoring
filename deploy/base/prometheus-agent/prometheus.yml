@@ -104,6 +104,12 @@ scrape_configs:
       - targets: ["blackbox-exporter.monitoring.svc.cluster.local:9115"]
         labels: {cluster: monitoring}
 
+  # kafka_exporter(values/kafka-exporter.yaml): 컨슈머 그룹 lag. 주로 보는 것은 kafka_consumergroup_lag{consumergroup="data-collector"}
+  - job_name: kafka-exporter
+    static_configs:
+      - targets: ["kafka-exporter.monitoring.svc.cluster.local:9308"]
+        labels: {cluster: monitoring}
+
   # 이 클러스터의 Fluent Bit DaemonSet(agents/overlays/monitoring). 입력 · 출력 · 재시도(fluentbit_*). 관리 클러스터와 같은 job 이름
   - job_name: fluent-bit
     metrics_path: /api/v2/metrics/prometheus
