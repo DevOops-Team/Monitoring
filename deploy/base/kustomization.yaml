@@ -32,5 +32,6 @@ configMapGenerator:
       - grafana/dashboards/infra/k8s-nodes.json
       - grafana/dashboards/infra/k8s-workloads.json
       - grafana/dashboards/infra/vm-hosts.json
+      - grafana/dashboards/infra/pfsense.json
     options:
       disableNameSuffixHash: true
