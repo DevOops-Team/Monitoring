@@ -1,0 +1,6 @@
+---
+- name: fluent-bit 재시작
+  ansible.builtin.systemd:
+    name: fluent-bit
+    state: restarted
+    daemon_reload: true
