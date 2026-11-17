@@ -1,0 +1,11 @@
+# kafka_exporter: 컨슈머 그룹 lag(kafka_consumergroup_lag) · 토픽 오프셋. 브로커 자체 지표는 JMX(kafka-jmx 잡)가 따로 낸다.
+# 보려는 것은 수집기(data-system/collector, 그룹 data-collector)가 밀리는지다. collector는 /metrics가 없어 lag가 유일한 신호(현수 11/17)
+# VM에 깔지 않고 여기서 브로커 3대에 원격으로 붙는다. 리스너는 평문 9092(인증 없음)
+fullnameOverride: kafka-exporter
+kafkaServer:
+  - 172.30.0.40:9092
+  - 172.30.0.41:9092
+  - 172.30.0.42:9092
+resources:
+  requests: {cpu: 10m, memory: 32Mi}
+  limits: {memory: 96Mi}
