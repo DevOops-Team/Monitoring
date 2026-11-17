@@ -26,7 +26,7 @@ ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/
 - Mimir · Loki · Tempo의 PVC에는 WAL · 아직 안 올린 최근 데이터 · 캐시만 있다. 오래 두는 데이터는 S3에 있고 보존 30일은 각 앱 설정이 지킨다(버킷에는 수명 규칙 없음). S3 키는 Pod 안 `aws-credentials` 사이드카가 인증서(IAM Roles Anywhere)로 1시간짜리를 받아 준다
 - 밖으로 나가는 문은 전부 `type: LoadBalancer` + `kube-vip.io/loadbalancerIPs: "172.30.0.35"`, 포트로 공유. Loki · Tempo는 차트 Service를 내부용으로 두고 `base/external/services.yaml`이 필요한 포트만 연다
 
-수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`) · Kafka · DB VM 4대(`job="vm-host"`) · kafka_exporter · postgres_exporter(아래 「Kafka · DB VM 수집」).
+수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`) · Kafka · DB VM 4대(`job="vm-host"`) · kafka_exporter · postgres_exporter(아래 「Kafka · DB VM 수집」) · pfSense 2대(`job="pfsense-host"`, 아래 「pfSense 수집」).
 룰: `base/mimir/rules/self.yml` 4개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown), Mimir ruler가 15초마다 평가.
 `base/mimir/rules/recovery.yml` 1개(`RecoveryHold`, MON-STD-25): 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화. 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
 `base/mimir/rules/records.yml` 레코딩 룰 3개: 대시보드 타일(OOM kill · OTel 거절)용. `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
@@ -90,6 +90,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `kafka-jmx` | Kafka 브로커 | 브로커 · 컨트롤러 · 파티션 복제 · 처리량 · 요청 p99 · JVM | - |
 | `k8s-nodes` | Kubernetes 노드 | 두 클러스터 노드 9대의 자원 · PSI · 디스크 · NIC · OOM · NTP | cluster · node |
 | `k8s-workloads` | Kubernetes 워크로드 | Pod 상태 · 재시작 · 대기 사유 · 마지막 종료 코드 · 워크로드 복제 · 학습 Pod | cluster · namespace |
+| `vm-hosts` | Kafka · DB VM | Kafka 3대 · DB VM의 자원 · PSI · 루트 디스크(80 · 90% 선) · 디스크 IO · eth0 | host |
 
 - **화면에서 고친 것은 저장되지 않는다**(`allowUiUpdates: false`). 고치는 흐름: 화면에서 편집 → 「Export → JSON」 → 레포 파일 교체 → 커밋 → 적용
 - 새 대시보드는 `kustomization.yaml`의 `grafana-dashboards-infra` files에도 넣는다. lint가 JSON 문법 · `uid` · `title` · uid 중복을 본다
@@ -132,6 +133,28 @@ Kafka VM 3대(.40~.42)와 DB VM(.50)에서 받는 것은 셋이다.
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{job=~"vm-host|kafka-exporter|postgres-exporter"}'                          # 6개 1
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kafka_consumergroup_lag_sum{consumergroup="data-collector"}'                  # 토픽마다 값
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=pg_up'                                                                        # 1
+```
+
+## pfSense 수집 (11/17)
+
+pfSense 2대(주 .2 · 대기 .3)의 OS 지표만 받는다(박기현 합의: node-exporter만, 로그는 범위 밖).
+
+| 무엇 | 값 |
+|---|---|
+| 설치 | pfSense 공식 패키지 `pfSense-pkg-node_exporter` 0.18.1_8(node_exporter 1.11.0), `ansible/playbooks/pfsense.yml`(대기 → 주) |
+| 듣는 주소 | LAN 주소의 9100만(.2 · .3). 127.0.0.1 · CARP VIP(.1) · WAN에서는 응답하지 않는다. 플레이북이 `sockstat`으로 확인한다 |
+| 잡 | `pfsense-host`, `host` = `pfsense` · `pfsense-standby`. 두 VM은 복제본이라 `nodename`이 둘 다 `pfSense` → 구분은 `host`로만 |
+| 설정 위치 | pfSense `config.xml`의 `installedpackages/nodeexporter`(웹 화면 Services → Prometheus node_exporter와 같은 값). 패키지는 대기에 자동으로 따라가지 않아 두 대 모두에 실행한다 |
+
+- FreeBSD라 지표 이름이 Linux와 다르다: 메모리는 `node_memory_{active,wired,free,size}_bytes`, CPU 모드는 `user · nice · system · interrupt · idle`. 인터페이스 상태는 `node_pfsense_interface_up`
+- **CPU에 1분 주기 톱니가 보이는 것은 정상이다.** 패키지가 넣는 1분 cron(인터페이스 지표를 textfile로 쓰는 스크립트, nice 20)이 매분 0~15초에 돈다. 실측(11/17 20:02~20:11, 15초 구간): 대기(2코어) 평균 4.1% · 최대 7.0%(나머지 구간 0.2~1.3%), 주(10코어) 평균 0.5% · 최대 0.9%. `mode="nice"`는 이 구간에만 나온다. 패널은 1분 이상 평균으로 본다
+- 접속: SSH 계정은 `admin`(메뉴가 뜨고 `8`이 셸) · `root`(바로 셸)뿐이고 비밀번호가 같다. Ansible은 `root`(`-k`). `pfsense` · `pfsense-standby`는 VM 이름이지 계정이 아니다
+- **pfSense의 22 · 443을 반복해서 두드리지 않는다.** 로그인 실패 · 인증 없는 접속이 쌓이면 sshguard가 출발지 IP의 SSH · 웹을 몇 분 막는다(ping은 됨, 장비마다 따로). Tailscale 경유 접속은 전부 devoops(.90)로 보여 팀 전체가 같이 막힌다(11/17 19:10~19:27). 확인 · 해제는 Proxmox 콘솔에서 `pfctl -t sshguard -T show` · `pfctl -t sshguard -T delete 172.30.0.90`, 기록은 `grep -i sshguard /var/log/auth.log /var/log/system.log`
+
+확인:
+```bash
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{job="pfsense-host"}'                       # 2개 1
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=node_textfile_scrape_error{job="pfsense-host"}'  # 2개 0
 ```
 
 ## PVC에 남은 데이터를 S3로 올리기 (11/17에 한 것)
