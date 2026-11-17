@@ -84,13 +84,14 @@ lint() {
     -f "$D/values/alertmanager.yaml" -s templates/configmap.yaml \
     | awk '/^  alertmanager.yml: \|/{f=1;next} f&&/^    /{sub(/^    /,"");print;next} f&&!/^ *$/{f=0}' > "$tmp/alertmanager.yml"
   [[ -s "$tmp/alertmanager.yml" ]] || { echo "alertmanager.yml 추출 실패" >&2; return 1; }
-  for f in loki tempo blackbox kafka-exporter; do
+  for f in loki tempo blackbox kafka-exporter postgres-exporter; do
     [[ -f "$D/values/$f.yaml" ]] || continue
     case "$f" in
       loki)     c="$(chart grafana-community/loki "$LOKI_CHART")" ;;
       tempo)    c="$(chart grafana-community/tempo "$TEMPO_CHART")" ;;
       blackbox) c="$(chart prometheus-community/prometheus-blackbox-exporter "$BLACKBOX_CHART")" ;;
       kafka-exporter) c="$(chart prometheus-community/prometheus-kafka-exporter "$KAFKA_EXPORTER_CHART")" ;;
+      postgres-exporter) c="$(chart prometheus-community/prometheus-postgres-exporter "$POSTGRES_EXPORTER_CHART")" ;;
     esac
     # shellcheck disable=SC2086
     helm template "$f" $c -n "$NS" -f "$D/values/$f.yaml" > /dev/null
@@ -167,13 +168,14 @@ SC
   # shellcheck disable=SC2046
   helm upgrade --install kube-state-metrics $(chart prometheus-community/kube-state-metrics "$KSM_CHART") \
     -n "$NS" -f "$D/values/kube-state-metrics.yaml" --wait --timeout 5m
-  for f in loki tempo blackbox kafka-exporter; do
+  for f in loki tempo blackbox kafka-exporter postgres-exporter; do
     [[ -f "$D/values/$f.yaml" ]] || continue
     case "$f" in
       loki)     c="$(chart grafana-community/loki "$LOKI_CHART")" ;;
       tempo)    c="$(chart grafana-community/tempo "$TEMPO_CHART")" ;;
       blackbox) c="$(chart prometheus-community/prometheus-blackbox-exporter "$BLACKBOX_CHART")" ;;
       kafka-exporter) c="$(chart prometheus-community/prometheus-kafka-exporter "$KAFKA_EXPORTER_CHART")" ;;
+      postgres-exporter) c="$(chart prometheus-community/prometheus-postgres-exporter "$POSTGRES_EXPORTER_CHART")" ;;
     esac
     echo "== 차트 ($f)"
     # shellcheck disable=SC2086

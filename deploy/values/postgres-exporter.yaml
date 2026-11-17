@@ -1,0 +1,18 @@
+# postgres_exporter: 데이터 파트 PostgreSQL(현수, 172.30.0.50)의 상태(pg_up · 연결 수 · DB 크기 · 잠금 · 복제).
+# VM에 깔지 않고 여기서 원격으로 붙는다. 계정 postgres_exporter는 현수가 만들었고(11/11) 비밀번호는 Secret으로만 둔다:
+#   KUBECONFIG=<admin.conf> scripts/create-secrets.sh postgres-exporter   → Secret postgres-exporter-secrets(password)
+# Secret이 없으면 Pod가 CreateContainerConfigError로 대기한다 → Secret을 먼저 만든다
+fullnameOverride: postgres-exporter
+config:
+  datasource:
+    host: 172.30.0.50
+    port: "5432"
+    database: gpuf_data
+    user: postgres_exporter
+    passwordSecret:
+      name: postgres-exporter-secrets
+      key: password
+    sslmode: require          # Grafana 데이터소스(grafana_ro)와 같은 조건. pg_hba는 모니터링 노드 .31~.33만 허용
+resources:
+  requests: {cpu: 10m, memory: 32Mi}
+  limits: {memory: 96Mi}
