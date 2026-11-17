@@ -1,0 +1,7 @@
+---
+# pfSense 공식 패키지 pfSense-pkg-node_exporter(Services → Prometheus node_exporter)를 두 대 같은 상태로.
+# FreeBSD 패키지를 직접 깔고 rc.conf로 띄우지 않는다: pfSense는 자기 패키지가 아닌 것을 업그레이드 때 지우고,
+# 설정이 config.xml에 있어야 백업 · 복원에 같이 들어간다.
+# 수집기(collectors) · extra_flags는 패키지 기본값을 그대로 둔다(설치 때 패키지가 config.xml에 써 넣음)
+pfsense_node_exporter_iface: lan       # 이 인터페이스의 주소에서만 듣는다(.2 · .3). CARP VIP · WAN에서는 안 듣는다
+pfsense_node_exporter_port: "9100"

@@ -22,3 +22,12 @@ all:
       vars:
         ansible_become: true
         node_exporter_apt_update_cache: true   # 패키지가 아직 없는 VM이라 apt 캐시부터 갱신한다
+    # pfSense 2대 (FreeBSD, 소유자 박기현 · 11/17 합의: node-exporter만).
+    # 두 VM은 호스트 이름이 같다(pfSense.home.arpa, 복제) → 구분은 IP로
+    pfsense_hosts:
+      hosts:
+        pfsense:         {ansible_host: 172.30.0.2}   # 주, pve4
+        pfsense-standby: {ansible_host: 172.30.0.3}   # 대기, pve2
+      vars:
+        ansible_user: root
+        ansible_python_interpreter: /usr/local/bin/python3.11
