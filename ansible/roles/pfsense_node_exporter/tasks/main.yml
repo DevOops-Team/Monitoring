@@ -19,6 +19,19 @@
   register: pfsense_node_exporter_configure
   changed_when: "'unchanged' not in pfsense_node_exporter_configure.stdout"
 
+# 패키지는 인터페이스 주소를 못 찾으면 주소 없이 ":9100"으로 띄워 WAN을 포함한 모든 주소에서 듣게 된다 → 실제 소켓으로 확인한다
+- name: 듣는 주소 확인 (sockstat)
+  ansible.builtin.command: sockstat -4 -6 -l -p {{ pfsense_node_exporter_port }}
+  register: pfsense_node_exporter_socket
+  changed_when: false
+  check_mode: false
+  retries: 5
+  delay: 2
+  until: (ansible_host ~ ':' ~ pfsense_node_exporter_port) in pfsense_node_exporter_socket.stdout
+  failed_when: >-
+    (ansible_host ~ ':' ~ pfsense_node_exporter_port) not in pfsense_node_exporter_socket.stdout
+    or ('*:' ~ pfsense_node_exporter_port) in pfsense_node_exporter_socket.stdout
+
 # 127.0.0.1이 아니라 LAN 주소로 확인한다: 패키지가 고른 인터페이스 주소에만 묶는다
 - name: 응답 확인 (LAN 주소 :9100/metrics)
   ansible.builtin.uri:
