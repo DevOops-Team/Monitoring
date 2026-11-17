@@ -14,8 +14,8 @@
 service:
   flush: 1
   log_level: warn
-  http_server: on                  # :2020 상태 · 지표
-  http_listen: 0.0.0.0
+  http_server: on                  # :2020 상태 · 지표. 지금은 role의 응답 확인만 쓰므로 호스트 안에서만 연다(Agent가 긁게 되면 그때 넓힌다)
+  http_listen: 127.0.0.1
   http_port: 2020
   health_check: on
   hc_errors_count: 5
