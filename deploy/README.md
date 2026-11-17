@@ -90,6 +90,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `kafka-jmx` | Kafka 브로커 | 브로커 · 컨트롤러 · 파티션 복제 · 처리량 · 요청 p99 · JVM | - |
 | `k8s-nodes` | Kubernetes 노드 | 두 클러스터 노드 9대의 자원 · PSI · 디스크 · NIC · OOM · NTP | cluster · node |
 | `k8s-workloads` | Kubernetes 워크로드 | Pod 상태 · 재시작 · 대기 사유 · 마지막 종료 코드 · 워크로드 복제 · 학습 Pod | cluster · namespace |
+| `vm-hosts` | Kafka · DB VM | Kafka 3대 · DB VM의 자원 · PSI · 루트 디스크(80 · 90% 선) · 디스크 IO · eth0 | host |
 
 - **화면에서 고친 것은 저장되지 않는다**(`allowUiUpdates: false`). 고치는 흐름: 화면에서 편집 → 「Export → JSON」 → 레포 파일 교체 → 커밋 → 적용
 - 새 대시보드는 `kustomization.yaml`의 `grafana-dashboards-infra` files에도 넣는다. lint가 JSON 문법 · `uid` · `title` · uid 중복을 본다
