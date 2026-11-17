@@ -2,7 +2,7 @@
 
 모니터링 클러스터(monitoring1~3, `docs/monitoring-cluster.md`)에 올리는 스택. `compose/`(VM 1대)를 대체한다. 이 문서가 MON-STD-22 "모니터링 클러스터 복구 런북"이다. 부 담당이 이 절차만으로 다시 올릴 수 있어야 한다.
 
-ADR-18 1단계 상태: 저장소는 **복제 1 · PVC filesystem**. 3노드 복제 · S3 · ArgoCD · 분류기는 아직 없다. 클러스터에 붙이는 수집 층은 `agents/`(아래 절).
+ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/16 전환, 버킷 `devoops-prod-monitoring-947027666399-us-east-2`의 `mimir/` · `loki/` · `tempo/`), 배포는 **ArgoCD**(11/17, 아래 「적용」). 3노드 복제 · 분류기는 아직 없다. 클러스터에 붙이는 수집 층은 `agents/`(아래 절).
 
 ## 구성
 
@@ -21,6 +21,7 @@ ADR-18 1단계 상태: 저장소는 **복제 1 · PVC filesystem**. 3노드 복�
 
 - 버전은 `versions.env` 한 곳에. Grafana · Loki · Tempo 차트는 2026-01부터 `grafana-community/helm-charts`(옛 `grafana/*`는 deprecated)
 - PVC는 local-path라 **만들어진 노드에 묶인다.** 그 노드가 죽으면 해당 저장소가 멈춘다(복제 1 단계의 한계, 3노드 복제에서 해소). cAdvisor는 따로 안 깔고 kubelet 내장 것을 긁는다
+- Mimir · Loki · Tempo의 PVC에는 WAL · 아직 안 올린 최근 데이터 · 캐시만 있다. 오래 두는 데이터는 S3에 있고 보존 30일은 각 앱 설정이 지킨다(버킷에는 수명 규칙 없음). S3 키는 Pod 안 `aws-credentials` 사이드카가 인증서(IAM Roles Anywhere)로 1시간짜리를 받아 준다
 - 밖으로 나가는 문은 전부 `type: LoadBalancer` + `kube-vip.io/loadbalancerIPs: "172.30.0.35"`, 포트로 공유. Loki · Tempo는 차트 Service를 내부용으로 두고 `base/external/services.yaml`이 필요한 포트만 연다
 
 수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`).
@@ -30,7 +31,19 @@ ADR-18 1단계 상태: 저장소는 **복제 1 · PVC filesystem**. 3노드 복�
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
 `recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 컨트롤러 이미지가 배포되어 `recovery_hold_total`이 수집되기 전까지는 발화하지 않는다.
 
-## 적용 (처음 · 변경 · 재설치 모두 같은 명령)
+## 적용
+
+**평소: ArgoCD.** 이 레포 `main`에 머지하면 관리 클러스터의 ArgoCD가 모니터링 클러스터에 반영한다(11/17부터). 손으로 돌릴 명령이 없다.
+
+- Application 9개는 Gitops 레포 `bootstrap/onprem/applications/gpu-monitoring-*.yaml`(프로젝트 `gpu-monitoring`, 대상 클러스터 `monitoring`)
+  - `gpu-monitoring-base`: 이 레포 `deploy/base`(kustomize: Mimir · Prometheus Agent · 밖으로 여는 Service · 룰 · 대시보드)
+  - 나머지 8개(`local-path` · `node-exporter` · `kube-state-metrics` · `loki` · `tempo` · `blackbox` · `alertmanager` · `grafana`): 차트 버전은 Gitops Application의 `targetRevision`, 값은 이 레포 `deploy/values/*.yaml`
+- 자동 sync이고 `prune` · `selfHeal`은 끈다. 저장소 리소스를 자동으로 지우지 않고, 아래 비상 경로로 넣은 변경을 ArgoCD가 되돌리지 않는다(Git이 바뀔 때만 반영)
+- prune을 꺼서 **이름이 바뀐 옛 리소스는 남는다.** `mimir.yaml` · `prometheus.yml`을 고치면 ConfigMap 이름(해시)이 바뀌고 옛 ConfigMap이 남아 Application이 OutOfSync로 보일 수 있다. 확인한 뒤 옛 것을 손으로 지운다
+- Secret은 ArgoCD가 다루지 않는다. 지금처럼 `scripts/create-secrets.sh`
+- 상태 보기: `kubectl -n argocd get applications | grep gpu-monitoring`(관리 클러스터 kubeconfig)
+
+**비상 · 처음 설치: `scripts/deploy-k8s.sh`.** 관리 클러스터가 죽어 ArgoCD를 못 쓰거나 클러스터를 새로 만들었을 때. 처음 · 변경 · 재설치 모두 같은 명령이다.
 
 ```bash
 # 1회: 차트 레포
@@ -84,15 +97,34 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 
 ## 설정을 바꿀 때
 
+파일을 고쳐 `main`까지 머지하면 ArgoCD가 반영한다(머지 전 `scripts/deploy-k8s.sh --lint-only`). 아래 「반영」은 머지 뒤 일어나는 일이다.
+
 | 바꾸는 것 | 파일 | 반영 |
 |---|---|---|
-| 스크레이프 대상 | `base/prometheus-agent/prometheus.yml` | `deploy-k8s.sh` → ConfigMap 이름이 바뀌어 Agent가 다시 뜸(WAL은 PVC에 남음) |
-| 알람 · 레코딩 룰 | `base/mimir/rules/*.yml` (+ `kustomization.yaml`의 files, `scripts/deploy-k8s.sh` lint의 파일 목록, 테스트는 `base/mimir/tests/`) | `deploy-k8s.sh` → Mimir가 1분 안에 다시 읽음(재시작 없음) |
-| 대시보드 | `base/grafana/dashboards/infra/*.json` (+ `kustomization.yaml`의 files) | `kubectl apply -k deploy/base` 또는 `deploy-k8s.sh` → Grafana가 1분 안에 다시 읽음(재시작 없음) |
+| 스크레이프 대상 | `base/prometheus-agent/prometheus.yml` | ConfigMap 이름이 바뀌어 Agent가 다시 뜸(WAL은 PVC에 남음) |
+| 알람 · 레코딩 룰 | `base/mimir/rules/*.yml` (+ `kustomization.yaml`의 files, `scripts/deploy-k8s.sh` lint의 파일 목록, 테스트는 `base/mimir/tests/`) | Mimir가 1분 안에 다시 읽음(재시작 없음) |
+| 대시보드 | `base/grafana/dashboards/infra/*.json` (+ `kustomization.yaml`의 files) | Grafana가 1분 안에 다시 읽음(재시작 없음) |
 | Mimir 설정 | `base/mimir/mimir.yaml` | Mimir 재시작(복제 1이라 그동안 수신 중단, Agent WAL이 버팀) |
-| Alertmanager 라우팅 | `values/alertmanager.yaml`의 `config` | helm upgrade로 Pod 재시작 |
-| 데이터소스 | `values/grafana.yaml` | helm upgrade |
-| 버전 | `versions.env` (+ `base/` YAML의 image) | kind에서 먼저 |
+| Alertmanager 라우팅 | `values/alertmanager.yaml`의 `config` | Pod 재시작 |
+| 데이터소스 | `values/grafana.yaml` | Grafana 재시작 |
+| 이미지 버전 | `base/` YAML의 image (+ `versions.env`) | kind에서 먼저 |
+| 차트 버전 | `versions.env` **와** Gitops Application의 `targetRevision` 두 곳 | kind에서 먼저. 한쪽만 올리면 비상 경로와 ArgoCD가 서로 다른 버전을 깐다 |
+
+## PVC에 남은 데이터를 S3로 올리기 (11/17에 한 것)
+
+저장 백엔드를 filesystem에서 S3로 바꾸면 그 전 데이터는 PVC에만 남아 조회되지 않는다. 지우기 전에 올리면 살아난다. 앱은 멈추지 않는다.
+
+공통: 앱과 **같은 노드**에 임시 Pod를 띄운다(PVC가 노드에 묶여 있다). PVC는 `readOnly`로 붙이고, 앱 Pod의 `aws-credentials` 사이드카 정의(args · 인증서 Secret)를 그대로 복사해 넣고, `amazon/aws-cli` 컨테이너에 `AWS_EC2_METADATA_SERVICE_ENDPOINT=http://127.0.0.1:9911/`를 준다(**끝의 `/` 필수**, 없으면 `Invalid endpoint`). 역할이 자기 접두어만 허용하므로 앱마다 따로 띄운다. 끝나면 Pod를 지운다.
+
+| 앱 | PVC의 옛 데이터 | S3 위치 | 주의 |
+|---|---|---|---|
+| Loki 청크 | `/var/loki/chunks/fake/<스트림>/<base64 이름>` | `loki/fake/<스트림>/<from>:<through>:<checksum>` | 파일 이름이 base64로 싸여 있다. `base64 -d`로 푼 이름으로 올린다 |
+| Loki 인덱스 | `/var/loki/chunks/index/index_<일>/…tsdb.gz` | `loki/index/index_<일>/…` | 그대로 복사. S3에 같은 날 테이블이 있어도 컴팩터가 다음 주기(10분)에 하나로 합친다(올리기 전 S3 쪽 파일 백업) |
+| Mimir 블록 | `/data/blocks/anonymous/<ULID>/` | `mimir/anonymous/<ULID>/` | `deletion-mark.json`이 있는 블록은 건너뛴다(이미 합쳐진 원본). `chunks/` · `index` 먼저, **`meta.json`은 마지막**(반쯤 올라간 블록을 읽지 않게). `sparse-index-header` · `bucket-index.json.gz` · `markers/`는 안 올린다 |
+
+- Loki는 올린 직후부터 조회된다(빈 테이블을 캐시하고 있던 날짜는 약 5분 뒤)
+- Mimir는 컴팩터가 버킷 목록을 고치고(15분 주기) 저장소 게이트웨이가 다시 읽은 뒤(15분 주기)에 조회된다
+- 확인은 올리기 전후로 같은 조회를 돌려 비교한다(Loki `sum(count_over_time({service_name=~".+"}[6h]))`, Mimir `count(up)`을 옛 시각으로). 조회가 확인된 뒤에 PVC의 옛 폴더를 지운다(Loki `/var/loki/chunks`, Mimir `/data/blocks`, Tempo `/var/tempo/traces/single-tenant`)
 
 ## 겪은 것 (11/09)
 
@@ -150,4 +182,4 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=otelco
 
 ## 다음
 
-replicas 3 + anti-affinity(Mimir · Loki는 replication_factor 3, Loki는 그때 오브젝트 스토리지 필수) → S3 백엔드(버킷 · Roles Anywhere, filesystem 블록 이전 여부 결정) → ArgoCD 원격 등록 → ~~관리 클러스터용 수집 층~~(11/10 매니페스트 · kind 검증 완료, ArgoCD 뜨면 적용) → EKS overlay → 분류기 · kafka_exporter · Loki 룰(Xid).
+~~S3 백엔드~~(11/16) → ~~ArgoCD 원격 등록~~(11/17) → ~~관리 클러스터용 수집 층~~(11/10) → replicas 3 + anti-affinity(Mimir · Loki는 replication_factor 3) → EKS overlay → 분류기 · kafka_exporter · Loki 룰(Xid).
