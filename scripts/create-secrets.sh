@@ -8,6 +8,9 @@
 # S3용 인증서만: KUBECONFIG=<admin.conf> scripts/create-secrets.sh s3-certs <인증서 ZIP을 푼 폴더>
 # 만드는 것: Secret mimir-s3-cert · loki-s3-cert · tempo-s3-cert (각각 client.pem · client.key, IAM Roles Anywhere용)
 # 폴더 안에서 경로에 앱 이름(mimir · loki · tempo)이 들어간 client.pem과 그 옆 client.key를 찾는다. 위 비밀번호들은 묻지 않는다
+#
+# postgres_exporter 비밀번호만: KUBECONFIG=<admin.conf> scripts/create-secrets.sh postgres-exporter
+# 만드는 것: Secret postgres-exporter-secrets(password). PostgreSQL 계정 postgres_exporter의 비밀번호(현수 DM)
 set -euo pipefail
 
 NS=monitoring
@@ -29,6 +32,15 @@ if [[ "${1:-}" == s3-certs ]]; then
       --dry-run=client -o yaml | kubectl apply -f -
   done
   echo "완료. 확인: kubectl -n $NS get secret mimir-s3-cert loki-s3-cert tempo-s3-cert"
+  exit 0
+fi
+
+if [[ "${1:-}" == postgres-exporter ]]; then
+  read -rsp "PostgreSQL postgres_exporter 비밀번호 (현수 DM): " pw; echo
+  [[ -n "$pw" ]] || { echo "빈 값은 안 된다" >&2; exit 1; }
+  kubectl -n "$NS" create secret generic postgres-exporter-secrets \
+    --from-file=password=<(printf '%s' "$pw") --dry-run=client -o yaml | kubectl apply -f -
+  echo "완료. 확인: kubectl -n $NS get secret postgres-exporter-secrets"
   exit 0
 fi
 
