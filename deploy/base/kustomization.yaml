@@ -35,3 +35,8 @@ configMapGenerator:
       - grafana/dashboards/infra/pfsense.json
     options:
       disableNameSuffixHash: true
+      # 대시보드 8개부터 ConfigMap이 약 270KB라, 클라이언트 쪽 apply가 통째로 복사해 두는
+      # last-applied-configuration 어노테이션이 한도(262,144바이트)를 넘어 sync가 실패한다(11/17).
+      # 서버 쪽 apply는 그 어노테이션을 쓰지 않는다. ConfigMap 자체 한도는 1MiB
+      annotations:
+        argocd.argoproj.io/sync-options: ServerSideApply=true
