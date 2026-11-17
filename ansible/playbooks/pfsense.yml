@@ -1,0 +1,20 @@
+---
+# pfSense 2대의 node-exporter. root로 붙으므로 become 없음(admin으로 붙으면 메뉴가 떠서 Ansible이 명령을 못 보낸다).
+#   cd ansible && ANSIBLE=~/gpu-failover/iac/ansible/.venv/bin/ansible-playbook
+#   $ANSIBLE playbooks/pfsense.yml -k      # 적용. 비밀번호는 admin 계정의 것
+# 비밀번호를 틀리면 pfSense sshguard가 출발지 IP를 막는다(SSH · 웹만, 몇 분). Tailscale 경유 접속은 전부 devoops(.90)로 보여
+# 팀원의 pfSense 웹 접속까지 같이 막히므로 천천히 한 번에 넣는다.
+# 처음 설치 전에는 --check를 못 쓴다: 패키지가 없어 응답 확인 단계에서 실패한다. 설치 뒤부터는 --check 가능
+#
+# 플레이를 둘로 나눠 순서를 고정한다(inventory 순서에 기대지 않는다): 대기에서 실패하면 주는 건드리지 않는다
+- name: pfSense node-exporter 설치 (대기)
+  hosts: pfsense-standby
+  gather_facts: false
+  roles:
+    - pfsense_node_exporter
+
+- name: pfSense node-exporter 설치 (주)
+  hosts: pfsense
+  gather_facts: false
+  roles:
+    - pfsense_node_exporter

@@ -1,0 +1,45 @@
+---
+- name: 패키지 설치 여부 확인
+  ansible.builtin.command: pkg info -e pfSense-pkg-node_exporter
+  register: pfsense_node_exporter_pkg
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+# 설치 스크립트가 패키지를 config.xml에 등록하고 기본 수집기 · 1분 주기 textfile cron(인터페이스 지표)까지 넣는다.
+# 버전은 pfSense 릴리스의 패키지 저장소가 정한다(2.9.0 = 0.18.1_8, node_exporter 1.11.0) → 여기서 고정하지 않는다
+- name: 패키지 설치
+  ansible.builtin.command: pkg install -y pfSense-pkg-node_exporter
+  when: pfsense_node_exporter_pkg.rc != 0
+
+- name: 켜기 · LAN 주소에서만 듣기 (config.xml)
+  ansible.builtin.script:
+    cmd: "configure.php {{ pfsense_node_exporter_iface }} {{ pfsense_node_exporter_port }}"
+    executable: /usr/local/bin/php
+  register: pfsense_node_exporter_configure
+  changed_when: "'unchanged' not in pfsense_node_exporter_configure.stdout"
+
+# 패키지는 인터페이스 주소를 못 찾으면 주소 없이 ":9100"으로 띄워 WAN을 포함한 모든 주소에서 듣게 된다 → 실제 소켓으로 확인한다
+- name: 듣는 주소 확인 (sockstat)
+  ansible.builtin.command: sockstat -4 -6 -l -p {{ pfsense_node_exporter_port }}
+  register: pfsense_node_exporter_socket
+  changed_when: false
+  check_mode: false
+  retries: 5
+  delay: 2
+  until: (ansible_host ~ ':' ~ pfsense_node_exporter_port) in pfsense_node_exporter_socket.stdout
+  failed_when: >-
+    (ansible_host ~ ':' ~ pfsense_node_exporter_port) not in pfsense_node_exporter_socket.stdout
+    or ('*:' ~ pfsense_node_exporter_port) in pfsense_node_exporter_socket.stdout
+
+# 127.0.0.1이 아니라 LAN 주소로 확인한다: 패키지가 고른 인터페이스 주소에만 묶는다
+- name: 응답 확인 (LAN 주소 :9100/metrics)
+  ansible.builtin.uri:
+    url: "http://{{ ansible_host }}:{{ pfsense_node_exporter_port }}/metrics"
+    return_content: true
+  register: pfsense_node_exporter_metrics
+  retries: 5
+  delay: 2
+  until: pfsense_node_exporter_metrics.status == 200
+  failed_when: "'node_exporter_build_info' not in pfsense_node_exporter_metrics.content"
+  changed_when: false

@@ -173,6 +173,16 @@ scrape_configs:
       - targets: ["172.30.0.50:9100"]
         labels: {host: db}
 
+  # pfSense 2대의 OS 지표(FreeBSD). node-exporter는 pfSense 공식 패키지, ansible/playbooks/pfsense.yml로 설치(11/17).
+  # 지표 이름이 Linux와 달라(메모리 · 디스크 등) job을 나눈다. CARP VIP(.1)는 응답하는 장비가 바뀌므로 대상이 아니다.
+  # 두 VM은 호스트 이름이 같아(nodename="pfSense") host 라벨로만 구분된다
+  - job_name: pfsense-host
+    static_configs:
+      - targets: ["172.30.0.2:9100"]
+        labels: {host: pfsense}
+      - targets: ["172.30.0.3:9100"]
+        labels: {host: pfsense-standby}
+
   # Kafka 브로커 자체 지표 (JMX Exporter javaagent 7071, 현수 설치). 11/10 KRaft 3대로 재구성 → 브로커마다 하나.
   # 원본은 브로커당 약 1만 줄이라 필요한 것만 남긴다
   - job_name: kafka-jmx

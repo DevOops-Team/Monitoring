@@ -6,6 +6,7 @@ Proxmox 호스트(5대)처럼 k8s 밖에 있는 서버의 에이전트는 여기
 |---|---|---|
 | `playbooks/pve-hosts.yml` | Proxmox 호스트 5대 (`inventory/hosts.yaml`) | node-exporter 패키지 확인 · 기동 인자 통일(`0.0.0.0:9100`) · textfile 수집기 패키지와 그 15분 타이머 제거 · 응답 확인<br>Fluent Bit 5.1.1 설치 · 호스트 journald 전체를 Loki로 전송 · 응답 확인 |
 | `playbooks/service-vms.yml` | Kafka VM 3대 · DB VM (`service_vms`) | node-exporter 패키지 설치(apt 캐시 갱신 포함) · 기동 인자 `0.0.0.0:9100` · 딸려 오는 textfile 수집기와 타이머 제거 · 응답 확인. 처음 설치 전에는 `--check` 불가(패키지가 없어 서비스 단계에서 실패) |
+| `playbooks/pfsense.yml` | pfSense 2대 (`pfsense_hosts`) | pfSense 공식 패키지 `pfSense-pkg-node_exporter` 설치 · 켜기 · LAN 주소(.2 · .3)의 9100에서만 듣기 · 응답 확인. 대기 → 주 순서로 한 대씩(플레이 2개). root로 붙고(`-k`), 비밀번호를 틀리면 sshguard가 출발지를 몇 분 막는다 |
 
 ## 실행
 
