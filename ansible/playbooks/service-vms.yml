@@ -1,0 +1,9 @@
+# Kafka 브로커 3대 · DB VM의 node-exporter. root로 붙으므로 become 없음.
+#   cd ansible && ANSIBLE=~/gpu-failover/iac/ansible/.venv/bin/ansible-playbook
+#   $ANSIBLE playbooks/service-vms.yml -k                   # 적용
+# 처음 설치 전에는 --check를 못 쓴다: 패키지가 없어 서비스 확인 단계에서 실패한다. 설치 뒤부터는 --check --diff 가능
+- name: Kafka · DB VM node-exporter 설치
+  hosts: service_vms
+  gather_facts: true
+  roles:
+    - node_exporter
