@@ -98,6 +98,27 @@ scrape_configs:
         action: keep
       - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
 
+  # Kueue 컨트롤러: 큐 대기 잡 수 · 입장 대기 시간(kueue_pending_workloads · kueue_admission_wait_time_seconds).
+  # :8443은 HTTPS + 토큰 인증이고 /metrics 읽기 권한은 rbac.yaml의 nonResourceURLs로 이미 있다. 인증서는 자체 서명이라 검증은 건너뛴다.
+  # Pod가 여러 개(관리 클러스터 3)면 전부 긁히지만 큐 지표는 리더만 낸다 → 패널 · 룰에서는 max 등으로 묶을 것.
+  # Kueue가 없는 클러스터에서는 타깃이 0개일 뿐이다
+  - job_name: kueue
+    scheme: https
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [kueue-system]}
+    authorization:
+      credentials_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+    tls_config:
+      insecure_skip_verify: true
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_name]
+        regex: kueue;metrics
+        action: keep
+      - {source_labels: [__meta_kubernetes_namespace], target_label: namespace}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+
   # 어노테이션으로 노출을 선언한 Pod(prometheus.io/scrape · port · path). 학습 Job trainer :8000(training-metrics.md) 등.
   # 포트는 어노테이션 값으로 바꿔 끼운다(컨테이너가 여러 포트를 열어도 하나만 긁는다)
   - job_name: annotated-pods
