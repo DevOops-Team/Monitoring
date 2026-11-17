@@ -104,6 +104,19 @@ scrape_configs:
       - targets: ["blackbox-exporter.monitoring.svc.cluster.local:9115"]
         labels: {cluster: monitoring}
 
+  # 이 클러스터의 Fluent Bit DaemonSet(agents/overlays/monitoring). 입력 · 출력 · 재시도(fluentbit_*). 관리 클러스터와 같은 job 이름
+  - job_name: fluent-bit
+    metrics_path: /api/v2/metrics/prometheus
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_name]
+        regex: fluent-bit;http
+        action: keep
+      - {target_label: cluster, replacement: monitoring}
+      - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+
   # --- 밖에서 찔러 보기 (blackbox_exporter 경유). 대상 주소가 instance 라벨이 된다 ---
   # pfSense LAN 게이트웨이와 인터넷(공인 DNS). VPN 터널 · 워커 쪽은 AWS 재구축 뒤 대상만 추가
   - job_name: blackbox-icmp
