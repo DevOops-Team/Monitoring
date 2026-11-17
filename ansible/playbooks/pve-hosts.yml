@@ -3,8 +3,9 @@
 #   cd ansible && ANSIBLE=~/gpu-failover/iac/ansible/.venv/bin/ansible-playbook
 #   $ANSIBLE playbooks/pve-hosts.yml -k --check --diff    # 먼저 바뀔 것만 보기
 #   $ANSIBLE playbooks/pve-hosts.yml -k                   # 적용
-- name: Proxmox 호스트 node-exporter 통일
+- name: Proxmox 호스트 node-exporter 통일 · Fluent Bit 설치
   hosts: pve_hosts
   gather_facts: true
   roles:
     - node_exporter
+    - fluent_bit

@@ -1,0 +1,12 @@
+---
+# 호스트 journald → Loki OTLP 직접(ADR-18). 게이트웨이를 거치지 않으므로 Loki 라벨이 되는 리소스 속성을 Fluent Bit가 직접 붙인다.
+# 버전은 DaemonSet(deploy/agents/base/fluent-bit)과 같게 둔다. 올릴 땐 두 곳 + sha256을 같이 바꾼다
+fluent_bit_version: "5.1.1"
+fluent_bit_deb_url: "https://packages.fluentbit.io/debian/{{ ansible_distribution_release }}/pool/main/f/fluent-bit/fluent-bit_{{ fluent_bit_version }}_amd64.deb"
+fluent_bit_deb_sha256: "a7d06cb0687c66439ee2312e20e9bf05c0856a8089c164085c365577086b4321"   # trixie amd64
+fluent_bit_loki_host: 172.30.0.35           # 모니터링 클러스터 서비스 VIP
+fluent_bit_loki_port: 3100
+# Loki 라벨: service_namespace(호스트 묶음, Mimir job과 같은 값) · service_instance_id(호스트 이름, Mimir host와 같은 값)
+# · service_name(kernel | journal). 유닛 이름은 라벨이 아니라 구조화 메타데이터 _SYSTEMD_UNIT으로 조회한다
+fluent_bit_service_namespace: pve-host
+fluent_bit_state_dir: /var/lib/monitoring-agents/fluent-bit   # 책갈피 db · 미전송 버퍼. DaemonSet과 같은 경로
