@@ -2,7 +2,7 @@
 
 분류기(온프레 모니터링 클러스터 172.30.0.31~.33, ADR-18)가 Kafka `gpu.fault` 토픽(172.30.0.40/.41/.42:9092, 파티션 키 = `node`)에 발행하는 "사고 보고서 한 장" (ADR-7 · ADR-8, 2026-11-05 반영. 이전 "HTTP POST" 표기는 폐기).
 소비자는 둘: 복구 컨트롤러(매니저 k8s, 조치)와 수집기(김현수, DB 적재). 컨트롤러는 PromQL · LogQL · Xid 번호를 몰라도 이 문서만 보고 움직일 수 있어야 한다.
-전달 보장은 최소 한 번. 중복은 소비 측이 거른다 (수집기 = `event_id`, 컨트롤러 = `dedup_key`, 2.1절). HTTP POST는 kind · 단위 테스트의 컨트롤러 스텁에만 쓴다.
+전달 보장은 최소 한 번. Kafka 재전송 중복은 소비 측이 `event_id`로 거른다(수집기 · 컨트롤러 모두). 같은 사건이 여러 경로로 올 때 한 번만 내는 것은 분류기 몫이다(`dedup_key`, 2.1절). HTTP POST는 kind · 단위 테스트의 컨트롤러 스텁에만 쓴다.
 
 - 스키마: [`schemas/fault-event.v1.json`](../schemas/fault-event.v1.json) (JSON Schema 2020-12)
 - 예시: [`schemas/examples/`](../schemas/examples/) (장애 유형별 8개, 전부 스키마 통과)
@@ -75,19 +75,19 @@
 위 주기를 바꾸면 창도 다시 계산한다. 5주차 Xid 주입 실험에서 두 경로의 실제 `ts` 차이를 재서 조정한다.
 창을 너무 키우면 제자리 재시작 직후 같은 고장이 다시 났을 때 같은 사건으로 묶여 반복 횟수(`refuse` 승격)에서 빠진다.
 
-**키 소비 (컨트롤러 · 분류기 · 수집기)**
+**누가 무엇으로 거르나 (분류기 · 컨트롤러 · 수집기)**
 
 - Kafka는 최소 한 번 전달이라 같은 메시지가 두 번 올 수 있다. 수집기는 `event_id`로 거른다(`ON CONFLICT (event_id) DO NOTHING`). `event_id`는 재전송에도 같다
-- 컨트롤러는 **실제 조치를 실행했을 때만** 그 키(`dedup_key`)를 "처리됨"으로 기록한다. 이후 같은 키 이벤트는 무시한다
-- `hold` · `none`은 키를 소비하지 않는다 → 같은 키로 더 확실한 이벤트가 오면 처리된다 (예: 08 `hold` → 01 `isolate_migrate`)
-- 분류기는 직전에 보낸 이벤트와 **키와 `suggested_action`이 둘 다 같을 때만** 다시 보내지 않는다. 키만 같고 action이 바뀌었으면 보낸다
+- 컨트롤러도 **`event_id`로만** 중복을 판정한다. `dedup_key`는 중복 제거에 쓰지 않는다 (한송이 2026-11-17, K8s develop 코드 기준). 같은 `event_id`로 내용만 바꿔 보내면 ID 충돌로 거부된다
+- 그래서 **같은 사건을 한 번만 내는 것은 분류기 책임이다.** 분류기는 직전에 보낸 이벤트와 **키와 `suggested_action`이 둘 다 같으면** 다시 보내지 않는다. 이걸 빠뜨리면 두 경로(커널 로그 · DCGM)의 같은 사건이 컨트롤러에 새 사건 두 건으로 들어간다
+- 키는 같고 action이 바뀌었으면 **새 `event_id`로** 보낸다(재판정 `fault.reclassified`, `dedup_key`는 그대로). 컨트롤러는 새 사건으로 받고, 실제로 새 복구를 시작할지는 그때의 실행 세대와 펜싱 상태를 보고 정한다 (예: 08 `hold` → 01 `isolate_migrate`)
 
 ## 3. suggested_action → 컨트롤러 동작
 
 | suggested_action | 뜻 | 컨트롤러가 실제로 하는 일 |
 |---|---|---|
-| `restart_in_place` | GPU 멀쩡, 프로그램만 문제 | 세대 +1 → 옛 JobSet 정리 · 중단 확인 → **같은 클러스터로 고정한**(`devoops/target-cluster`, 같은 노드는 보장 안 함) 새 JobSet 재제출 → 승인 체크포인트에서 이어 감. Pod 재시작이 아니다: torchrun · Job · JobSet · Kueue 자동 재시작은 전부 꺼져 있고 재시작 주체는 컨트롤러뿐 (ADR-12) |
-| `isolate_migrate` | 이 GPU 못 씀 | 노드 cordon + taint `devoops/faulty` → 세대 +1 → 옛 JobSet 정리 · 중단 확인 → 같은 클러스터 예비 GPU(taint `devoops/spare`)로 새 JobSet |
+| `restart_in_place` | GPU 멀쩡, 프로그램만 문제 | 세대 +1 → 옛 JobSet 정리 · 중단 확인 → **원래 클러스터를 먼저 보는**(같은 노드는 보장 안 함. 빈 GPU가 잡 크기보다 적으면 디스패처가 다른 클러스터로 보낸다, ADR-38) 새 JobSet 재제출 → 승인 체크포인트에서 이어 감. Pod 재시작이 아니다: torchrun · Job · JobSet · Kueue 자동 재시작은 전부 꺼져 있고 재시작 주체는 컨트롤러뿐 (ADR-12) |
+| `isolate_migrate` | 이 GPU 못 씀 | 노드 cordon + taint `devoops/faulty` → 세대 +1 → 옛 JobSet 정리 · 중단 확인 → 같은 클러스터 예비 GPU(taint `devoops/spare`)로 새 JobSet (자리가 모자라면 디스패처가 다른 클러스터로, ADR-38) |
 | `reset_then_migrate` | 이 GPU 리셋 필요 | 먼저 다른 노드로 이전 → 빈 노드에서 GPU 리셋 → 성공하면 예비로 복귀, 실패하면 폐기 |
 | `evacuate_preemptive` | 곧 죽거나 느려짐 (스팟 2분 통보, 스트래글러) | 노드 격리 → 세대 +1 → 옛 실행 종료 확인 → 같은 클러스터 예비 GPU로 새 JobSet, **마지막 승인본에서 재개**. 스팟 회수 예고 때도 마지막 저장을 기다리지 않는다(ADR-36, 11/13. ADR-28의 120초 마지막 저장은 폐기) |
 | `fence_evacuate` | 클러스터 전체가 사라짐 (AZ 장애) | 클러스터 펜싱(`devoops/fenced=true`) → 세대 +1 (옛 Job이 살아 있어도 승인 못 하게) → 옛 실행 중단을 확인할 수 없으므로 확인 어노테이션을 기다렸다가 다른 AZ 클러스터에서 재개 |
@@ -99,27 +99,26 @@
 
 **이벤트를 만들지 않는 종료**: 학습 컨테이너 종료 코드 **75**는 사이드카가 세대 불일치 · 승인 거부로 `/ckpt/STOP`을 만들어 trainer가 스스로 멈춘 것이다 (ADR-12). 펜싱이 정상 동작한 것이지 장애가 아니므로 `source=pod` 룰은 exit 75를 제외한다. 같은 이유로 사용자 취소 · 정상 완료(exit 0)도 제외.
 
-### 3.1 세 문서의 액션 이름 대응 (매핑표, 2026-11-05 한송이 · 김성모 확인 · 2026-11-09 ADR-19 반영 · 2026-11-11 컨트롤러 contracts.md 기준 갱신)
+### 3.1 세 문서의 액션 이름 대응 (매핑표, 2026-11-05 한송이 · 김성모 확인 · 2026-11-09 ADR-19 반영 · 2026-11-11 컨트롤러 contracts.md 기준 갱신 · 2026-11-17 ADR-38 · ADR-39 반영)
 
 분류기(이 문서) · 복구 컨트롤러(한송이 "3. GPU·드라이버 장애복구" 4절) · 재배치 실행기(김성모 "평소 학습, 장애복구 시 스케줄링 방식" RelocationRequest)가 서로 다른 이름을 쓴다. 변환은 **컨트롤러가 한다**: Kafka에서 `suggested_action`을 읽어 자기 액션으로 결정하고, 실행이 필요하면 RelocationRequest를 만든다. 분류기는 이 표의 왼쪽 열만 낸다.
 
 | `suggested_action` (분류기) | 컨트롤러 액션 (한송이) | RelocationRequest `action` (김성모) | 비고 |
 |---|---|---|---|
-| `restart_in_place` | `RETRY_GROUP` | `restartInPlace` | 세대 +1 · 새 JobSet은 공통. `devoops/target-cluster`로 **같은 클러스터 고정**(같은 노드 보장 아님), Recovery 큐로 4·5·7단계를 밟는다. 그사이 자리가 다른 Job으로 차면 다른 클러스터로 넘어가지 않고 기다린다. 15분을 넘기면 `AdmitDelayed`로 표시하고 계속 지켜보며, JobSet이 사라졌을 때만 Failed (김성모 11/11) |
-| `isolate_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 노드 cordon + `devoops/faulty` → 같은 클러스터 예비로 |
+| `restart_in_place` | `RETRY_GROUP` | `restartInPlace` | 세대 +1 · 새 JobSet은 공통. **원래 클러스터를 먼저 본다**(같은 노드 보장 아님), Recovery 큐로 4·5·7단계를 밟는다. 원래 클러스터 빈 GPU가 잡 크기보다 적으면 디스패처가 기다리지 않고 다른 클러스터로 보낸다(ADR-38, action 이름은 그대로). 어디에도 자리가 없어 15분을 넘기면 `AdmitDelayed`로 표시하고 계속 지켜보며, JobSet이 사라졌을 때만 Failed (김성모 11/11) |
+| `isolate_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 노드 cordon + `devoops/faulty` → 같은 클러스터 예비로. 예비가 없거나 고장 노드가 여럿이어도 이 action 그대로이고, 자리가 모자라면 디스패처가 다른 클러스터로 보낸다(ADR-38) |
 | `reset_then_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 컨트롤러 입장에선 `isolate_migrate`와 같다. GPU 리셋은 한송이 6절대로 **별도 운영 액션**(격리 뒤 수동 · 후속), 자동 리셋 안 함 |
 | `evacuate_preemptive` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 스팟 2분 통보 · 스트래글러. 세대를 먼저 올리고 **마지막 승인본에서 재개**한다 (ADR-19 v5, 컨트롤러 contracts.md). 사전 저장 뒤 옮기는 `PLANNED_MIGRATE`는 **보류**(컨트롤러에서 현재 HOLD). 스팟 회수 예고의 이 순서(승인본 확정 → 세대 +1 → 옛 실행 종료 → 재개)는 ADR-36(11/13)으로 확정됐다. ADR-28은 폐기. **스트래글러는 조건부**(ADR-37, 11/16): 분류기는 느린 상태가 600초 이상 이어지고 「그대로 둘 때 손해 ≥ 2 × 이전 비용 C」일 때만 이 값을 내고, 아니면 `category: straggler` + `hold`로 낸다. C(실측 전 900초 가정)와 안전 계수 2는 **분류기**가 계산해 `straggler_evidence.estimated_gain_seconds`에 순절감으로 넣고, 컨트롤러는 양수인지만 본다. 예비 용량 · 작업당 1회 · 수집 정상 · 정책 활성화(기본 OFF)는 **컨트롤러**가 최종 확인한다 |
 | `fence_evacuate` | `FENCE_AND_EVACUATE` | `evacuateCluster` | 클러스터 펜싱(`devoops/fenced=true`) → 옛 실행 권한 차단. 펜싱 확인은 `devoops/old-execution-stopped=true` 어노테이션만이 아니라 **실제 차단 근거**(세대 +1 반영 · 하트비트 끊김)까지. `evacuateCluster`는 이 행 전용 |
 | `refuse` | `NEEDS_CONFIG_FIX` (결과 state `REJECTED`) | 없음 (복구 안 함) | 사용자에게 실패 알림. 자동 복구 한도(3회) 초과 · init 종료 코드 5 · 6도 같은 `REJECTED`로 끝난다. Slack 알림은 HOLD만 있고 `REJECTED` 알림은 협의 중(11/11, 카운터 추가되면 MON-STD-25에 포함). 자동 재시작이 전부 꺼져 있어 JobSet이 Failed → Kueue Workload 종료 → 쿼터 자동 반납될 것으로 봄(김성모, 미검증). 멈춘 채 안 죽는 Job만 별도 처리 |
 | `hold` | `HOLD` | 없음 | 상태 저장 · 알림. Kafka `recovery.action` `type=recovery.held`, Slack은 Mimir 룰 `RecoveryHold`(MON-STD-25, ADR-27). HOLD는 그 사건의 최종 상태이고 자동 재개하지 않는다 |
 | `none` | `NONE` (결과 state `IGNORED`) | 없음 | 기록만. 컨트롤러는 Kafka에서 읽어도 처리하지 않는다 |
-| (분류기 출력 없음 — 컨트롤러 승격) | `QUARANTINE_AND_RETRY` 승격 | `moveToOtherCluster` | 예비 소진 · SDC. 의심 노드 cordon + taint `devoops/faulty`, 원래 클러스터는 `devoops/exclude-clusters`, **펜싱 없음**. 분류기가 내는 값이 아니라 컨트롤러가 여러 이벤트를 보고 올리는 경로 (ADR-19, 아래 설명) |
 
 **컨트롤러 액션 이름 (2026-11-11 확인)**: 가운데 열은 K8s 레포 `controllers/recovery-controller/docs/contracts.md`(b017283)의 표와 같다. 11/09에 적어 둔 옛 이름(`RESTART_SAME_CLUSTER` · `RELOCATE_SAME_CLUSTER` · `HOLD_FOR_FENCING` · `REVIEW` · `REJECT`)은 더 이상 쓰이지 않는다(`REVIEW`는 읽을 때 HOLD로 변환). 컨트롤러는 `collector_healthy=false`인 비-site 이벤트를 HOLD로 낮추고, `job_id` · `generation`을 특정하지 못한 신호도 HOLD한다. 분류기 출력(왼쪽 열)은 바뀌지 않는다.
 
-분류기가 내지 않는 RelocationRequest 경로:
-- **예비 소진 → `moveToOtherCluster`**(action 4종 중 하나로 ADR-19 제안 11/09. relocator.py 코드 반영, 시나리오 미실행): 의심 · 고장 노드 cordon + taint, 원래 클러스터는 `devoops/exclude-clusters`, **펜싱은 안 함**. 4절 "같은 클러스터에 예비 GPU가 없다"의 컨트롤러 승격. `evacuateCluster`를 쓰면 멀쩡한 클러스터가 통째로 펜싱되므로 쓰지 않는다. 자동 승격 신호 연결은 아직 없어(한송이 11/11), 지금은 같은 클러스터에서 계속 기다린다(`AdmitDelayed`).
-- **SDC(의심 노드 다수) → `moveToOtherCluster`**: v1 `category`에 SDC를 넣지 않는다. 이벤트 한 건을 보는 분류기가 아니라 여러 건을 모으는 컨트롤러가 판단 · 승격 (김성모 동의, 자기 문서 1단계 수정 예정). 되돌릴 체크포인트 지정은 RelocationRequest 필드가 아니라 컨트롤러가 RR 바깥에서 한다.
+RelocationRequest `action`은 `restartInPlace` · `moveToSpare` · `evacuateCluster` **세 가지뿐이다** (ADR-38, 2026-11-17 v5):
+- **`moveToOtherCluster`는 없어졌다.** 예비 소진은 action을 고르는 기준이 아니다. 컨트롤러는 원인만 보고 action을 고르고, 원래 클러스터에 자리가 없을 때 다른 클러스터로 보낼지는 디스패처가 정한다. 다른 클러스터에 배치돼도 action 이름은 바뀌지 않는다. 분류기 출력(왼쪽 열)은 영향이 없다
+- **SDC는 이번 프로젝트 범위 밖이다** (ADR-39). v1 `category`에 SDC가 없고, 전용 감지 · HOLD · 롤백 · 다른 클러스터 승격도 만들지 않는다
 
 ### 3.2 전달 필드 대응
 
@@ -137,7 +136,7 @@
 
 | 상황 | 추천 | 컨트롤러의 결정 |
 |---|---|---|
-| 같은 클러스터에 예비 GPU가 없다 | `isolate_migrate` | `moveToOtherCluster`로 다른 클러스터 이전 (펜싱 없음, 3.1절) |
+| 같은 클러스터에 예비 GPU가 없다 | `isolate_migrate` | 추천을 바꾸지 않는다. `moveToSpare` 그대로 요청하고, 원래 클러스터에 자리가 모자라면 디스패처가 다른 클러스터에 둔다. 어디에도 없으면 복구 큐에서 기다린다 (ADR-38, 3.1절) |
 | `confidence`가 낮다 (예: 0.5 미만) | `isolate_migrate` | `hold`로 낮춤 |
 | 이 Job이 이미 복구 중이다 | 무엇이든 | 무시 (중복 처리 방지) |
 | VPN 단절인지 AZ 장애인지 아직 모른다 | `fence_evacuate` | `hold` 후 VPN 터널을 우회하는 별도 경로(DynamoDB `heartbeat_at` · progress 갱신, EC2 상태 조회)를 보고 결정. 워커는 프라이빗 서브넷이라 공인망에서 직접 probe할 수 없다. 이 경로도 pfSense · 회선은 VPN과 공유하므로, 조회 자체가 실패하면 하트비트가 멈춘 것으로 보지 않고 `hold`를 유지한다 (MON-STD-18) |
@@ -157,7 +156,7 @@
 | `08-hold-collector-down` | DCGM 필드 230만 바뀜, 로그 경로 죽음 | hw → hold |
 | `09-straggler-hold` | 같은 1.6배 · 720초지만 남은 스텝이 적어 손해 600초 < 2 × 900 → 순절감 −300초 | straggler → hold |
 
-01과 08은 같은 사건이다. 로그 경로가 죽어 DCGM 경로(08, 14:02:40)가 먼저 와서 `hold`, 로그 경로가 살아나 커널 로그(01, 14:02:11)가 뒤늦게 와서 `isolate_migrate`. `ts` 차이 29초 < 45초라 01은 08의 키를 재사용하고, 08은 키를 소비하지 않았으므로 01이 처리된다.
+01과 08은 같은 사건이다. 로그 경로가 죽어 DCGM 경로(08, 14:02:40)가 먼저 와서 `hold`, 로그 경로가 살아나 커널 로그(01, 14:02:11)가 뒤늦게 와서 `isolate_migrate`. `ts` 차이 29초 < 45초라 01은 08의 키를 재사용한다. action이 달라졌으므로 새 `event_id`로 나가고, 컨트롤러는 새 사건으로 처리한다.
 
 예시의 `confidence` 값은 자리 표시용이다. 실제 값은 룰 표에서 정한다.
 
@@ -169,8 +168,8 @@
 - [ ] (한송이) 소프트웨어 `restart_in_place` 재시도 상한은 미확정 (2026-11-05). 4절의 3회는 가정값으로 유지. 정해지면 `refuse` 승격 횟수와 같은 값으로 맞춤
 - [ ] (김현수) DB 컬럼 매핑: `raw` · `correlated`는 JSONB 한 칸으로 충분한가
 - [ ] (김현수) `dedup_key` 유니크 제약을 DB에도 걸 것인가
-- [x] (한송이 · 김성모) 3.1 매핑표 확인 완료 (2026-11-05): `PLANNED_MIGRATE` · `FENCE_AND_EVACUATE` 신설, `rule_version`은 v1 Kafka 헤더, SDC는 컨트롤러 승격, `moveToOtherCluster` 신설
+- [x] (한송이 · 김성모) 3.1 매핑표 확인 완료 (2026-11-05): `PLANNED_MIGRATE` · `FENCE_AND_EVACUATE` 신설, `rule_version`은 v1 Kafka 헤더, SDC는 컨트롤러 승격, `moveToOtherCluster` 신설 (→ 둘 다 2026-11-17에 없어짐: ADR-38 · ADR-39)
 - [x] (나) 3.1 가운데 열을 컨트롤러 contracts.md(K8s b017283) 기준으로 갱신 (2026-11-11): `evacuate_preemptive` → `QUARANTINE_AND_RETRY`(`PLANNED_MIGRATE` 보류), 옛 이름 주의문 삭제. `moveToOtherCluster` 행은 11/09부터 있음(11/11 회의 A0-1 확인 요청에 대한 답)
-- [ ] (김성모) `moveToOtherCluster` 시나리오 10 실행 확인 (코드 추가는 d091726 완료), 자기 문서 1단계(SDC 분류 주체) · "스케줄링 개입 없음" 수정
-- [ ] (한송이 · 김현수) 컨트롤러 중복 제거 기준 — 현수 안건 7 "dedup_key로 거르면 재판정을 놓침"은 2.1절 규칙(`hold` · `none`은 키 비소비, 조치 실행 때만 소비)으로 이미 해결됨. 컨트롤러 구현이 이 규칙대로인지 한송이 확인
+- [x] (김성모) `moveToOtherCluster` 시나리오 10 실행 확인 — 해당 없음 (2026-11-17): ADR-38로 action이 없어지고 ADR-39로 SDC가 범위 밖이 됨
+- [x] (한송이 · 김현수) 컨트롤러 중복 제거 기준 — 2026-11-17 한송이 확인: 컨트롤러는 `event_id`로만 중복을 판정하고 `dedup_key`는 쓰지 않는다. 재판정은 새 `event_id` + 같은 `dedup_key`로 내면 새 사건으로 처리되므로 현수 안건 7 "dedup_key로 거르면 재판정을 놓침"은 생기지 않는다. 2.1절을 이 기준으로 고침(같은 사건 묶기는 분류기 책임)
 - [ ] (김성모) `refuse` 때 쿼터 자동 반납 실제 확인 (JobSet Failed → Workload 종료)
