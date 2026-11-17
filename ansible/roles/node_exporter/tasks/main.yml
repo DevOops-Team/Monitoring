@@ -1,11 +1,12 @@
 ---
-# apt 캐시 갱신은 하지 않는다: Proxmox enterprise 저장소가 구독 없이 401을 내 apt update가 실패한다(11/02 pve4).
-# 패키지는 5대 모두 이미 1.9.0이 깔려 있어 present 확인만 한다. 새 호스트면 먼저 enterprise → no-subscription 저장소로 바꾼 뒤 돌린다
+# Proxmox 호스트는 apt 캐시 갱신을 하지 않는다: enterprise 저장소가 구독 없이 401을 내 apt update가 실패한다(11/02 pve4).
+# 패키지는 5대 모두 이미 1.9.0이 깔려 있어 present 확인만 한다. 새 호스트면 먼저 enterprise → no-subscription 저장소로 바꾼 뒤 돌린다.
+# 패키지가 없는 VM(service_vms)은 inventory에서 node_exporter_apt_update_cache를 켠다
 - name: node-exporter 패키지 확인
   ansible.builtin.apt:
     name: prometheus-node-exporter
     state: present
-    update_cache: false
+    update_cache: "{{ node_exporter_apt_update_cache }}"
 
 - name: textfile 수집기 패키지 제거 (타이머 포함)
   ansible.builtin.apt:

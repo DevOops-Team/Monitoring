@@ -148,6 +148,19 @@ scrape_configs:
       - targets: ["172.30.0.94:9100"]
         labels: {host: pve4}
 
+  # Kafka 브로커 3대 · DB VM의 OS 지표. node-exporter는 ansible/playbooks/service-vms.yml로 설치(11/17).
+  # 하드웨어 패널이 있는 pve-host 대시보드와 섞이지 않게 job을 나눈다. host 값은 kafka-jmx 잡과 같게
+  - job_name: vm-host
+    static_configs:
+      - targets: ["172.30.0.40:9100"]
+        labels: {host: kafka1}
+      - targets: ["172.30.0.41:9100"]
+        labels: {host: kafka2}
+      - targets: ["172.30.0.42:9100"]
+        labels: {host: kafka3}
+      - targets: ["172.30.0.50:9100"]
+        labels: {host: db}
+
   # Kafka 브로커 자체 지표 (JMX Exporter javaagent 7071, 현수 설치). 11/10 KRaft 3대로 재구성 → 브로커마다 하나.
   # 원본은 브로커당 약 1만 줄이라 필요한 것만 남긴다
   - job_name: kafka-jmx

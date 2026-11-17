@@ -1,0 +1,9 @@
+# Kafka 브로커 3대 · DB VM의 node-exporter. VM마다 일반 계정으로 붙어 sudo로 올린다(inventory의 ansible_become).
+#   cd ansible && ANSIBLE=~/gpu-failover/iac/ansible/.venv/bin/ansible-playbook
+#   $ANSIBLE playbooks/service-vms.yml -k --ask-become-pass   # 적용. sudo 비밀번호는 그냥 Enter면 SSH 비밀번호와 같은 값
+# 처음 설치 전에는 --check를 못 쓴다: 패키지가 없어 서비스 확인 단계에서 실패한다. 설치 뒤부터는 --check --diff 가능
+- name: Kafka · DB VM node-exporter 설치
+  hosts: service_vms
+  gather_facts: true
+  roles:
+    - node_exporter

@@ -5,5 +5,6 @@ node_exporter_listen: "0.0.0.0:9100"        # 11/06 pve2 사례: 자기 IP에 �
 # prometheus-node-exporter-collectors(apt · nvme · smartmon textfile 수집기 + 15분 systemd 타이머)는 쓰지 않는다.
 # pve4에만 깔려 있었고, 그 타이머가 11/02~11/10 "15분 주기 1샘플 온도 스파이크"의 원인이었다(docs/measurements/2026-11-06-pve-host-temp.md 7절).
 # 우리는 apt_* · nvme_* 지표를 안 쓴다(NVMe 온도는 hwmon에서 받음)
+node_exporter_apt_update_cache: false       # Proxmox는 apt update가 401로 실패한다(tasks 주석). 패키지를 새로 까는 VM만 inventory에서 켠다
 node_exporter_remove_collectors: true
 node_exporter_textfile_dir: /var/lib/prometheus/node-exporter
