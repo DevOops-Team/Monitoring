@@ -11,13 +11,14 @@ all:
         pve4:    {ansible_host: 172.30.0.94}   # pfsense · kafka3
       vars:
         ansible_user: root
-    # Kafka 브로커 3대 · DB VM (Ubuntu/Debian, 소유자 김현수 · 11/17 합의). 접속은 Proxmox 호스트와 같이 root + -k
+    # Kafka 브로커 3대 · DB VM (Ubuntu/Debian, 소유자 김현수 · 11/17 합의).
+    # root SSH 로그인이 막혀 있어 VM 이름과 같은 일반 계정으로 붙고 sudo로 올린다(-k --ask-become-pass)
     service_vms:
       hosts:
-        kafka1: {ansible_host: 172.30.0.40}
-        kafka2: {ansible_host: 172.30.0.41}
-        kafka3: {ansible_host: 172.30.0.42}
-        db:     {ansible_host: 172.30.0.50}
+        kafka1: {ansible_host: 172.30.0.40, ansible_user: kafka1}
+        kafka2: {ansible_host: 172.30.0.41, ansible_user: kafka2}
+        kafka3: {ansible_host: 172.30.0.42, ansible_user: kafka3}
+        db:     {ansible_host: 172.30.0.50, ansible_user: db}
       vars:
-        ansible_user: root
+        ansible_become: true
         node_exporter_apt_update_cache: true   # 패키지가 아직 없는 VM이라 apt 캐시부터 갱신한다
