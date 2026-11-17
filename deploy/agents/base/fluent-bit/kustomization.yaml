@@ -1,0 +1,7 @@
+# Fluent Bit 리소스만 묶은 단위. 수집 층 전체(../kustomization.yaml)와 모니터링 클러스터 overlay(Fluent Bit만 쓴다)가 함께 가져간다.
+# 설정 ConfigMap(fluent-bit-config)과 네임스페이스는 가져가는 쪽이 정한다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - rbac.yaml
+  - daemonset.yaml

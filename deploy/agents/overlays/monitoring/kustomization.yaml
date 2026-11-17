@@ -1,0 +1,11 @@
+# 모니터링 클러스터(온프레미스, API 172.30.0.30) 자신의 로그. Gitops 레포 Application gpu-monitoring-logs가 이 경로를 가리킨다.
+# 수집 층 중 Fluent Bit만 쓴다: 지표 쪽(Agent · KSM · node-exporter)은 저장 층(deploy/base · values)에 이미 있고,
+# OTel 게이트웨이는 두지 않는다(트레이스를 내는 앱이 없고 Loki가 같은 클러스터라 버퍼 이득이 작다) → 설정은 Loki 직접 전송용으로 따로 둔다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - ../../base/fluent-bit
+configMapGenerator:
+  - name: fluent-bit-config
+    files: [fluent-bit.yaml]

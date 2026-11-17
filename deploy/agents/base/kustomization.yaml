@@ -10,8 +10,7 @@ resources:
   - kube-state-metrics/deployment.yaml
   - prometheus-agent/rbac.yaml
   - prometheus-agent/deployment.yaml
-  - fluent-bit/rbac.yaml
-  - fluent-bit/daemonset.yaml
+  - fluent-bit
   - node-exporter/daemonset.yaml
   - otel-gateway/deployment.yaml
 configMapGenerator:
