@@ -5,6 +5,7 @@ Proxmox 호스트(5대)처럼 k8s 밖에 있는 서버의 에이전트는 여기
 | 플레이북 | 대상 | 하는 일 |
 |---|---|---|
 | `playbooks/pve-hosts.yml` | Proxmox 호스트 5대 (`inventory/hosts.yaml`) | node-exporter 패키지 확인 · 기동 인자 통일(`0.0.0.0:9100`) · textfile 수집기 패키지와 그 15분 타이머 제거 · 응답 확인<br>Fluent Bit 5.1.1 설치 · 호스트 journald 전체를 Loki로 전송 · 응답 확인 |
+| `playbooks/service-vms.yml` | Kafka VM 3대 · DB VM (`service_vms`) | node-exporter 패키지 설치(apt 캐시 갱신 포함) · 기동 인자 `0.0.0.0:9100` · 딸려 오는 textfile 수집기와 타이머 제거 · 응답 확인. 처음 설치 전에는 `--check` 불가(패키지가 없어 서비스 단계에서 실패) |
 
 ## 실행
 
@@ -51,4 +52,4 @@ curl -sG "http://$V:3100/loki/api/v1/query" --data-urlencode 'query=sum by (serv
 
 ## 다음
 
-- Kafka · DB VM inventory 그룹(node-exporter · Fluent Bit) — 현수 합의 뒤
+- Kafka · DB VM Fluent Bit — node-exporter는 11/17 추가, 로그는 아직
