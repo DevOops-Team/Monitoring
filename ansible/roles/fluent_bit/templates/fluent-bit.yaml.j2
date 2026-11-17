@@ -1,0 +1,82 @@
+# {{ ansible_managed }} — Monitoring 레포 ansible/roles/fluent_bit. 손으로 고치지 말 것
+# 호스트 journald 전체 → Loki OTLP 직접. service · 출력 블록은 DaemonSet 설정(deploy/agents/base/fluent-bit/fluent-bit.yaml)과 같은 값
+{# 리소스 속성은 고정 값만 넣을 수 있다(레코드 필드 참조 불가, 5.1.1에서 확인) → service.name이 다른 것은 입력을 나눈다 #}
+{% macro resource(service_name) %}
+          - name: opentelemetry_envelope
+{% for key, value in [('service.namespace', fluent_bit_service_namespace), ('service.instance.id', inventory_hostname), ('service.name', service_name)] %}
+          - name: content_modifier
+            context: otel_resource_attributes
+            action: upsert
+            key: {{ key }}
+            value: {{ value }}
+{% endfor %}
+{% endmacro %}
+service:
+  flush: 1
+  log_level: warn
+  http_server: on                  # :2020 상태 · 지표. 지금은 role의 응답 확인만 쓰므로 호스트 안에서만 연다(Agent가 긁게 되면 그때 넓힌다)
+  http_listen: 127.0.0.1
+  http_port: 2020
+  health_check: on
+  hc_errors_count: 5
+  hc_retry_failure_count: 5
+  hc_period: 60
+  storage.path: {{ fluent_bit_state_dir }}/storage   # 미전송 청크를 디스크에(Loki가 죽어 있는 동안)
+  storage.sync: normal
+  storage.checksum: off
+  storage.max_chunks_up: 64
+  storage.backlog.mem_limit: 16M
+  storage.metrics: on
+
+pipeline:
+  inputs:
+    # 커널 로그(OOM · ZFS · 하드웨어 오류). 관리 클러스터와 같은 service_name="kernel"
+    - name: systemd
+      tag: host.kernel
+      path: /var/log/journal
+      systemd_filter: _TRANSPORT=kernel
+      db: {{ fluent_bit_state_dir }}/systemd-kernel.db
+      read_from_tail: on
+      strip_underscores: off
+      storage.type: filesystem
+      processors:
+        logs:
+{{ resource('kernel') }}
+    # 나머지 전부(systemd 유닛 · Proxmox 서비스). systemd_filter에는 부정 조건이 없어 전체를 읽고 커널만 뺀다.
+    # 자기 로그도 뺀다: 전송 실패 로그가 다시 수집돼 도는 것을 막는다
+    - name: systemd
+      tag: host.journal
+      path: /var/log/journal
+      db: {{ fluent_bit_state_dir }}/systemd-journal.db
+      read_from_tail: on
+      strip_underscores: off
+      storage.type: filesystem
+      processors:
+        logs:
+          - name: grep
+            exclude:
+              - _TRANSPORT ^kernel$
+              - _SYSTEMD_UNIT ^fluent-bit\.service$
+          # 실행 명령줄 · 실행 파일 경로는 보내지 않는다: 인자로 넘긴 비밀번호 · 토큰이 Loki(무인증) · S3에 30일 남는 것을 막는다
+          - name: content_modifier
+            action: delete
+            key: _CMDLINE
+          - name: content_modifier
+            action: delete
+            key: _EXE
+{{ resource('journal') }}
+  outputs:
+    # 본문 = MESSAGE, 나머지 journald 필드(_SYSTEMD_UNIT · PRIORITY …)는 로그 속성 → Loki 구조화 메타데이터.
+    # Loki가 죽어 있으면 storage.path에 쌓고 무한 재시도(총량 상한 1G)
+    - name: opentelemetry
+      match: host.*
+      host: {{ fluent_bit_loki_host }}
+      port: {{ fluent_bit_loki_port }}
+      logs_uri: /otlp/v1/logs
+      tls: off
+      http2: off
+      logs_body_key: MESSAGE
+      logs_body_key_attributes: true
+      log_response_payload: false
+      retry_limit: no_limits
+      storage.total_limit_size: 1G

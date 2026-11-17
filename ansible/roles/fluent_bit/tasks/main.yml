@@ -1,0 +1,90 @@
+---
+# journald가 디스크 저장이 아니면(/var/log/journal 없음) systemd 입력이 조용히 0건이 된다(11/10 관리 클러스터 사례) → 먼저 막는다
+- name: journald 디스크 저장 확인 (/var/log/journal)
+  ansible.builtin.stat:
+    path: /var/log/journal
+  register: fluent_bit_journal_dir
+
+- name: journald 디스크 저장이 아니면 중단
+  ansible.builtin.assert:
+    that: fluent_bit_journal_dir.stat.isdir | default(false)
+    fail_msg: "/var/log/journal 없음 — 템플릿의 path를 /run/log/journal로 바꿔야 한다"
+
+# apt 저장소를 추가하지 않고 deb를 버전 · 체크섬 고정으로 받는다: apt update가 Proxmox enterprise 저장소 401로 실패하고(node_exporter role 주석),
+# 저장소를 걸어 두면 apt upgrade 때 버전이 따라 올라간다
+- name: 설치된 버전 확인
+  ansible.builtin.command: dpkg-query -W -f=${Version} fluent-bit
+  register: fluent_bit_installed
+  changed_when: false
+  failed_when: false
+
+- name: deb 내려받기
+  ansible.builtin.get_url:
+    url: "{{ fluent_bit_deb_url }}"
+    dest: "/var/cache/apt/archives/fluent-bit_{{ fluent_bit_version }}_amd64.deb"
+    checksum: "sha256:{{ fluent_bit_deb_sha256 }}"
+    mode: "0644"
+  when: fluent_bit_installed.stdout != fluent_bit_version
+
+- name: 패키지 설치
+  ansible.builtin.apt:
+    deb: "/var/cache/apt/archives/fluent-bit_{{ fluent_bit_version }}_amd64.deb"
+    update_cache: false
+  when: fluent_bit_installed.stdout != fluent_bit_version
+  notify: fluent-bit 재시작
+
+- name: 상태 디렉토리 (책갈피 · 버퍼)
+  ansible.builtin.file:
+    path: "{{ fluent_bit_state_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: 설정 (/etc/fluent-bit/fluent-bit.yaml)
+  ansible.builtin.template:
+    src: fluent-bit.yaml.j2
+    dest: /etc/fluent-bit/fluent-bit.yaml
+    owner: root
+    group: root
+    mode: "0644"
+    validate: /opt/fluent-bit/bin/fluent-bit --dry-run -c %s
+  notify: fluent-bit 재시작
+
+# 패키지 유닛은 옛 형식 /etc/fluent-bit/fluent-bit.conf를 읽는다 → drop-in으로 YAML 설정을 가리킨다
+- name: systemd drop-in 디렉토리
+  ansible.builtin.file:
+    path: /etc/systemd/system/fluent-bit.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: systemd drop-in (YAML 설정으로 기동)
+  ansible.builtin.template:
+    src: override.conf.j2
+    dest: /etc/systemd/system/fluent-bit.service.d/override.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: fluent-bit 재시작
+
+- name: 변경이 있었으면 지금 재시작
+  ansible.builtin.meta: flush_handlers
+
+- name: 서비스 켜짐 · 기동
+  ansible.builtin.systemd:
+    name: fluent-bit
+    enabled: true
+    state: started
+    daemon_reload: true
+
+- name: 응답 확인 (:2020/api/v1/health)
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:2020/api/v1/health"
+  register: fluent_bit_health
+  retries: 5
+  delay: 2
+  until: fluent_bit_health.status == 200
+  changed_when: false
+  when: not ansible_check_mode
