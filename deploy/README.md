@@ -193,6 +193,24 @@ curl -sG "http://$V:3100/loki/api/v1/label/k8s_namespace_name/values" --data-url
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=otelcol_exporter_queue_size{cluster="onprem-manager"}'   # 0이 정상, 쌓이면 저장소 쪽 문제
 ```
 
+### Kueue 지표 수집 (11/17)
+
+Agent의 `kueue` 잡(`base/prometheus-agent/prometheus.yml`)이 `kueue-system`의 Kueue 컨트롤러 Pod `:8443/metrics`를 긁는다. base에 있어서 Kueue가 있는 클러스터면 그대로 붙고, 없으면 타깃이 0개다.
+
+- 8443은 HTTPS + 토큰 인증이다. Agent ServiceAccount에 `/metrics` 읽기 권한(`rbac.yaml`의 nonResourceURLs)이 이미 있어 RBAC는 바꾸지 않았다
+- 인증서 검증은 건너뛴다(kubelet 잡과 같은 방식). 검증하려면 Kueue 쪽에 cert-manager 연동을 켜야 한다. 토큰은 읽기 전용이다
+- 관리 클러스터는 Kueue Pod 3개가 **모두 같은 큐 지표를 낸다** → 그냥 `sum`하면 3배가 된다. 패널 · 룰에서는 `replica_role="leader"`로 고른다
+- 큐별 쿼터 · 사용량(`kueue_cluster_queue_nominal_quota` · `kueue_cluster_queue_resource_usage`)은 Kueue 설정 `metrics.enableClusterQueueResources: true`가 있어야 나온다(Gitops `onprem/multikueue/kueue/values.yaml` · `eks/scheduling/base/kueue-values.yaml`, 11/17 켬)
+- 입장 대기 시간(`kueue_admission_wait_time_seconds`) · 입장 누적(`kueue_admitted_workloads_total`)은 잡이 한 번 입장해야 시계열이 생긴다
+- `kueue_*` 말고 컨트롤러 내부 지표(`controller_runtime_*` · `workqueue_*` · `go_*`)도 같이 들어온다(Pod당 약 1,700 시계열). 거르지 않는다
+
+확인:
+```bash
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{cluster="onprem-manager", job="kueue"}'                                           # 3개 1
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_cluster_queue_nominal_quota{cluster="onprem-manager", replica_role="leader"}'   # 큐마다 1줄
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_pending_workloads{cluster="onprem-manager", replica_role="leader"}'             # 대기 잡 수
+```
+
 ### 모니터링 클러스터 자신의 로그 (`overlays/monitoring`)
 
 모니터링 클러스터에는 수집 층 중 **Fluent Bit만** 올린다. 지표 쪽(Agent · kube-state-metrics · node-exporter)은 저장 층(`deploy/base` · `values/`)에 이미 있다.
