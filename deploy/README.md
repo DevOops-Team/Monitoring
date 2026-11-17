@@ -145,7 +145,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 - Agent의 RBAC는 읽기 전용(nodes · nodes/metrics · services · pods · endpointslices). `nodes/proxy` · secrets 없음
 - Secret 값은 레포 · 셸 기록에 남기지 않는다(`create-secrets.sh`의 `read -s`)
 
-## 수집 층 (`deploy/agents/`) — 관리 클러스터 · EKS에 올리는 것
+## 수집 층 (`deploy/agents/`) — 관리 클러스터 · EKS · 모니터링 클러스터(Fluent Bit만)에 올리는 것
 
 저장소(위)가 아니라 **클러스터마다 하나씩 붙이는 쪽**. 배치 규약과 이유는 `docs/worker-agents.md`.
 
@@ -167,6 +167,22 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{cluster="onprem-manager"}'          # kubelet · cadvisor · kube-state-metrics · prometheus-agent · otel-gateway · fluent-bit · node-exporter(노드마다 1) · annotated-pods
 curl -sG "http://$V:3100/loki/api/v1/label/k8s_namespace_name/values" --data-urlencode 'query={k8s_cluster_name="onprem-manager"}'
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=otelcol_exporter_queue_size{cluster="onprem-manager"}'   # 0이 정상, 쌓이면 저장소 쪽 문제
+```
+
+### 모니터링 클러스터 자신의 로그 (`overlays/monitoring`)
+
+모니터링 클러스터에는 수집 층 중 **Fluent Bit만** 올린다. 지표 쪽(Agent · kube-state-metrics · node-exporter)은 저장 층(`deploy/base` · `values/`)에 이미 있다.
+
+- OTel 게이트웨이를 두지 않고 Loki OTLP(`172.30.0.35:3100/otlp`)로 직접 보낸다: 트레이스를 내는 앱이 없고 Loki가 같은 클러스터라 버퍼 이득이 작다. 그래서 설정 파일을 따로 둔다(`overlays/monitoring/fluent-bit.yaml`, 입력 · 필터는 base와 같고 출력만 다름)
+- 라벨은 `k8s_cluster_name="monitoring"` · `service_name`(`pod` | `kernel`) 둘뿐이다. Fluent Bit은 리소스 속성에 고정 값만 넣을 수 있어서, 네임스페이스 · Pod · 컨테이너 이름은 structured metadata(`kubernetes_namespace_name` · `kubernetes_pod_name` · `kubernetes_container_name` · `kubernetes_host`)로 들어간다 → **관리 클러스터와 조회 방법이 다르다**
+- 적용은 ArgoCD(Gitops 레포 Application `gpu-monitoring-logs`, 자동 sync · prune/selfHeal 끔). `deploy-k8s.sh`는 lint(`--dry-run` · overlay 렌더)만 하고 적용하지 않는다
+- kind 노드는 journald가 `/run/log/journal`에 있고 커널 메시지가 없다 → kind에서 볼 때는 렌더 결과의 `path`를 바꾸고 `systemd_filter`를 떼야 저널 출력 경로를 확인할 수 있다
+
+확인:
+```bash
+curl -sG "http://$V:3100/loki/api/v1/query_range" --data-urlencode 'query={k8s_cluster_name="monitoring", service_name="pod"} | kubernetes_namespace_name="monitoring" | kubernetes_container_name="loki"' --data-urlencode limit=5
+curl -sG "http://$V:3100/loki/api/v1/query" --data-urlencode 'query=sum by (_HOSTNAME) (count_over_time({k8s_cluster_name="monitoring", service_name="kernel"}[1h]))'   # 노드 3대
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{cluster="monitoring", job="fluent-bit"}'                                                    # 3개 1
 ```
 
 겪은 것 (11/10, kind):
