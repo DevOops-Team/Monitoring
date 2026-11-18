@@ -100,7 +100,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `k8s-nodes` | Kubernetes 노드 | 두 클러스터 노드 9대의 자원 · PSI · 디스크 · NIC · OOM · NTP | cluster · node |
 | `k8s-workloads` | Kubernetes 워크로드 | Pod 상태 · 재시작 · 대기 사유 · 마지막 종료 코드 · 워크로드 복제 · 학습 Pod | cluster · namespace |
 | `vm-hosts` | Kafka · DB VM | Kafka 3대 · DB VM의 자원 · PSI · 루트 디스크(80 · 90% 선) · 디스크 IO · eth0 | host |
-| `pfsense` | pfSense | 주 · 대기의 인터페이스 상태 · 트래픽(WAN · LAN · AWS VPN 터널) · 오류 · 드롭 · 게이트웨이/인터넷 ping · 자원 · 루트 디스크 | host |
+| `pfsense` | pfSense | 주 · 대기의 인터페이스 상태 · 트래픽(WAN · LAN · AWS VPN 터널) · 오류 · 드롭 · 게이트웨이/인터넷 ping · 상태 동기화(pfsync) · 자원 · 루트 디스크 | host |
 | `postgres` | PostgreSQL | DB 접속(pg_up) · 연결 수(상태 · 사용자별) · 잠금 · 트랜잭션 · 캐시 적중률 · gpuf_data 테이블 크기 · 삽입 속도 · 죽은 행 · WAL · 체크포인트 | - |
 
 - **화면에서 고친 것은 저장되지 않는다**(`allowUiUpdates: false`). 고치는 흐름: 화면에서 편집 → 「Export → JSON」 → 레포 파일 교체 → 커밋 → 적용

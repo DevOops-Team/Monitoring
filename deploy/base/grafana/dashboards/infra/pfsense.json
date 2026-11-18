@@ -1025,7 +1025,87 @@
       "gridPos": {
         "x": 0,
         "y": 33,
-        "w": 24,
+        "w": 12,
+        "h": 6
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "상태 동기화 (pfsync)",
+      "description": "두 pfSense가 연결 상태표를 주고받는 pfsync0 인터페이스의 초당 바이트(5분). 평소엔 주가 보내고 대기가 받는다. 선이 모두 0에 붙으면 동기화가 멈춘 것 → 그 상태로 주 · 대기가 바뀌면 열려 있던 연결이 끊긴다(11/17에 0이었고 11/18 해결)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_network_transmit_bytes_total{job=\"pfsense-host\", host=~\"$host\", device=\"pfsync0\"}[5m])",
+          "legendFormat": "{{host}} 보냄"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "rate(node_network_receive_bytes_total{job=\"pfsense-host\", host=~\"$host\", device=\"pfsync0\"}[5m])",
+          "legendFormat": "{{host}} 받음"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 23,
+      "gridPos": {
+        "x": 12,
+        "y": 33,
+        "w": 12,
         "h": 6
       }
     },
