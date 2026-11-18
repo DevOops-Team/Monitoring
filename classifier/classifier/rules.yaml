@@ -1,0 +1,25 @@
+# 판정 표. 설명과 근거는 docs/classifier.md 3절. 값은 전부 가설이고 5주차 주입 실험 뒤 고친다.
+# 이 파일의 git SHA 앞 7자가 Kafka 헤더 rule_version으로 나간다.
+
+# 이벤트를 만들지 않는 신호
+ignore:
+  xid: [45]            # 앞선 오류의 뒤처리. 컨트롤러 조치가 만드는 Xid라 루프 방지
+  exit_code: [0, 75]   # 정상 완료 · 펜싱 정상 동작
+
+# 위에서부터 먼저 맞는 행
+xid:
+  - {xids: [13, 31, 43, 68, 109], category: app, action: restart_in_place, confidence: 0.8}
+  - {xids: [48], category: hw, action: reset_then_migrate, confidence: 0.9}
+  - {xids: [79], category: hw, action: isolate_migrate, confidence: 0.95}
+  - {xids: [63, 92], category: hw_warn, action: none, confidence: 0.9}
+
+signal:
+  spot: {category: infra, action: evacuate_preemptive, confidence: 1.0}
+  site: {category: site, action: fence_evacuate, confidence: 0.7}
+  pod_exit: {category: app, action: restart_in_place, confidence: 0.6}
+
+# 표에 없는 Xid
+unmatched: {category: hw, action: hold, confidence: 0.3}
+
+# collector_healthy=false이고 site가 아니면 category는 그대로 두고 이것으로 낮춘다
+collector_down: {action: hold, confidence: 0.5}
