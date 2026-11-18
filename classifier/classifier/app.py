@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -43,7 +45,24 @@ def pipeline_from_env() -> p.Pipeline:
 def create_app(pipeline: p.Pipeline | None = None) -> FastAPI:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     pipeline = pipeline or pipeline_from_env()
-    app = FastAPI(title="classifier", docs_url=None, redoc_url=None, openapi_url=None)
+
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        """기다리는 Pod 종료 신호를 1초마다 확인하는 타이머."""
+        stop = threading.Event()
+
+        def tick() -> None:
+            while not stop.wait(1.0):
+                try:
+                    pipeline.flush(datetime.now(timezone.utc))
+                except Exception:
+                    p.logger.exception("flush failed")
+
+        threading.Thread(target=tick, name="flush", daemon=True).start()
+        yield
+        stop.set()
+
+    app = FastAPI(title="classifier", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
     # def(동기)라서 스레드 풀에서 돈다. Kafka 전달 확인을 기다려도 다른 요청을 막지 않는다
     @app.post("/alerts")

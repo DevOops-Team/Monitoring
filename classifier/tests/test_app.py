@@ -128,3 +128,18 @@ def test_require_kafka(monkeypatch):
     monkeypatch.setenv("REQUIRE_KAFKA", "true")
     with pytest.raises(RuntimeError):
         pipeline_from_env()
+
+
+def test_timer_flushes_waiting_pod_exit(env):
+    """서버가 떠 있으면 타이머가 기다리던 Pod 종료 신호를 스스로 판정한다."""
+    import time
+    _, fake = env
+    client = TestClient(create_app(Pipeline(Rules.load(), Publisher(fake, "abc1234"),
+                                            lambda s: Context(az="us-east-2a", collector_healthy=True))))
+    pod = alert(ts(28), signal="pod_exit", pod="job-3f9a1c2e-g0003-w-0-0", exit_code="137")
+    with client:                                    # with 안에서만 타이머가 돈다
+        assert post(client, pod).json() == {"deferred": 1}
+        deadline = time.monotonic() + 6
+        while not fake.sent and time.monotonic() < deadline:
+            time.sleep(0.2)
+    assert [e["payload"]["source"] for e in fake.sent] == ["pod"]

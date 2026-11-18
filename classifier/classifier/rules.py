@@ -42,9 +42,13 @@ class Rules:
             return None
         v = self._match(s) or self.unmatched(s)
         if not collector_healthy and v.category != "site":
-            down = self.table["collector_down"]
-            v = replace(v, action=down["action"], confidence=float(down["confidence"]))
+            v = self.hold(v)
         return v
+
+    def hold(self, v: Verdict) -> Verdict:
+        """확인할 수 없는 상태의 판정. category는 두고 hold로 낮춘다."""
+        down = self.table["collector_down"]
+        return replace(v, action=down["action"], confidence=float(down["confidence"]))
 
     def _match(self, s: Signal) -> Verdict | None:
         if s.signal == "xid":

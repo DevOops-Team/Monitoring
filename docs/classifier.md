@@ -98,18 +98,31 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
   - (job_id, generation)별로 `job.fenced` · `job.cancelled`가 왔는가
   - 작업별 최신 세대(`job.submitted` · `job.resumed` 등에서 본 가장 큰 generation)
 - **`job.failed`는 의도된 종료로 보지 않는다.** 장애로 JobSet이 먼저 Failed가 되면 그 세대의 끝 사건은 `job.failed` 하나뿐이라, 이것을 거르면 진짜 장애가 가려진다.
-- `pod_exit` 신호는 **30초(임시값)** 기다렸다가 판정한다.
+- `pod_exit` 신호는 **신호 발생 시각(`event_ts`) + 30초(임시값)** 까지 기다렸다가 판정한다. 알람이 이미 30초 넘게 늦게 왔으면 바로 판정한다. 기다리는 동안 웹훅 응답은 `deferred`이고, 1초마다 도는 타이머가 기한이 된 신호를 판정한다.
 
-| 30초 안에 본 것 | 결과 |
+기한이 되면 위에서부터 본다.
+
+| 확인 | 결과 |
 |---|---|
-| 같은 (job_id, generation)의 `job.fenced` · `job.cancelled` | 버림 |
-| 신호의 generation < 그 작업의 최신 세대 | 버림 (옛 세대의 뒤늦은 종료) |
-| 같은 작업의 `xid` · `spot` · `site` 신호 | 따로 내지 않고 그 이벤트의 `correlated`에 넣는다. 한 고장으로 다른 랭크가 줄줄이 죽을 때 `restart_in_place`가 먼저 나가지 않게 한다 |
+| `job_id` · `generation`을 못 찾음 | `hold`로 낸다 (어느 작업인지 몰라 확인할 수 없음) |
+| 같은 (job_id, generation)의 `job.fenced` · `job.cancelled`를 봄 | 버림 (`intended`) |
+| 신호의 generation < 그 작업의 최신 세대 | 버림 (`stale_generation`, 옛 세대의 뒤늦은 종료) |
+| 같은 (job_id, generation)에 원인 사건을 이미 냄 | 버림 (`absorbed`) |
 | `job.lifecycle` 읽기가 끊겨 있음 | `hold`로 낸다 (확인할 수 없음) |
 | 위에 해당 없음 | 3.3절 `pod_exit` 행으로 낸다 |
 
+**원인 사건에 묶기.** 한 고장으로 다른 랭크가 줄줄이 죽을 때 `restart_in_place`가 따로 나가지 않게 한다.
+
+- 원인 사건 = `xid` · `spot` 신호로 낸 이벤트 중 action이 `hold` · `none`이 아닌 것. Xid 63처럼 기록만 하는 사건은 원인으로 치지 않는다(그 뒤의 Pod 종료는 따로 판정해야 함).
+- 원인 사건을 낼 때 같은 (job_id, generation)의 `pod_exit`가 기다리고 있으면 그 이벤트의 `correlated`에 넣고 대기에서 뺀다.
+- 원인 사건을 낸 뒤에 오는 같은 (job_id, generation)의 `pod_exit`도 버린다. 그 세대는 이미 복구 대상이라 새 사건이 아니다.
+- `site` 신호는 묶지 않는다. 클러스터가 안 보이는 상황이라 작업을 특정할 수 없고, 그때는 `pod_exit` 알람도 오지 않는다.
+
+**알아 둘 것**
+
 - 감시기는 JobSet 삭제를 보는 순간 발행하므로 보통 Pod 종료보다 먼저 온다. 감시기가 재연결 중이면 늦을 수 있어 대기 시간을 둔다.
 - 30초는 분류기 · 복구 컨트롤러를 연결한 E2E에서 실제 간격을 재서 고친다.
+- 기다리는 신호는 메모리에만 있다. 그 사이 분류기가 재시작하면 사라지고, 알람이 아직 켜져 있어 Alertmanager가 다시 보내야 판정된다.
 
 ## 5. 표에 없는 신호
 
