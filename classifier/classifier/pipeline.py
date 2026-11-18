@@ -31,6 +31,7 @@ NO_RECOVERY = ("hold", "none")              # 복구를 부르지 않는 action.
 RESOLVED = "resolved"               # 꺼짐 알림
 REJECTED = "rejected"               # 라벨 계약 위반
 IGNORED = "ignored"                 # 이벤트를 만들지 않는 신호 (Xid 45, 종료 코드 0 · 75)
+DISABLED = "disabled"               # 받지 않기로 한 종류의 신호 (ENABLED_SIGNALS)
 DUPLICATE = "duplicate"             # 이미 낸 사건
 PUBLISHED = "published"
 INVALID = "invalid"                 # 스키마 검증 실패
@@ -54,8 +55,9 @@ class Pending:
 
 class Pipeline:
     def __init__(self, rules: Rules, publisher: Publisher, enrich: Callable[[Signal], Context],
-                 lifecycle: Lifecycle | None = None):
+                 lifecycle: Lifecycle | None = None, signals: frozenset[str] | None = None):
         self.rules = rules
+        self.signals = signals              # 받을 신호 종류. None이면 전부. 라우팅(Alertmanager)이 틀려도 여기서 막는다
         self.publisher = publisher
         self.enrich = enrich
         self.lifecycle = lifecycle or Lifecycle()   # 읽는 쪽이 없으면 healthy=False라 Pod 종료는 전부 hold
@@ -124,6 +126,9 @@ class Pipeline:
             return REJECTED
         if s is None:
             return RESOLVED
+        if self.signals is not None and s.signal not in self.signals:
+            log("signal.disabled", signal=s.signal, alert=s.alert, cluster=s.cluster)
+            return DISABLED
         if self.rules.ignored(s):
             return IGNORED
 

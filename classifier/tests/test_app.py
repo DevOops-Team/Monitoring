@@ -145,3 +145,20 @@ def test_timer_flushes_waiting_pod_exit(env):
         while not fake.sent and time.monotonic() < deadline:
             time.sleep(0.2)
     assert [e["payload"]["source"] for e in fake.sent] == ["pod"]
+
+
+def test_site_is_disabled_by_default(monkeypatch, capsys):
+    """ENABLED_SIGNALS 기본값은 xid · pod_exit. 라우팅이 틀려 site가 와도 이벤트를 내지 않는다."""
+    for name in ("KAFKA_BOOTSTRAP", "REQUIRE_KAFKA", "MIMIR_URL", "ENABLED_SIGNALS"):
+        monkeypatch.delenv(name, raising=False)
+    client = TestClient(create_app())
+    assert post(client, alert(ts(30), signal="site", node="")).json() == {"disabled": 1}
+    assert "fault." not in capsys.readouterr().out
+
+
+def test_enabled_signals_env(monkeypatch, capsys):
+    for name in ("KAFKA_BOOTSTRAP", "REQUIRE_KAFKA", "MIMIR_URL"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ENABLED_SIGNALS", "xid, pod_exit ,site")
+    client = TestClient(create_app())
+    assert post(client, alert(ts(30), signal="site", node="")).json() == {"published": 1}

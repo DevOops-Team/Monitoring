@@ -57,6 +57,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | annotation | `log_line` | 있으면 | 근거가 된 로그 한 줄 |
 
 - 필수 값이 빠진 알람은 이벤트를 만들지 않고 카운터 `classifier_signals_rejected_total`만 올린다.
+- 분류기는 env `ENABLED_SIGNALS`에 적힌 종류만 받는다(기본 `xid,pod_exit`). 그 밖의 `signal`은 계약에 맞아도 이벤트를 만들지 않는다(`outcome="disabled"`). Alertmanager 라우팅이 틀리거나 누가 알람을 직접 넣어도 `site`의 `fence_evacuate`가 나가지 않게 하는 두 번째 잠금이다. `site` · `spot`을 켤 때는 라우트와 이 값을 같이 바꾼다.
 - 룰은 `deploy/base/mimir/rules/failover.yml`에 있다(2026-11-18): `FailoverXidDcgm`(`xid` · `dcgm`) · `FailoverPodExit`(`pod_exit`) · `FailoverSiteDown`(`site`). 커널 로그 경로 Xid와 `spot`은 아직 없다(8절).
 - 룰은 사건 직후 1~2분만 울리고(사이트는 8분), 그동안 `event_ts`가 바뀌지 않게 쓴다. `event_ts`가 평가할 때마다 밀리면 중복 제거 창(±45초)을 벗어나 같은 고장이 여러 번 나간다.
 - `ckpt-init` 종료는 `pod_exit`로 보내지 않는다. 복구 컨트롤러가 `job.init_failed`를 직접 구독한다.
@@ -167,7 +168,8 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 - [ ] (나, EKS 테스트) dcgm-exporter 지표의 라벨 이름(`node` · `UUID`)을 실제 값으로 확인. 다르면 커널 로그 경로와 DCGM 경로의 `dedup_key` 대상이 달라져 같은 Xid가 두 건으로 나간다
 - [x] (나, EKS overlay) KSM `--metric-labels-allowlist`에 `nodes=[topology.kubernetes.io/zone]` 추가 — `deploy/agents/overlays/eks`(11/18). kind에서 `az`가 채워지는 것 확인. EKS가 아닌 클러스터는 `az`가 `unknown`
 - [x] 분류기용 Alertmanager 라우트(`pipeline=failover`)는 `group_wait` 0초 · `repeat_interval` 1분 — `deploy/values/alertmanager.yaml`(11/18). 기본 4시간이면 분류기가 놓친 알람(재시작으로 사라진 대기 신호 · Kafka 전달 실패)이 다시 오지 않는다. 다시 온 알람은 중복 제거로 걸러진다
-- [ ] (나, 실 클러스터 배포 때) 위 라우트의 수신자 `classifier`에 분류기 웹훅 주소를 넣는다. 지금은 받는 곳이 없어 원인 알람은 Alertmanager 화면에서만 보인다
+- [x] 분류기 실 클러스터 배포와 웹훅 연결(11/18): Gitops `monitoring/onprem/classifier`, Alertmanager 수신자 `classifier`. Xid · Pod 종료만 보낸다
+- [ ] (나) 사이트 알람을 분류기로 보내기. 일부러 내린 EKS를 구분할 수 있게 된 뒤에(아래 `FailoverSiteDown` 항목). 지금은 수신자 `classifier-pending`(받는 곳 없음)
 - [ ] (나, EKS 테스트 뒤) 커널 로그 경로 Xid 룰. Loki에 룰 파일을 넣는 길(ConfigMap 마운트)부터 만들어야 한다. `dcgmi` 주입은 커널 로그를 남기지 않으므로 진짜 Xid 로그 줄(`NVRM: Xid`)이 생기면 원문을 보관해 그것에 맞춘다
 - [ ] (박기현 · 김성모) 스팟 회수 예고가 어디로 나오는지(관리형 노드그룹). 정해지면 `spot` 룰을 쓴다
 - [ ] (나) `FailoverXidDcgm`은 같은 번호가 연달아 나면 값이 안 바뀌어 두 번째를 못 본다 → `DCGM_EXP_XID_ERRORS_COUNT` 검토

@@ -33,6 +33,13 @@ def _unknown_context(s: Signal) -> Context:
     return Context(az="unknown", collector_healthy=False)
 
 
+DEFAULT_SIGNALS = "xid,pod_exit"     # site · spot은 명시해야 받는다 (docs/classifier.md 2절)
+
+
+def enabled_signals() -> frozenset[str]:
+    return frozenset(x.strip() for x in os.environ.get("ENABLED_SIGNALS", DEFAULT_SIGNALS).split(",") if x.strip())
+
+
 def pipeline_from_env() -> p.Pipeline:
     bootstrap = os.environ.get("KAFKA_BOOTSTRAP")
     if not bootstrap and os.environ.get("REQUIRE_KAFKA", "").lower() == "true":
@@ -40,9 +47,11 @@ def pipeline_from_env() -> p.Pipeline:
     producer = kafka_producer(bootstrap) if bootstrap else StdoutProducer()
     mimir = os.environ.get("MIMIR_URL")
     enrich = Enricher(mimir_query(mimir)) if mimir else _unknown_context
-    p.log("startup", kafka=bootstrap or "stdout", mimir=mimir or "none")
+    signals = enabled_signals()
+    p.log("startup", kafka=bootstrap or "stdout", mimir=mimir or "none", signals=sorted(signals))
     lifecycle = intended.Lifecycle()
-    pipeline = p.Pipeline(Rules.load(), Publisher(producer, os.environ.get("RULE_VERSION", "dev")), enrich, lifecycle)
+    pipeline = p.Pipeline(Rules.load(), Publisher(producer, os.environ.get("RULE_VERSION", "dev")), enrich, lifecycle,
+                          signals)
     if bootstrap:
         restore_from_kafka(bootstrap, pipeline, lifecycle)
     return pipeline
