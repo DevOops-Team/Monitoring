@@ -25,7 +25,8 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `dedup.py` | 같은 사건을 한 번만 낸다. 규칙은 fault-event.md 2.1절(±45초 창, 키와 action이 둘 다 같으면 재발행 안 함) |
 | `event.py` | 신호 + 판정 + Mimir 값 → v1 장애 이벤트. `event_id`(= trace-id)는 판정마다 새로 만든다 |
 | `publish.py` | v1 스키마 검증 → 봉투 → Kafka 발행(6절) |
-| `app.py` | `POST /alerts` · `/healthz` · `/metrics` |
+| `pipeline.py` | 위 단계를 알람 1건마다 순서대로 부르고 결과를 카운터 `classifier_alerts_total{outcome}`로 센다 |
+| `app.py` | `POST /alerts` · `/healthz` · `/metrics`. Kafka 전달에 실패한 알람이 있으면 503을 돌려줘 Alertmanager가 다시 보내게 한다(이미 낸 것은 중복 제거로 걸러짐) |
 
 ## 2. 알람 → 분류기 라벨 계약
 
