@@ -765,7 +765,7 @@
     {
       "type": "timeseries",
       "title": "토픽별 lag",
-      "description": "수집기(data-collector)가 아직 읽지 않은 메시지 수 = 토픽의 마지막 오프셋 − 수집기가 커밋한 오프셋. 0 근처가 정상이고, 계속 늘면 수집기가 멈췄거나 못 따라가는 것 → DB에 이벤트가 늦게 들어간다. 커밋한 적 없는 파티션(-1)은 뺐다. kafka_exporter 값",
+      "description": "수집기(data-collector)가 아직 읽지 않은 메시지 수 = 토픽의 마지막 오프셋 − 수집기가 커밋한 오프셋. 0 근처가 정상이고, 계속 늘면 수집기가 멈췄거나 못 따라가는 것 → DB에 이벤트가 늦게 들어간다. 커밋한 적 없는 파티션(-1)은 뺐다. 점선 1000 = 경고(10분 넘으면 알람 CollectorLagHigh, 임시값, MON-STD-23). kafka_exporter 값",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -794,7 +794,7 @@
             "showPoints": "never",
             "spanNulls": false,
             "thresholdsStyle": {
-              "mode": "off"
+              "mode": "dashed"
             }
           },
           "thresholds": {
@@ -803,6 +803,10 @@
               {
                 "color": "transparent",
                 "value": null
+              },
+              {
+                "color": "#FF9830",
+                "value": 1000
               }
             ]
           },
