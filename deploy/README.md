@@ -300,6 +300,55 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{clu
 | Loki 메타데이터에 `_p` · `time` | cri 파서 잔여 필드 | 게이트웨이 transform에서 `delete_key` |
 | Fluent Bit 첫 10초 `no upstream connections` | 게이트웨이보다 먼저 떴음 | 정상. 재시도 뒤 전부 전송(버퍼가 일하는 모습) |
 
+## EKS 수집 층 (`deploy/agents/overlays/eks`, 11/18)
+
+EKS 워커 클러스터(eks-a · eks-b · eks-c)에 올리는 묶음. 공통 수집 층(`base`) + dcgm-exporter(`gpu`). 배치 규약은 `docs/worker-agents.md`.
+EKS는 비용 때문에 켰다 끈다. 그래서 **클러스터 이름을 파일에 적지 않고** ConfigMap `monitoring/monitoring-cluster-info`의 `CLUSTER_NAME`으로 받는다.
+
+| 무엇 | 어디에 | 비고 |
+|---|---|---|
+| Agent · KSM · OTel 게이트웨이 | CPU 노드 (`workload=system`, t3.large 1대) | GPU 노드는 스팟이라 회수되면 수집이 같이 죽는다. 버퍼는 hostPath |
+| Fluent Bit · node-exporter | 전 노드 | 어떤 taint든 통과 |
+| dcgm-exporter 4.8.4 | GPU 노드 (`devoops/gpu=true`) | 수집 5초. Agent의 `annotated-pods` 잡이 긁는다(`job="annotated-pods"`) |
+
+**올라가는 길**
+
+- 평소: 클러스터가 뜨면 Gitops ApplicationSet `gpu-eks-monitoring`이 `gpu-eks-monitoring-<이름>`을 만들어 자동 적용한다. 이름은 ArgoCD 클러스터 이름이 그대로 들어간다
+- 손으로(ApplicationSet이 안 될 때): 레포의 같은 overlay에 이름만 넣어 적용한다
+
+```bash
+# KUBECONFIG는 그 EKS 것. 이름은 eks-a · eks-b · eks-c 중 하나
+kubectl kustomize deploy/agents/overlays/eks | sed 's/CLUSTER_NAME: unset/CLUSTER_NAME: eks-a/' | kubectl apply -f -
+```
+
+이름이 안 들어간 채로 뜨면 지표가 `cluster="unset"`으로 들어온다 → `count(up{cluster="unset"})`이 0인지 본다.
+pfSense의 IPsec 인바운드(EKS 172.28.0.0/16 → `172.30.0.35` 9009 · 3100 · 4317 · 4318)는 IaC `GPU-149`로 들어가 있다.
+
+**EKS가 뜬 날 확인 순서** (위에서부터. 앞이 안 되면 뒤는 볼 것이 없다)
+
+| # | 무엇 | 어떻게 | 기대 |
+|---|---|---|---|
+| 1 | ArgoCD 앱 | 관리 클러스터 `kubectl -n argocd get application \| grep eks-monitoring` | 클러스터마다 하나, Synced · Healthy |
+| 2 | 수집 대상 | `count by (cluster, job) (up{cluster=~"eks-.*"} == 1)` | `prometheus-agent` 1 · `kube-state-metrics` 1 · `otel-gateway` 1 · `fluent-bit` 6 · `node-exporter` 6 · `kubelet` 6 · `cadvisor` 6 |
+| 3 | 이름 주입 | `count(up{cluster="unset"})` | 0 |
+| 4 | dcgm-exporter | `count by (cluster) (DCGM_FI_DEV_GPU_TEMP)` | 클러스터마다 5 |
+| 5 | dcgm 라벨 이름 | `DCGM_FI_DEV_GPU_TEMP{cluster="eks-a"}`의 라벨 | `node` · `UUID`가 있다. 다르면 `classifier/classifier/enrich.py`의 `GPU_METRIC` 조회를 고친다(커널 로그 경로와 DCGM 경로의 중복 제거가 여기에 달렸다) |
+| 6 | 노드 라벨 | `kube_node_labels{cluster="eks-a"}` | `label_topology_kubernetes_io_zone` · `label_node_kubernetes_io_instance_type` |
+| 7 | 커널 로그 | Loki `{k8s_cluster_name="eks-a", service_name="kernel"}` | GPU 노드에서 줄이 온다. 안 오면 AL2023 NVIDIA AMI의 journald 위치(`/var/log/journal`)를 본다 |
+| 8 | T4가 내는 지표 | `DCGM_FI_DEV_GPU_MAX_OP_TEMP` · `SLOWDOWN_TEMP` · `SHUTDOWN_TEMP` · `DCGM_FI_DEV_THERMAL_VIOLATION` · `POWER_VIOLATION` | 값이 나오는지(MON-STD-01 · 02의 전제). 안 나오는 것을 적어 둔다 |
+| 9 | 학습 Pod 라벨 | `kube_pod_labels{cluster="eks-a", label_devoops_job_id!=""}` | 학습 Pod마다 `label_devoops_job_id` · `label_devoops_generation` |
+| 10 | trainer 지표 | `train_step_seconds_count{cluster="eks-a"}` | rank마다. `docs/training-metrics.md`의 8개 |
+| 11 | 분류기(노트북) | 아래 명령으로 띄워 Xid · Pod 종료 웹훅을 실제 노드 · Pod 이름으로 보낸다 | `job_id` · `generation` · `az` · `gpu_uuid`가 채워지고 `collector_healthy=true` |
+
+```bash
+# 11번: Kafka 없이(화면에만 찍는다) 실제 Mimir를 읽게. 실제 gpu.fault에는 쓰지 않는다
+cd classifier && MIMIR_URL=http://172.30.0.35:9009 .venv/bin/uvicorn classifier.app:create_app --factory --port 18080
+```
+
+내릴 때 볼 것: 클러스터를 내리면 `up`이 끊긴다. `MonitoringTargetDown` · Agent 부재 알람(MON-STD-15)이 어떻게 뜨는지 적어 둔다(일부러 내린 것과 장애를 구분하는 방법은 아직 없다).
+
+확인 전(11/18): 4 · 5 · 7 · 8은 GPU가 있어야 볼 수 있어 kind로는 못 봤다. 1~3 · 6은 kind에서 이름 `kind-eks`로 확인했다.
+
 ## 다음
 
-~~S3 백엔드~~(11/16) → ~~ArgoCD 원격 등록~~(11/17) → ~~관리 클러스터용 수집 층~~(11/10) → replicas 3 + anti-affinity(Mimir · Loki는 replication_factor 3) → EKS overlay → 분류기 · ~~kafka_exporter~~(11/17) · Loki 룰(Xid).
+~~S3 백엔드~~(11/16) → ~~ArgoCD 원격 등록~~(11/17) → ~~관리 클러스터용 수집 층~~(11/10) → replicas 3 + anti-affinity(Mimir · Loki는 replication_factor 3) → ~~EKS overlay~~(11/18, EKS에서 확인은 11/19) → ~~분류기 본체~~(11/18, 실 클러스터 배포는 남음) · ~~kafka_exporter~~(11/17) · 원인 알람 룰(Xid · Pod 종료 · 스팟 · 사이트).
