@@ -1,0 +1,5 @@
+# EKS에는 monitoring 네임스페이스를 만들어 주는 곳이 없다(스케줄링 앱은 kueue-system · jobset-system · training만 만든다)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring

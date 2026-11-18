@@ -1,12 +1,12 @@
 # 클러스터 수집 층 배치 규약 — 워커 EKS · 관리 클러스터
 
-워커 EKS 3개(AZ별)와 관리 클러스터(온프레미스)에 올릴 모니터링 구성 요소가 **어느 노드에, 어떤 toleration으로** 뜨는지 한 장. 매니페스트는 `deploy/agents/`(base 공통 + overlays/{onprem,kind}, EKS overlay는 재구축 뒤). ADR-18(11/08)로 Alloy는 폐기, **Fluent Bit DaemonSet + OTel Collector 게이트웨이**로 바뀌었다. 노드 라벨 · taint는 김성모 "쿠버네티스 아키텍처 초안" 6절(2026-11-05 v5, 권장안)과 ADR-2 · 4, **ADR-25(2026-11-11: GPU 노드는 고정 관리형 노드그룹, Karpenter 안 씀)**를 따른다. 매니페스트는 이 표대로 쓴다.
+워커 EKS 3개(AZ별)와 관리 클러스터(온프레미스)에 올릴 모니터링 구성 요소가 **어느 노드에, 어떤 toleration으로** 뜨는지 한 장. 매니페스트는 `deploy/agents/`(base 공통 + overlays/{onprem,kind,monitoring,eks}, GPU 노드용은 `gpu/`). ADR-18(11/08)로 Alloy는 폐기, **Fluent Bit DaemonSet + OTel Collector 게이트웨이**로 바뀌었다. 노드 라벨 · taint는 김성모 "쿠버네티스 아키텍처 초안" 6절(2026-11-05 v5, 권장안)과 ADR-2 · 4, **ADR-25(2026-11-11: GPU 노드는 고정 관리형 노드그룹, Karpenter 안 씀)**를 따른다. 매니페스트는 이 표대로 쓴다.
 
 ## 1. 노드 종류와 taint
 
 | 노드 | 라벨 | taint | 누가 뜨나 |
 |---|---|---|---|
-| 시스템 노드 (온디맨드 CPU) | `devoops/node-group=system` | 없음 | Kueue · JobSet · CoreDNS · **Prometheus Agent · kube-state-metrics · OTel 게이트웨이** |
+| 시스템 노드 (온디맨드 CPU) | `workload=system` (IaC `modules/eks/nodes-cpu.tf`) | 없음 | Kueue · JobSet · CoreDNS · **Prometheus Agent · kube-state-metrics · OTel 게이트웨이** |
 | GPU 노드 (노드그룹 `gpu-training` 4대, g4dn.xlarge · g4dn.2xlarge) | `devoops/gpu=true` | `nvidia.com/gpu=present:NoSchedule` (ADR-25 표는 "없음" → 박기현 Terraform 확인) | 학습 Pod · **device plugin · dcgm-exporter · node-exporter · Fluent Bit · NVML 사이드카** |
 | 예비 GPU 노드 (노드그룹 `gpu-spare` 1대) | 위 + `devoops/spare=true` | 위 + `devoops/spare:NoSchedule` | 복구 Pod · **GPU 노드와 같은 DaemonSet 전부**. 자리 표시 Pod는 없다(taint만으로 비워 둠, ADR-25) |
 
@@ -24,9 +24,9 @@
 | NVML 사이드카 (호출 지연 · Xid 이벤트) | DaemonSet | `devoops/gpu: "true"` | `[{operator: Exists}]` | dcgm과 같은 노드 |
 | node-exporter | DaemonSet | 없음 | `[{operator: Exists}]` | 시스템 · GPU · 예비 전부. hostNetwork라 노드 IP:9100, `job="node-exporter"` · `node` 라벨은 모니터링 클러스터와 같다 (`deploy/agents/base/node-exporter/`) |
 | Fluent Bit (Pod 로그 · journald 커널 로그) | DaemonSet | 없음 | `[{operator: Exists}]` | 전 노드. 호스트 `/var/log` · `/run/log` 읽기 전용, 책갈피 db · 미전송 버퍼는 hostPath `/var/lib/monitoring-agents/fluent-bit`. 커널 로그는 systemd 입력 `_TRANSPORT=kernel`(cursor 책갈피). 출력은 OTLP → 게이트웨이(저장소 주소를 모른다) |
-| OTel Collector 게이트웨이 (로그 · 앱 span 수신) | Deployment ×1 | `devoops/node-group: system` | 없음 | 클러스터의 출구 한 곳. file_storage 영속 큐로 저장소 · VPN 중단을 버팀. 트레이스는 SDK에 디스크 버퍼가 없어 이게 유일한 보호. 클러스터 이름 라벨(`k8s.cluster.name`)을 여기서 붙임 |
-| Prometheus Agent | Deployment ×1 | `devoops/node-group: system` | 없음 | 스팟 회수 때 수집 파이프 생존. `external_labels: {cluster: worker-a}`(env `CLUSTER_NAME`). WAL은 EKS는 PVC(gp3), 관리 클러스터는 hostPath |
-| kube-state-metrics | Deployment ×1 | `devoops/node-group: system` | 없음 | 노드 allocatable · Pod 종료 코드 |
+| OTel Collector 게이트웨이 (로그 · 앱 span 수신) | Deployment ×1 | `workload: system` | 없음 | 클러스터의 출구 한 곳. file_storage 영속 큐로 저장소 · VPN 중단을 버팀. 트레이스는 SDK에 디스크 버퍼가 없어 이게 유일한 보호. 클러스터 이름 라벨(`k8s.cluster.name`)을 여기서 붙임 |
+| Prometheus Agent | Deployment ×1 | `workload: system` | 없음 | 스팟 회수 때 수집 파이프 생존. `external_labels: {cluster: eks-a}`(env `CLUSTER_NAME`, EKS는 ConfigMap `monitoring-cluster-info`에서 읽음). WAL은 EKS · 관리 클러스터 모두 hostPath |
+| kube-state-metrics | Deployment ×1 | `workload: system` | 없음 | 노드 allocatable · Pod 종료 코드 |
 | 스팟 통보 (aws-node-termination-handler IMDS 모드) | DaemonSet | `devoops/gpu: "true"` | `[{operator: Exists}]` | GPU 노드만 스팟 |
 
 `operator: Exists`(키 생략)는 모든 taint를 허용한다. GPU taint와 spare taint 둘 다 먹어야 예비 노드에도 뜨므로 키를 하나씩 적는 대신 이렇게 둔다. device plugin DaemonSet(인프라 소유, ns `nvidia-device-plugin`)도 같은 toleration이어야 예비 GPU가 광고된다 (B4 학습 페이지).
@@ -73,13 +73,13 @@ Loki ──ruler 알람──▶ Alertmanager :9093 ──webhook(pipeline=failo
 
 ## 5. 확인 필요
 
-- [ ] (박기현) 노드 그룹 라벨 `devoops/gpu=true` · `devoops/node-group=system` · spare 라벨/taint를 Terraform에 (B4 때 요청한 `nvidia.com/gpu.present=true`는 이 권장안으로 대체)
+- [x] (박기현) 노드 그룹 라벨 — IaC에 들어감: GPU `devoops/gpu=true` · `devoops/node-role=training|spare` + taint `nvidia.com/gpu`(+예비 `devoops/spare`), CPU `workload=system` (`terraform/docs/MANAGED-GPU.md`). 권장안 `devoops/node-group=system`은 쓰지 않는다
 - [ ] (박기현) AMI journald 디스크 저장 여부 (`/var/log/journal` 존재)
 - [ ] (박기현) 분류기용 Roles Anywhere 역할: DynamoDB `devoops-job-fencing` · `devoops-job-progress` 읽기, `ec2:DescribeInstanceStatus` (모니터링 S3 역할 3개와 같은 방식)
 - [x] (김성모) 예비 taint 키 `devoops/spare=true:NoSchedule` · GPU 라벨 `devoops/gpu=true` 확정 (2026-11-05). monitoring ns 자원 예산 0.5코어 · 1Gi, nodeSelector `platform-worker=true`(관리 클러스터)도 그대로
 - [ ] (나) dcgm-exporter Helm values: `customMetrics` 전체 목록(B3 초안) + Xid 230 주기 5초, tolerations Exists
 - [ ] (박기현 · 김성모) 관리형 노드그룹은 스팟 회수를 자체 처리한다(ADR-25). 그러면 분류기에 줄 **스팟 회수 신호의 출처**(지금 표는 aws-node-termination-handler IMDS 모드)를 유지할지, 노드그룹 이벤트로 바꿀지 (MON-STD-19)
-- [ ] (나) EKS overlay: KSM 노드 라벨 허용(`node.kubernetes.io/instance-type`), Karpenter 지표는 수집 대상 아님
-- [ ] (나) EKS overlay: nodeSelector `devoops/node-group: system`, Agent WAL · 게이트웨이 큐를 gp3 PVC로, cluster 라벨 worker-a/b/c (워커별 ConfigMap `devoops-cluster-info`와 맞출지 확인)
+- [x] (나) EKS overlay: KSM 노드 라벨 허용(`node.kubernetes.io/instance-type` · `topology.kubernetes.io/zone`) — `overlays/eks` (11/18)
+- [x] (나) EKS overlay: nodeSelector `workload: system`, 버퍼는 hostPath(EBS CSI 애드온 없음 · CPU 노드 1대 고정), cluster 라벨은 `eks-a` · `eks-b` · `eks-c`를 ConfigMap `monitoring-cluster-info`로 받음(Gitops ApplicationSet이 넣는다) — `overlays/eks` (11/18)
 - [ ] (나) 관리 클러스터 적용 뒤 커널 로그 확인 `{k8s_cluster_name="onprem-manager", service_name="kernel"}` (kind엔 kernel journal이 없어 미확인)
 - [ ] (노찬경) AppProject `gpu-platform`에 Monitoring 레포 · `monitoring` destination, ArgoCD UI 읽기 계정
