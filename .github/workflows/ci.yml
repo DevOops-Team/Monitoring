@@ -5,6 +5,7 @@
 #
 #   PR               : 테스트 + 이미지 빌드 · 점검 (push 안 함)
 #   main push(머지)   : 같은 검사 → 릴리스 버전 계산 → classifier가 바뀌었으면 push {X.Y.Z, X.Y, main, sha-<7자리>}
+#                       → 배포 봇이 Gitops overlay의 이미지를 새 digest로 바꿈 → Argo CD가 모니터링 클러스터에 반영
 #                       → 버전 봇이 태그 vX.Y.Z · Release 생성
 #
 # 버전은 레포 단위 하나. develop → main PR 본문의 '## 릴리스 노트'에서 나온다(release-notes.yml).
@@ -14,7 +15,8 @@
 #   - 빌드 컨텍스트가 폴더가 아니라 레포 루트다. 분류기가 발행 전 검증에 쓰는 schemas/fault-event.v1.json이 classifier/ 밖에 있다
 #   - 버전 봇이 이 레포에 연결되기 전(Variable VERSION_APP_ID 없음)에는 main에서도 push · 태그를 하지 않는다.
 #     태그 없이 push만 하면 매 머지가 같은 버전으로 계산돼 같은 태그를 덮어쓴다
-#   - Gitops 반영(배포 봇)은 아직 없다. 분류기 overlay가 Gitops에 생길 때 deploy job을 더한다
+#   - 배포 봇이 이 레포에 연결되기 전(Variable DEPLOY_APP_ID 없음)에는 deploy를 건너뛴다.
+#     그동안은 Gitops monitoring/onprem/classifier의 newTag를 손으로 올린다 (deploy/README.md 「분류기」)
 #
 # main 필수 검사로 등록할 이름: "classifier · test" · "classifier · image" · "release-notes / release notes"
 name: CI
@@ -88,6 +90,8 @@ jobs:
     permissions:
       contents: read
       packages: write                     # GHCR push (GITHUB_TOKEN)
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
     env:
       IMAGE: ghcr.io/devoops-team/classifier
       LOCAL: devoops/classifier:ci
@@ -161,6 +165,24 @@ jobs:
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: echo "### classifier \`${IMAGE}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # push한 이미지를 Gitops overlay에 반영한다 (ADR-23). 바꾸는 것은 overlay의 images 항목(newTag · digest) 하나다.
+  #   Variable DEPLOY_APP_ID · GITOPS_REPO · GITOPS_OVERLAY(= monitoring/onprem/classifier),
+  #   비밀키는 Environment gitops-deploy(main만)의 Secret DEPLOY_APP_PRIVATE_KEY. 연결 전이거나 이미지를 안 올린 머지는 건너뛴다
+  deploy:
+    name: deploy
+    needs: [plan, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.image.outputs.digest != '' && vars.DEPLOY_APP_ID != ''
+    uses: DevOops-Team/Gitops/.github/workflows/update-image.yml@main
+    with:
+      image: ghcr.io/devoops-team/classifier
+      digest: ${{ needs.image.outputs.digest }}
+      overlay: ${{ vars.GITOPS_OVERLAY }}
+      version: ${{ needs.plan.outputs.version }}
+      app-id: ${{ vars.DEPLOY_APP_ID }}
+      gitops-repo: ${{ vars.GITOPS_REPO }}
+    secrets:
+      DEPLOY_APP_PRIVATE_KEY: ${{ secrets.DEPLOY_APP_PRIVATE_KEY }}   # 이름으로 넘김 — 값은 Environment gitops-deploy(main만)
 
   # 이미지 push가 끝난 뒤 버전 봇이 태그 vX.Y.Z · Release를 만든다 (classifier가 안 바뀐 머지에서도 레포 버전은 올라간다).
   #   Variable VERSION_APP_ID, 비밀키는 Environment release(main만)의 Secret VERSION_APP_PRIVATE_KEY. 연결 전에는 건너뛴다
