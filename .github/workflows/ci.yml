@@ -3,7 +3,7 @@
 #   이미지                             Dockerfile              쓰임
 #   ghcr.io/devoops-team/classifier    classifier/Dockerfile   분류기, 온프레 모니터링 클러스터 (ADR-18 · ADR-29, docs/classifier.md)
 #
-#   PR · develop push : 테스트 + 이미지 빌드 · 점검 (push 안 함)
+#   PR               : 테스트 + 이미지 빌드 · 점검 (push 안 함)
 #   main push(머지)   : 같은 검사 → 릴리스 버전 계산 → classifier가 바뀌었으면 push {X.Y.Z, X.Y, main, sha-<7자리>}
 #                       → 버전 봇이 태그 vX.Y.Z · Release 생성
 #
@@ -22,7 +22,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [develop, main]
+    branches: [main]   # develop 커밋은 PR에서 점검 — push까지 걸면 같은 커밋이 두 번 돈다 (GPU-214)
   workflow_dispatch:
 
 permissions:
@@ -100,6 +100,19 @@ jobs:
         name: 판정 표 버전 (Kafka 헤더 rule_version으로 나간다)
         run: echo "version=$(git log -1 --format=%h -- classifier/classifier/rules.yaml)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
+      # 빌드는 한 번만 (GPU-214). main 릴리스면 최종 태그 · 라벨까지 붙여 로컬에 올리고, 점검한 그 이미지를 그대로 push한다
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.plan.outputs.version }},enable=${{ env.PUSH }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.plan.outputs.version }},enable=${{ env.PUSH }}
+            type=raw,value=main,enable=${{ env.PUSH }}
+            type=sha,prefix=sha-,format=short,enable=${{ env.PUSH }}
+          labels: |
+            org.opencontainers.image.title=classifier
+            ${{ env.PUSH == 'true' && format('org.opencontainers.image.description={0}', needs.plan.outputs.description) || '' }}
       - name: 이미지 빌드
         uses: docker/build-push-action@v6
         with:
@@ -109,7 +122,10 @@ jobs:
           platforms: linux/amd64
           load: true
           push: false
-          tags: ${{ env.LOCAL }}
+          tags: |
+            ${{ env.LOCAL }}
+            ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha,scope=classifier
           cache-to: type=gha,mode=max,scope=classifier
       - name: 이미지 점검
@@ -130,35 +146,16 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - id: meta
-        if: env.PUSH == 'true'
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=semver,pattern={{version}},value=${{ needs.plan.outputs.version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.plan.outputs.version }}
-            type=raw,value=main
-            type=sha,prefix=sha-,format=short
-          labels: |
-            org.opencontainers.image.title=classifier
-            org.opencontainers.image.description=${{ needs.plan.outputs.description }}
-          annotations: |
-            org.opencontainers.image.description=${{ needs.plan.outputs.description }}
       - id: push
-        name: GHCR push (위와 같은 빌드, 캐시 재사용)
+        name: GHCR push (점검한 이미지 그대로)
         if: env.PUSH == 'true'
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: classifier/Dockerfile
-          build-args: RULE_VERSION=${{ steps.rules.outputs.version }}
-          platforms: linux/amd64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          annotations: ${{ steps.meta.outputs.annotations }}
-          cache-from: type=gha,scope=classifier
+        run: |
+          docker push --all-tags "$IMAGE" | tee push.log
+          # 태그 모두 같은 이미지라 digest도 하나 ("<tag>: digest: sha256:… size: …")
+          digest=$(grep -oE 'digest: sha256:[0-9a-f]{64}' push.log | sort -u | cut -d' ' -f2)
+          [ -n "$digest" ] || digest=$(docker image inspect "$LOCAL" --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep "^${IMAGE}@" | head -1 | cut -d@ -f2)
+          [ "$(printf '%s\n' "$digest" | wc -l)" -eq 1 ] && [ -n "$digest" ] || { echo "::error::digest를 하나로 못 정함: '$digest'"; exit 1; }
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Record digest
         if: env.PUSH == 'true'
         env:
