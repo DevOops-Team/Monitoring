@@ -309,7 +309,7 @@
     },
     {
       "type": "stat",
-      "title": "IO 대기 최대",
+      "title": "IO 대기",
       "description": "VM 중 가장 높은 IO 압력(PSI some, 5분). 작업이 디스크를 기다리느라 멈춰 있던 시간의 비율",
       "datasource": {
         "type": "prometheus",
@@ -371,7 +371,7 @@
     },
     {
       "type": "stat",
-      "title": "재부팅 (24h)",
+      "title": "재부팅",
       "description": "최근 24시간에 부팅 시각이 바뀐 횟수",
       "datasource": {
         "type": "prometheus",
