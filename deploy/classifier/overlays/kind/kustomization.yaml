@@ -8,7 +8,7 @@ resources:
   - ../../base
   - kafka.yaml
 images:
-  - name: ghcr.io/devoops-team/monitoring-classifier
+  - name: ghcr.io/devoops-team/classifier
     newName: classifier
     newTag: kind
 patches:

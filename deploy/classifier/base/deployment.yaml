@@ -24,7 +24,7 @@ spec:
       containers:
         - name: classifier
           # TODO(GHCR 빌드): CI가 생기면 실제 이름과 태그로 바꾼다. 그 전에는 base만으로 배포하지 않는다(kind overlay가 로컬 이미지로 바꿔 쓴다)
-          image: ghcr.io/devoops-team/monitoring-classifier:unreleased
+          image: ghcr.io/devoops-team/classifier:unreleased
           env:
             - {name: KAFKA_BOOTSTRAP, value: "172.30.0.40:9092,172.30.0.41:9092,172.30.0.42:9092"}
             - {name: REQUIRE_KAFKA, value: "true"}     # 브로커 주소가 빠지면 표준 출력으로만 내는 로컬 모드가 된다. 그 상태로는 뜨지 않게
