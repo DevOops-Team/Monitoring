@@ -51,11 +51,14 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 라벨 | `node` | `site` 제외 | 노드 이름 |
 | 라벨 | `gpu_uuid` | `xid`(알 수 있을 때) | `GPU-…`. 커널 로그 경로는 PCI 주소만 알므로 비워 두면 분류기가 dcgm-exporter 라벨로 찾는다 |
 | 라벨 | `xid` | `xid` | 번호 |
-| 라벨 | `pod` · `exit_code` | `pod_exit` | 학습 컨테이너가 끝난 Pod와 종료 코드 |
+| 라벨 | `pod` · `reason` | `pod_exit` | 학습 컨테이너(`trainer`)가 끝난 Pod와 종료 사유(`Error` · `OOMKilled` …) |
+| 라벨 | `exit_code` | `pod_exit`(알 수 있을 때) | 종료 코드. kube-state-metrics는 재시작하지 않는 컨테이너의 종료 코드를 내지 않아 지금 룰은 비워 보낸다(2026-11-18 kind 확인). 종료 원인은 코드가 아니라 사유와 `job.lifecycle`로 가린다(ADR-43) |
 | annotation | `event_ts` | 모든 알람 | **원본 신호 발생 시각**(UTC). 룰 평가 시각이 아니다 |
 | annotation | `log_line` | 있으면 | 근거가 된 로그 한 줄 |
 
 - 필수 값이 빠진 알람은 이벤트를 만들지 않고 카운터 `classifier_signals_rejected_total`만 올린다.
+- 룰은 `deploy/base/mimir/rules/failover.yml`에 있다(2026-11-18): `FailoverXidDcgm`(`xid` · `dcgm`) · `FailoverPodExit`(`pod_exit`) · `FailoverSiteDown`(`site`). 커널 로그 경로 Xid와 `spot`은 아직 없다(8절).
+- 룰은 사건 직후 1~2분만 울리고(사이트는 8분), 그동안 `event_ts`가 바뀌지 않게 쓴다. `event_ts`가 평가할 때마다 밀리면 중복 제거 창(±45초)을 벗어나 같은 고장이 여러 번 나간다.
 - `ckpt-init` 종료는 `pod_exit`로 보내지 않는다. 복구 컨트롤러가 `job.init_failed`를 직접 구독한다.
 
 ## 3. 판정 표 (초안, 값은 전부 가설)
@@ -67,7 +70,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 조건 | 결과 | 근거 |
 |---|---|---|
 | Xid 45 | 이벤트 없음(버림) | 앞선 오류의 뒤처리이고 컨트롤러 조치가 만드는 Xid라 루프가 된다 ([worker-agents.md](worker-agents.md)) |
-| 종료 코드 0 · 75 | 이벤트 없음 | 정상 완료 · 펜싱 정상 동작 (fault-event.md 3절) |
+| 종료 사유 `Completed`, 종료 코드 0 · 75(코드가 있을 때) | 이벤트 없음 | 정상 완료 · 펜싱 정상 동작 (fault-event.md 3절). 코드 없이 온 펜싱 종료는 아래 「의도된 종료」로 걸러진다 |
 | 의도된 종료(4절) | 이벤트 없음 | 김현수 답 2026-11-18 (GPU-120) |
 | `collector_healthy=false`이고 site가 아님 | 표의 `category`는 그대로, `suggested_action=hold` · `confidence` 0.5 | 스키마 강제 규칙. 예시 08 |
 
@@ -89,7 +92,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 |---|---|---|---|---|---|
 | `spot` | 회수 예고 | `infra` | `evacuate_preemptive` | 1.0 | ADR-36. 예시 05 |
 | `site` | 클러스터 수집 끊김 | `site` | `fence_evacuate` | 0.7 | VPN 단절과 구분은 컨트롤러가 한다(fault-event.md 4절). 예시 06. `node` · `gpu_uuid`는 null |
-| `pod_exit` | 종료 코드가 0 · 75가 아님, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | 같은 오류 반복은 컨트롤러가 `refuse`로 올린다 |
+| `pod_exit` | 종료 사유가 `Completed`가 아님, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | 같은 오류 반복은 컨트롤러가 `refuse`로 올린다 |
 
 ## 4. 의도된 종료 거르기
 
@@ -163,7 +166,13 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 - [ ] (나) Xid 64 · 94 · 95 · 119를 NVIDIA 문서 원문과 대조해 3.2절에 추가
 - [ ] (나, EKS 테스트) dcgm-exporter 지표의 라벨 이름(`node` · `UUID`)을 실제 값으로 확인. 다르면 커널 로그 경로와 DCGM 경로의 `dedup_key` 대상이 달라져 같은 Xid가 두 건으로 나간다
 - [x] (나, EKS overlay) KSM `--metric-labels-allowlist`에 `nodes=[topology.kubernetes.io/zone]` 추가 — `deploy/agents/overlays/eks`(11/18). kind에서 `az`가 채워지는 것 확인. EKS가 아닌 클러스터는 `az`가 `unknown`
-- [ ] (나, 실 클러스터 배포 때) 분류기용 Alertmanager 라우트(`pipeline=failover`)는 `repeat_interval`을 짧게(예 1분) 준다. 기본 4시간이면 분류기가 놓친 알람(재시작으로 사라진 대기 신호 · Kafka 전달 실패)이 다시 오지 않는다. 다시 온 알람은 중복 제거로 걸러지므로 짧게 줘도 된다
+- [x] 분류기용 Alertmanager 라우트(`pipeline=failover`)는 `group_wait` 0초 · `repeat_interval` 1분 — `deploy/values/alertmanager.yaml`(11/18). 기본 4시간이면 분류기가 놓친 알람(재시작으로 사라진 대기 신호 · Kafka 전달 실패)이 다시 오지 않는다. 다시 온 알람은 중복 제거로 걸러진다
+- [ ] (나, 실 클러스터 배포 때) 위 라우트의 수신자 `classifier`에 분류기 웹훅 주소를 넣는다. 지금은 받는 곳이 없어 원인 알람은 Alertmanager 화면에서만 보인다
+- [ ] (나, EKS 테스트 뒤) 커널 로그 경로 Xid 룰. Loki에 룰 파일을 넣는 길(ConfigMap 마운트)부터 만들어야 한다. `dcgmi` 주입은 커널 로그를 남기지 않으므로 진짜 Xid 로그 줄(`NVRM: Xid`)이 생기면 원문을 보관해 그것에 맞춘다
+- [ ] (박기현 · 김성모) 스팟 회수 예고가 어디로 나오는지(관리형 노드그룹). 정해지면 `spot` 룰을 쓴다
+- [ ] (나) `FailoverXidDcgm`은 같은 번호가 연달아 나면 값이 안 바뀌어 두 번째를 못 본다 → `DCGM_EXP_XID_ERRORS_COUNT` 검토
+- [ ] (나) `FailoverSiteDown`은 일부러 내린 클러스터와 Agent 하나만 죽은 경우에도 울린다. 구분할 근거 후보: MultiKueueCluster의 `devoops/fenced=true`
+- [ ] (나 · 한송이) `OOMKilled`를 따로 판정할지(지금은 `Error`와 같이 `restart_in_place`). 한송이 POD-003 · 004는 설정 수정이 필요한 실패로 다루기를 기대한다
 - [ ] (나, 실 클러스터 배포 때) `classifier_lifecycle_healthy == 0`이 이어지면 Slack으로 알리는 룰. 0인 동안 `pod_exit`는 전부 `hold`이고, 메시지 반영 실패로 0이 되면 재시작 전까지 돌아오지 않는다
 - [ ] (나 · 한송이) `pod_exit` 대기 30초를 E2E 실측으로 조정
 - [ ] (김현수) `job.lifecycle` 토픽 보존 기간, rank별 종료 사유 `job.trainer_exited` 도입 여부
