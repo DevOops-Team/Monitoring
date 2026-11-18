@@ -1,0 +1,166 @@
+# promtool test rules. scripts/deploy-k8s.sh의 lint 단계가 돌린다
+# 시각은 1970-01-01 00:00:00부터 센다. 샘플 간격 15초. 'ax20'은 21개(0초~5분), '_x21'은 빈 칸 21개 → 다음 값이 5분 15초
+rule_files:
+  - ../rules/failover.yml
+evaluation_interval: 15s
+
+tests:
+  # 1) 5분 15초에 0 → 79. 1분만 울리고, 그동안 event_ts는 5분 15초에서 안 움직인다
+  - name: Xid가 새로 찍히면 1분만 울리고 event_ts는 고정이다
+    interval: 15s
+    input_series:
+      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa", job="annotated-pods", exported_pod="job-3f9a1c2e-g0001-workers-0-0"}'
+        values: '0x20 79x40'
+      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-24", UUID="GPU-bbbb", job="annotated-pods"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FailoverXidDcgm
+        exp_alerts: []
+      - eval_time: 5m15s
+        alertname: FailoverXidDcgm
+        exp_alerts: &xid79
+          - exp_labels: {pipeline: failover, signal: xid, source: dcgm, xid: "79", gpu_uuid: GPU-aaaa, cluster: eks-a, node: ip-10-0-1-23, UUID: GPU-aaaa}
+            exp_annotations:
+              event_ts: '1970-01-01T00:05:15Z'
+              summary: 'Xid 79: eks-a ip-10-0-1-23 GPU-aaaa'
+      - eval_time: 6m
+        alertname: FailoverXidDcgm
+        exp_alerts: *xid79
+      - eval_time: 6m15s
+        alertname: FailoverXidDcgm
+        exp_alerts: []
+      - eval_time: 12m
+        alertname: FailoverXidDcgm
+        exp_alerts: []
+
+  # 2) Xid 뒤 학습 Pod가 죽어 dcgm-exporter 라벨(exported_pod)이 바뀐다 → 새 시계열이지만 같은 GPU · 같은 번호라 다시 울리지 않는다
+  - name: 같은 GPU의 라벨만 바뀌면 다시 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa", exported_pod="job-3f9a1c2e-g0001-workers-0-0"}'
+        values: '0x20 79x7 stale'
+      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa"}'
+        values: '_x29 79x30'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: FailoverXidDcgm
+        exp_alerts: []
+      - eval_time: 7m30s
+        alertname: FailoverXidDcgm
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: FailoverXidDcgm
+        exp_alerts: []
+
+  # 3) 79 뒤에 다른 번호(45)가 오면 새 사건으로 울린다. 45를 버리는 것은 분류기다
+  - name: 번호가 바뀌면 다시 울린다 (Xid 45도 거르지 않는다)
+    interval: 15s
+    input_series:
+      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa"}'
+        values: '0x20 79x19 45x20'
+    alert_rule_test:
+      - eval_time: 10m15s
+        alertname: FailoverXidDcgm
+        exp_alerts:
+          - exp_labels: {pipeline: failover, signal: xid, source: dcgm, xid: "45", gpu_uuid: GPU-aaaa, cluster: eks-a, node: ip-10-0-1-23, UUID: GPU-aaaa}
+            exp_annotations:
+              event_ts: '1970-01-01T00:10:15Z'
+              summary: 'Xid 45: eks-a ip-10-0-1-23 GPU-aaaa'
+
+  # 4) rank 0의 trainer가 5분 5초에 Error로 끝났다(지표에는 5분 15초부터 보인다). 90초 동안만 울리고 event_ts = 종료 시각
+  #    rank 1은 정상 완료, rank 2는 사이드카만 끝남, 다른 네임스페이스 Pod는 대상이 아니다
+  - name: trainer가 비정상 종료하면 종료 시각으로 울린다
+    interval: 15s
+    input_series:
+      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0", container="trainer", reason="Error", job="kube-state-metrics"}'
+        values: '_x21 1x40'
+      - series: 'kube_pod_completion_time{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0", job="kube-state-metrics"}'
+        values: '_x21 305x40'
+      - series: 'kube_pod_info{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0", node="ip-10-0-1-23", job="kube-state-metrics"}'
+        values: '1x60'
+      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1", container="trainer", reason="Completed"}'
+        values: '_x21 1x40'
+      - series: 'kube_pod_completion_time{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1"}'
+        values: '_x21 305x40'
+      - series: 'kube_pod_info{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1", node="ip-10-0-1-24"}'
+        values: '1x60'
+      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-2", container="ckpt-sidecar", reason="Error"}'
+        values: '_x21 1x40'
+      - series: 'kube_pod_completion_time{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-2"}'
+        values: '_x21 305x40'
+      - series: 'kube_pod_info{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-2", node="ip-10-0-1-25"}'
+        values: '1x60'
+      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-a", namespace="platform", pod="other", container="trainer", reason="Error"}'
+        values: '_x21 1x40'
+      - series: 'kube_pod_completion_time{cluster="eks-a", namespace="platform", pod="other"}'
+        values: '_x21 305x40'
+      - series: 'kube_pod_info{cluster="eks-a", namespace="platform", pod="other", node="ip-10-0-1-26"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FailoverPodExit
+        exp_alerts: []
+      - eval_time: 5m15s
+        alertname: FailoverPodExit
+        exp_alerts: &exit
+          - exp_labels: {pipeline: failover, signal: pod_exit, cluster: eks-a, namespace: training, pod: job-3f9a1c2e-g0001-workers-0-0, node: ip-10-0-1-23, reason: Error}
+            exp_annotations:
+              event_ts: '1970-01-01T00:05:05Z'
+              log_line: 'trainer terminated: Error'
+              summary: '학습 Pod 종료(Error): eks-a job-3f9a1c2e-g0001-workers-0-0'
+      - eval_time: 6m30s
+        alertname: FailoverPodExit
+        exp_alerts: *exit
+      - eval_time: 6m45s
+        alertname: FailoverPodExit
+        exp_alerts: []
+
+  # 5) OOM으로 죽으면 사유가 OOMKilled로 간다
+  - name: OOMKilled는 사유로 구분된다
+    interval: 15s
+    input_series:
+      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-b", namespace="training", pod="job-7c1d-g0002-workers-0-3", container="trainer", reason="OOMKilled"}'
+        values: '_x21 1x40'
+      - series: 'kube_pod_completion_time{cluster="eks-b", namespace="training", pod="job-7c1d-g0002-workers-0-3"}'
+        values: '_x21 305x40'
+      - series: 'kube_pod_info{cluster="eks-b", namespace="training", pod="job-7c1d-g0002-workers-0-3", node="ip-10-1-1-9"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 5m30s
+        alertname: FailoverPodExit
+        exp_alerts:
+          - exp_labels: {pipeline: failover, signal: pod_exit, cluster: eks-b, namespace: training, pod: job-7c1d-g0002-workers-0-3, node: ip-10-1-1-9, reason: OOMKilled}
+            exp_annotations:
+              event_ts: '1970-01-01T00:05:05Z'
+              log_line: 'trainer terminated: OOMKilled'
+              summary: '학습 Pod 종료(OOMKilled): eks-b job-7c1d-g0002-workers-0-3'
+
+  # 6) eks-a의 Agent 지표가 5분까지만 온다. 2분 뒤부터 울리고 event_ts = 마지막 샘플 시각, 10분이 지나면 꺼진다
+  #    eks-b는 계속 오고, onprem-manager는 끊겨도 대상이 아니다
+  - name: EKS 클러스터 수집이 2분 끊기면 울린다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="eks-a", instance="localhost:9090"}'
+        values: '1x20'
+      - series: 'up{job="prometheus-agent", cluster="eks-b", instance="localhost:9090"}'
+        values: '1x80'
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", instance="localhost:9090"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 6m45s
+        alertname: FailoverSiteDown
+        exp_alerts: []
+      - eval_time: 7m15s
+        alertname: FailoverSiteDown
+        exp_alerts: &site
+          - exp_labels: {pipeline: failover, signal: site, cluster: eks-a}
+            exp_annotations:
+              event_ts: '1970-01-01T00:05:00Z'
+              summary: '클러스터 수집 끊김: eks-a'
+      - eval_time: 14m45s
+        alertname: FailoverSiteDown
+        exp_alerts: *site
+      - eval_time: 15m15s
+        alertname: FailoverSiteDown
+        exp_alerts: []
