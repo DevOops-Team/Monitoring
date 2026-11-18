@@ -1,0 +1,65 @@
+# EKS 워커 클러스터 공용(eks-a · eks-b · eks-c). 공통 수집 층(base) + GPU 노드용(gpu, dcgm-exporter).
+# 클러스터 이름을 여기 적지 않는다: EKS는 켰다 끄고 개수도 바뀐다. 이름은 cluster-info.yaml의 ConfigMap으로 받는다.
+# 배포: Gitops ApplicationSet gpu-eks-monitoring이 클러스터가 등록되면 자동으로. 손으로는 deploy/README.md 「EKS 수집 층」.
+# 노드 라벨 · taint는 IaC terraform/docs/MANAGED-GPU.md 기준: CPU 노드 workload=system(온디맨드 t3.large 1대),
+#   GPU 노드 devoops/gpu=true + taint nvidia.com/gpu(+예비 devoops/spare). 스팟 g4dn.xlarge 5대
+# WAL · 게이트웨이 큐는 base 그대로 hostPath: EKS에 EBS CSI 애드온이 없고 CPU 노드가 1대 고정이라 Pod가 다른 노드로 옮겨 갈 일이 없다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - namespace.yaml
+  - cluster-info.yaml
+  - ../../base
+  - ../../gpu
+patches:
+  # 1개짜리(Agent · KSM · 게이트웨이)는 CPU 노드에: GPU 노드는 스팟이라 회수되면 수집 파이프가 같이 죽는다. DaemonSet은 전 노드라 제외
+  - target: {kind: Deployment}
+    patch: |-
+      - op: add
+        path: /spec/template/spec/nodeSelector
+        value: {workload: system}
+  # 노드 라벨 둘을 kube_node_labels로: 인스턴스 타입(g4dn.xlarge · 2xlarge, CPU에 묶인 지표를 타입별로 보기 위해 MON-STD-06)과
+  # zone(분류기가 이벤트의 az로 쓴다, docs/classifier.md). test가 먼저 실패하면 base의 args 순서가 바뀐 것이니 아래 번호를 맞춘다
+  - target: {kind: Deployment, name: kube-state-metrics}
+    patch: |-
+      - op: test
+        path: /spec/template/spec/containers/0/args/3
+        value: --metric-labels-allowlist=pods=[devoops/job-id,devoops/generation]
+      - op: replace
+        path: /spec/template/spec/containers/0/args/3
+        value: --metric-labels-allowlist=pods=[devoops/job-id,devoops/generation],nodes=[node.kubernetes.io/instance-type,topology.kubernetes.io/zone]
+  - target: {kind: Deployment, name: prometheus-agent}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: prometheus-agent}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: prometheus
+                env:
+                  - name: CLUSTER_NAME
+                    value: null
+                    valueFrom: {configMapKeyRef: {name: monitoring-cluster-info, key: CLUSTER_NAME}}
+                  - name: SITE
+                    value: null
+                    valueFrom: {configMapKeyRef: {name: monitoring-cluster-info, key: SITE}}
+  - target: {kind: Deployment, name: otel-gateway}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: otel-gateway}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: otel-collector
+                env:
+                  - name: CLUSTER_NAME
+                    value: null
+                    valueFrom: {configMapKeyRef: {name: monitoring-cluster-info, key: CLUSTER_NAME}}
+                  - name: SITE
+                    value: null
+                    valueFrom: {configMapKeyRef: {name: monitoring-cluster-info, key: SITE}}
