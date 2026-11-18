@@ -37,6 +37,10 @@ class TopicReader:
         self.on_health = on_health      # 읽을 수 있는 상태가 바뀔 때 부른다
         self.healthy = False
         self._partitions: list[Any] = []
+        self._position: dict[int, int] = {}         # 파티션 → 다음에 읽을 오프셋
+        self._checked_position: dict[int, int] = {}
+        self._was_behind = False
+        self._degraded: str | None = None           # 메시지를 반영하지 못한 적이 있다. 재시작 전까지 healthy로 돌아가지 않는다
         self._stop = threading.Event()
 
     def catch_up(self, now: datetime | None = None, timeout: float = 30.0) -> int:
@@ -59,7 +63,7 @@ class TopicReader:
         self._partitions = found
         self.consumer.assign(found)
 
-        position = {tp.partition: tp.offset for tp in found}
+        position = self._position = {tp.partition: tp.offset for tp in found}
         count, deadline = 0, time.monotonic() + timeout
         while any(position[p] < ends[p] for p in ends):
             if time.monotonic() > deadline:
@@ -91,22 +95,39 @@ class TopicReader:
         while not self._stop.is_set():
             try:
                 msg = self.consumer.poll(1.0)
-                if msg is not None and not msg.error():
-                    self._deliver(msg)
+                if msg is not None:
+                    if msg.error():
+                        self._set_healthy(False, str(msg.error()))
+                    else:
+                        self._position[msg.partition()] = msg.offset() + 1
+                        self._deliver(msg)
                 if time.monotonic() >= next_check:
                     next_check = time.monotonic() + HEALTH_CHECK_SECONDS
                     self._check()
-            except Exception as e:
-                self._set_healthy(False, repr(e))
+            except Exception as e:      # handle()이 실패했다. 그 메시지는 반영되지 않았고 다시 읽지도 않는다
+                self._degraded = repr(e)
+                self._set_healthy(False, self._degraded)
         self.consumer.close()
 
     def _check(self) -> None:
-        """브로커에 실제로 물어본다. poll()이 조용한 것만으로는 끊긴 것인지 메시지가 없는 것인지 알 수 없다."""
+        """브로커에 실제로 물어본다. poll()이 조용한 것만으로는 끊긴 것인지 메시지가 없는 것인지 알 수 없다.
+
+        healthy = 모든 파티션에 물을 수 있고, 밀린 메시지가 두 번 연속 그대로 남아 있지 않다.
+        """
+        if self._degraded:
+            return
         try:
-            self.consumer.get_watermark_offsets(self._partitions[0], timeout=3.0, cached=False)
-            self._set_healthy(True)
+            behind = False
+            for tp in self._partitions:
+                _, high = self.consumer.get_watermark_offsets(tp, timeout=3.0, cached=False)
+                behind = behind or high > self._position[tp.partition]
         except Exception as e:
             self._set_healthy(False, repr(e))
+            return
+        # 지난 확인 때도 밀려 있었고 그 뒤로 한 건도 못 읽었으면 멈춘 것. 방금 온 메시지 때문에 한 번 밀린 것은 봐준다
+        stuck = behind and self._was_behind and self._position == self._checked_position
+        self._was_behind, self._checked_position = behind, dict(self._position)
+        self._set_healthy(not stuck, "밀린 메시지가 있는데 읽기가 멈춤" if stuck else None)
 
     def _set_healthy(self, healthy: bool, reason: str | None = None) -> None:
         if healthy == self.healthy:

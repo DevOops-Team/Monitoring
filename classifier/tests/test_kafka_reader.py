@@ -80,3 +80,38 @@ def test_times_out_when_end_is_never_reached():
     consumer.assign = lambda tps: None      # 메시지가 오지 않는 브로커
     with pytest.raises(TimeoutError):
         TopicReader(consumer, "gpu.fault", timedelta(hours=1), lambda e: None).catch_up(NOW, timeout=0.1)
+
+
+def test_health_needs_every_partition_and_progress():
+    log = {0: [(NOW, event(1))], 1: []}
+    consumer = FakeConsumer(log)
+    reader = TopicReader(consumer, "job.lifecycle", timedelta(hours=1), lambda e: None)
+    reader.catch_up(NOW)
+    reader._check()
+    assert reader.healthy                       # 다 읽었다
+
+    log[1].append((NOW, event(2)))              # 새 메시지가 왔는데 읽지 않는다
+    reader._check()
+    assert reader.healthy                       # 첫 확인: 아직 읽는 중일 수 있다
+    reader._check()
+    assert not reader.healthy                   # 두 번째 확인에도 그대로면 멈춘 것
+    reader._position[1] = 1                     # 읽기가 나아가면 돌아온다
+    reader._check()
+    assert reader.healthy
+
+    def broken(tp, timeout, cached):
+        if tp.partition == 1:
+            raise RuntimeError("unknown partition")
+        return 0, 1
+    consumer.get_watermark_offsets = broken     # 한 파티션만 물을 수 없어도 unhealthy
+    reader._check()
+    assert not reader.healthy
+
+
+def test_failed_handle_stays_unhealthy_until_restart():
+    reader = TopicReader(FakeConsumer({0: []}), "job.lifecycle", timedelta(hours=1), lambda e: None)
+    reader.catch_up(NOW)
+    reader._degraded = "ValueError()"           # _run()에서 handle()이 실패했을 때의 상태
+    reader._set_healthy(False, reader._degraded)
+    reader._check()
+    assert not reader.healthy
