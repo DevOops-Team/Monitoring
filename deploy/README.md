@@ -210,7 +210,7 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=node_t
 Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. 설계와 판정 표는 `docs/classifier.md`.
 **실 클러스터(모니터링 클러스터 `monitoring` 네임스페이스)에는 Argo CD가 올린다**(11/18): Application `gpu-monitoring-classifier` → Gitops 레포 `monitoring/onprem/classifier`. 그 overlay가 이 레포의 `deploy/classifier/base`를 릴리스 태그로 참조하고 이미지 태그를 고정한다.
 
-- **버전을 올릴 때**: 이 레포 main 머지로 태그 · 이미지가 생긴 뒤, Gitops overlay의 `?ref=vX.Y.Z`와 `newTag`를 같이 바꾼다(배포 봇은 아직 연결하지 않았다)
+- **버전을 올릴 때**: 배포 봇이 연결되면(`ci.yml`의 `deploy`, Variable `DEPLOY_APP_ID`) `classifier/`가 바뀐 main 머지에서 Gitops overlay의 `newTag` · `digest`가 자동으로 바뀐다. 연결 전에는 Gitops overlay의 `newTag`를 손으로 올린다. `?ref=vX.Y.Z`(매니페스트 base)는 봇이 바꾸지 않는다: `deploy/classifier/base`가 바뀐 릴리스에서만 손으로 올린다
 - **pull secret**: 이미지 패키지가 비공개라 Secret `ghcr-pull`이 필요하다. Git에 없다. 관리 클러스터 `platform`의 것을 복사한다(값이 화면에 나오지 않는다):
   ```bash
   kubectl --kubeconfig <관리 클러스터 admin.conf> -n platform get secret ghcr-pull -o json \
