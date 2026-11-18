@@ -52,6 +52,10 @@ config:
       # 분류기가 실 클러스터에 올라오면 이 수신자에 웹훅을 넣는다. 그 전에는 Alertmanager 화면에서만 보인다
       - matchers: ["pipeline = failover"]
         receiver: classifier
+        group_by: [alertname, cluster, node, pod, gpu_uuid]   # 사건 하나 = 알림 하나
+        group_wait: 0s           # 원인 알람은 약 30초만 발화한다. 기다리면 그 사이 꺼져서 못 보낸다
+        group_interval: 1m
+        repeat_interval: 1m      # 분류기가 503을 주면 다시 보낸다. 중복은 분류기가 거른다 (docs/classifier.md 8절)
       # HOLD는 "일어난 사건"이라 룰이 약 5분 발화하고 꺼진다. 꺼짐 = 해결이 아니므로 resolved를 보내지 않는 수신자로.
       # job·사유별로 따로 묶어 여러 HOLD가 한 메시지에 뭉치지 않게 한다 (MON-STD-25)
       - matchers: ["alertname = RecoveryHold"]
