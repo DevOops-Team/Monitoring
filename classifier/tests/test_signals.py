@@ -27,8 +27,14 @@ def test_xid():
 
 
 def test_pod_exit():
-    s = parse(alert({"signal": "pod_exit", "pod": "job-3f9a1c2e-g0003-w-0-0", "exit_code": "137"}))
-    assert (s.source, s.exit_code, s.pod, s.xid) == ("pod", 137, "job-3f9a1c2e-g0003-w-0-0", None)
+    s = parse(alert({"signal": "pod_exit", "pod": "job-3f9a1c2e-g0003-w-0-0", "reason": "OOMKilled", "exit_code": "137"}))
+    assert (s.source, s.reason, s.exit_code, s.pod, s.xid) == ("pod", "OOMKilled", 137, "job-3f9a1c2e-g0003-w-0-0", None)
+
+
+def test_pod_exit_without_exit_code():
+    """kube-state-metrics 룰은 종료 사유만 안다."""
+    s = parse(alert({"signal": "pod_exit", "pod": "job-3f9a1c2e-g0003-w-0-0", "reason": "Error"}))
+    assert (s.reason, s.exit_code) == ("Error", None)
 
 
 def test_site_has_no_node():
@@ -50,8 +56,10 @@ def test_resolved_is_skipped():
     ({"node": ""}, None),
     ({"node": "n1|x"}, None),               # dedup_key 구분자
     ({"cluster": "a|b"}, None),
-    ({"signal": "pod_exit"}, None),         # pod · exit_code 없음
-    ({"signal": "pod_exit", "exit_code": "1", "pod": "Job_A|x"}, None),     # 쿠버네티스 이름 형식이 아님
+    ({"signal": "pod_exit"}, None),         # pod · reason 없음
+    ({"signal": "pod_exit", "pod": "job-a-g0001-w-0-0"}, None),             # reason 없음
+    ({"signal": "pod_exit", "pod": "job-a-g0001-w-0-0", "reason": "Error", "exit_code": "abc"}, None),
+    ({"signal": "pod_exit", "reason": "Error", "pod": "Job_A|x"}, None),    # 쿠버네티스 이름 형식이 아님
     (None, {"event_ts": ""}),
     (None, {"event_ts": "2026-11-18T14:02:11"}),   # 시간대 없음
     (None, {"event_ts": "2026-11-18T14:09:00Z"}),  # 5분 넘게 미래

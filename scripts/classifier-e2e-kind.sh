@@ -42,7 +42,7 @@ send() {
   [[ "$got" == "$2" ]] && echo "   ok   $1 → $got" || fail "$1: 기대 $2, 실제 $got"
 }
 xid_labels() { echo "{\"alertname\":\"GpuXid\",\"pipeline\":\"failover\",\"signal\":\"xid\",\"source\":\"dmesg\",\"cluster\":\"$CLUSTER\",\"node\":\"$NODE\",\"gpu_uuid\":\"$GPU\",\"xid\":\"79\"}"; }
-pod_labels() { echo "{\"alertname\":\"TrainerExited\",\"pipeline\":\"failover\",\"signal\":\"pod_exit\",\"cluster\":\"$CLUSTER\",\"node\":\"$2\",\"pod\":\"$1\",\"exit_code\":\"137\"}"; }
+pod_labels() { echo "{\"alertname\":\"TrainerExited\",\"pipeline\":\"failover\",\"signal\":\"pod_exit\",\"cluster\":\"$CLUSTER\",\"node\":\"$2\",\"pod\":\"$1\",\"reason\":\"Error\"}"; }
 
 forward() {
   if [[ -n "${PF:-}" ]]; then kill "$PF" 2>/dev/null || true; wait "$PF" 2>/dev/null || true; fi

@@ -42,8 +42,13 @@ def test_exit_code_ignored(code):
     assert rules.judge(signal(signal="pod_exit", source="pod", exit_code=code, pod="p"), True) is None
 
 
-def test_pod_exit():
-    v = rules.judge(signal(signal="pod_exit", source="pod", exit_code=137, pod="p"), True)
+def test_completed_ignored():
+    assert rules.judge(signal(signal="pod_exit", source="pod", reason="Completed", pod="p"), True) is None
+
+
+@pytest.mark.parametrize("kw", [{"reason": "Error"}, {"reason": "OOMKilled"}, {"reason": "Error", "exit_code": 137}])
+def test_pod_exit(kw):
+    v = rules.judge(signal(signal="pod_exit", source="pod", pod="p", **kw), True)
     assert (v.category, v.action) == ("app", "restart_in_place")
 
 

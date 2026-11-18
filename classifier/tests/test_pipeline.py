@@ -35,7 +35,7 @@ class FakeProducer:
 def pod_exit(rank=0, code="137", ts=T0, generation=GEN):
     return {"status": "firing",
             "labels": {"alertname": "TrainerExited", "pipeline": "failover", "signal": "pod_exit", "cluster": "eks-a",
-                       "node": f"node-{rank}", "pod": f"job-{JOB}-g{generation:04d}-w-0-{rank}", "exit_code": code},
+                       "node": f"node-{rank}", "pod": f"job-{JOB}-g{generation:04d}-w-0-{rank}", "reason": "Error", "exit_code": code},
             "annotations": {"event_ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ")}}
 
 

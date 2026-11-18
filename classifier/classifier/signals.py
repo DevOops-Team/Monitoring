@@ -28,7 +28,8 @@ class Signal:
     node: str | None = None     # site는 None
     gpu_uuid: str | None = None
     xid: int | None = None
-    exit_code: int | None = None
+    exit_code: int | None = None   # 알 수 있을 때만. kube-state-metrics는 재시작하지 않는 컨테이너의 종료 코드를 내지 않는다
+    reason: str | None = None   # pod_exit: 컨테이너 종료 사유 (Error · OOMKilled …)
     pod: str | None = None
     log_line: str | None = None
 
@@ -61,6 +62,10 @@ def _int(labels: dict[str, str], name: str) -> int:
         return int(_require(labels, name))
     except ValueError as e:
         raise RejectError(f"label {name}: 정수가 아님") from e
+
+
+def _opt_int(labels: dict[str, str], name: str) -> int | None:
+    return _int(labels, name) if labels.get(name) else None
 
 
 def _event_ts(annotations: dict[str, str], now: datetime) -> datetime:
@@ -114,7 +119,8 @@ def parse_alert(alert: dict[str, Any], now: datetime | None = None) -> Signal | 
         node=None if signal == "site" else _ident(labels, "node"),
         gpu_uuid=_gpu_uuid(labels),
         xid=_int(labels, "xid") if signal == "xid" else None,
-        exit_code=_int(labels, "exit_code") if signal == "pod_exit" else None,
+        exit_code=_opt_int(labels, "exit_code") if signal == "pod_exit" else None,
+        reason=_require(labels, "reason") if signal == "pod_exit" else None,
         pod=_pod(labels) if signal == "pod_exit" else None,
         log_line=annotations.get("log_line") or None,
     )
