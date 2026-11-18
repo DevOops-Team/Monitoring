@@ -70,6 +70,11 @@ lint() {
     kubectl kustomize "$o" > "$tmp/agents-$(basename "$o").yaml"
     echo "   overlays/$(basename "$o"): 리소스 $(grep -c '^kind:' "$tmp/agents-$(basename "$o").yaml")개"
   done
+  echo "== 분류기 (deploy/classifier): 렌더"
+  for o in "$D"/classifier/base/ "$D"/classifier/overlays/*/; do
+    kubectl kustomize "$o" > "$tmp/classifier-$(basename "$o").yaml"
+    echo "   $(basename "$o"): 리소스 $(grep -c '^kind:' "$tmp/classifier-$(basename "$o").yaml")개"
+  done
   echo "== helm template (values 문법)"
   # shellcheck disable=SC2046
   helm template local-path-provisioner $(chart containeroo/local-path-provisioner "$LOCAL_PATH_CHART") -f "$D/values/local-path.yaml" > /dev/null

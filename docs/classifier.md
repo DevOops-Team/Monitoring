@@ -6,6 +6,7 @@
 - 위치: 온프레 모니터링 클러스터(ADR-18 · ADR-29), 코드 `classifier/`(Python · FastAPI)
 - 판정은 표(룰)로만 한다. 표에 없는 신호는 `hold`로 내고, 나중에 모델을 꽂을 자리 하나만 둔다(5절)
 - 이번 범위 밖: 원인 알람 룰(Loki Xid 룰 · DCGM 룰), 스트래글러 판정, 실 클러스터 배포, Tempo span 전송, 2중화
+- 검증: 단위 테스트 `classifier/tests/`, kind 종단 검증 `scripts/classifier-e2e-kind.sh`(런북 `deploy/README.md` 「분류기」). 실 클러스터에는 아직 올리지 않았다
 
 ## 1. 흐름
 
@@ -22,7 +23,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `enrich.py` | Mimir 조회로 신호에 없는 값을 채운다. 조회가 실패하면 모르는 값으로 둔다(`collector_healthy=false` · `job_id=null`). 아래 표 |
 | `intended.py` | `job.lifecycle`을 읽어 「의도된 종료」 표와 작업별 최신 세대를 유지한다(4절) |
 | `rules.py` · `rules.yaml` | 3절 표로 `category` · `suggested_action` · `confidence`를 정한다 |
-| `dedup.py` | 같은 사건을 한 번만 낸다. 규칙은 fault-event.md 2.1절(±45초 창, 키와 action이 둘 다 같으면 재발행 안 함) |
+| `dedup.py` | 같은 사건을 한 번만 낸다. 규칙은 fault-event.md 2.1절(±45초 창, 키와 action이 둘 다 같으면 재발행 안 함). `pod_exit`의 대상은 노드가 아니라 Pod 이름이다(같은 노드에서 거의 동시에 끝난 다른 Pod를 삼키지 않게) |
 | `event.py` | 신호 + 판정 + Mimir 값 → v1 장애 이벤트. `event_id`(= trace-id)는 판정마다 새로 만든다 |
 | `publish.py` | v1 스키마 검증 → 봉투 → Kafka 발행(6절) |
 | `pipeline.py` | 위 단계를 알람 1건마다 순서대로 부르고 결과를 카운터 `classifier_alerts_total{outcome}`로 센다 |
@@ -163,6 +164,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 - [ ] (나, EKS 테스트) dcgm-exporter 지표의 라벨 이름(`node` · `UUID`)을 실제 값으로 확인. 다르면 커널 로그 경로와 DCGM 경로의 `dedup_key` 대상이 달라져 같은 Xid가 두 건으로 나간다
 - [ ] (나, EKS overlay) KSM `--metric-labels-allowlist`에 `nodes=[topology.kubernetes.io/zone]` 추가. 그 전에는 `az`가 `unknown`
 - [ ] (나, 실 클러스터 배포 때) 분류기용 Alertmanager 라우트(`pipeline=failover`)는 `repeat_interval`을 짧게(예 1분) 준다. 기본 4시간이면 분류기가 놓친 알람(재시작으로 사라진 대기 신호 · Kafka 전달 실패)이 다시 오지 않는다. 다시 온 알람은 중복 제거로 걸러지므로 짧게 줘도 된다
+- [ ] (나, 실 클러스터 배포 때) `classifier_lifecycle_healthy == 0`이 이어지면 Slack으로 알리는 룰. 0인 동안 `pod_exit`는 전부 `hold`이고, 메시지 반영 실패로 0이 되면 재시작 전까지 돌아오지 않는다
 - [ ] (나 · 한송이) `pod_exit` 대기 30초를 E2E 실측으로 조정
 - [ ] (김현수) `job.lifecycle` 토픽 보존 기간, rank별 종료 사유 `job.trainer_exited` 도입 여부
 - [ ] (나) 종료 코드 75가 실제로 없어지면 3.1절과 fault-event.md 「이벤트를 만들지 않는 종료」를 같이 고침

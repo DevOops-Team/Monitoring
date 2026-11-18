@@ -1,0 +1,28 @@
+# 노트북 kind 검증용 (scripts/classifier-e2e-kind.sh). 이미지는 로컬에서 빌드해 kind에 넣은 classifier:kind,
+# Kafka는 이 overlay의 임시 브로커. Mimir는 실제 모니터링 클러스터를 읽기만 한다
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - namespace.yaml
+  - ../../base
+  - kafka.yaml
+images:
+  - name: ghcr.io/devoops-team/monitoring-classifier
+    newName: classifier
+    newTag: kind
+patches:
+  - target: {kind: Deployment, name: classifier}
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata: {name: classifier}
+      spec:
+        template:
+          spec:
+            containers:
+              - name: classifier
+                imagePullPolicy: Never
+                env:
+                  - {name: KAFKA_BOOTSTRAP, value: "kafka:9092"}
+                  - {name: MIMIR_URL, value: "http://172.30.0.35:9009"}
