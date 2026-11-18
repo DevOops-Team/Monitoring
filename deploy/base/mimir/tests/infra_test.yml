@@ -20,7 +20,7 @@ tests:
           - exp_labels: {severity: critical, job: postgres-exporter, cluster: monitoring}
             exp_annotations:
               summary: 'PostgreSQL(172.30.0.50) 접속 불가 — 수집기가 이벤트를 DB에 쓰지 못한다'
-              standard: MON-STD-26
+              standard: MON-STD-13
       - eval_time: 12m
         alertname: PostgresDown
         exp_alerts: []
@@ -85,15 +85,15 @@ tests:
           - exp_labels: {severity: warning, job: vm-host, host: kafka1, mountpoint: /}
             exp_annotations:
               summary: 'kafka1 루트 디스크 80% 초과'
-              standard: MON-STD-27
+              standard: MON-STD-26
           - exp_labels: {severity: warning, job: pfsense-host, host: pfsense, mountpoint: /}
             exp_annotations:
               summary: 'pfsense 루트 디스크 80% 초과'
-              standard: MON-STD-27
+              standard: MON-STD-26
       - eval_time: 6m
         alertname: HostDiskCritical
         exp_alerts:
           - exp_labels: {severity: critical, job: pfsense-host, host: pfsense, mountpoint: /}
             exp_annotations:
               summary: 'pfsense 루트 디스크 90% 초과. Kafka 로그 보존 · PostgreSQL 데이터 확인'
-              standard: MON-STD-27
+              standard: MON-STD-26

@@ -59,6 +59,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-07 | GPU 노드 | 메모리 · 디스크 · 네트워크 `node_memory_*` · `node_filesystem_*` · `node_network_*` | | | | 위험 디스크 90% | 기준선 + 운영 경험 | 체크포인트 로컬 쓰기 실패 예방 런북 | 가설 |
 | MON-STD-16 | CPU 노드 | Prometheus Agent WAL 디스크 · `prometheus_agent_*` (WAL 경로 `node_filesystem_avail_bytes`) | | | | WAL 보존 상한 4h = VPN 단절 복구 상한 | 벤더 (Agent WAL 기본 보존 max 4h) + 실험 (VPN 단절) | VPN 점검 런북 | 가설 |
 | MON-STD-24 | Proxmox 호스트 (devoops · pve1~4) | 호스트 OS node-exporter (`job="pve-host"`, 모니터링 클러스터 Agent가 LAN 직접 pull, 설치 · 설정은 `ansible/roles/node_exporter`): `up` · 루트 디스크 `node_filesystem_avail_bytes` · 온도 `node_hwmon_temp_celsius` (CPU `chip=~"platform_coretemp.*"` / NVMe `chip=~"nvme.*"` 분리) | `up` 5/5 · 루트 디스크 사용 12~53% (devoops 53%, 나머지 12~18%) · **CPU 온도 24h 평균 38~49°C · p95 41~53°C** (호스트당 VM 2~3대 가동 기준, 덮개 개폐는 ±2°C로 무관) · **NVMe 평균 22~53°C** (devoops만 50°C대, VM 4대 디스크 쓰기) | | | | 호스트 다운 5분 (`up==0`) · 디스크 경고 80% · 위험 90% · **CPU 온도 경고 80°C · 위험 90°C**, 평가는 `avg_over_time([5m])` 또는 `for: 5m` (pve1 · pve3에 하루 19회 1샘플 60~92°C 스파이크가 남아 인스턴트 값 금지) · **NVMe 온도 경고 70°C** | 벤더 (CPU Tjmax 100°C · NVMe 스로틀 70~80°C) + 기준선 **2회 누적 48h** ([1차 2026-11-06 덮개 닫힘 24h](measurements/2026-11-06-pve-host-temp.md) · 2차 2026-11-09~10 덮개 열림 24.1h, 같은 노트 7절) + 운영 경험 (11/02~11/10 pve4 15분 주기 스파이크 = pve4에만 깔린 `prometheus-node-exporter-collectors` 15분 타이머, 11/10 Ansible로 제거 → 11/11 재부팅 뒤에도 0회로 **확정**, 같은 노트 7-4) | 호스트 다운 = 그 위 VM(master·worker·monitoring·kafka·pfsense) 전부 영향 → 인프라 담당 호출 런북 | 측정 중 (정상 확정, 경고 · 위험은 가설) |
+| MON-STD-26 | Kafka VM 3대 (.40 ~ .42) · DB VM (.50) · pfSense 2대 (.2 · .3) | 호스트 OS node-exporter (`job="vm-host"` · `job="pfsense-host"`, 모니터링 클러스터 Agent가 LAN 직접 pull, 설치는 `ansible/playbooks/service-vms.yml` · `pfsense.yml`): `up` · 루트 디스크 `node_filesystem_avail_bytes{mountpoint="/"}` (Kafka 로그 · PostgreSQL 데이터가 모두 루트에 있다) | | | | 디스크 경고 80% · 위험 90%, 5분 (룰 `HostDiskWarning` · `HostDiskCritical`. 2026-11-18 사용 3 ~ 7%) · 호스트 다운 5분은 `MonitoringTargetDown` | 운영 경험 (MON-STD-22 · 24와 같은 기준) | Kafka · DB VM = 데이터 담당, pfSense = 인프라 담당 호출 런북 | 가설 |
 
 ### 4.3 학습 Job
 
@@ -95,9 +96,9 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-12 | Job API | RED: 5xx 비율 · 지연 p95 (Backend 계측, 노찬경) | | | | 경고 5xx 1% · p95 측정 × 2 · 위험 5xx 5% 5분 | 기준선 (6주) | Backend 재시작 런북 (노찬경) | 가설 |
-| MON-STD-13 | PostgreSQL | 연결 수 · 디스크 · `pg_up` (postgres_exporter, 별도 VM) | | | | 경고 연결 80% · 디스크 80% · 위험 up==0 1분 | 운영 경험 (postgres_exporter 기본값) + 기준선 | DB 런북 (김현수) | 가설 |
+| MON-STD-13 | PostgreSQL (DB VM 172.30.0.50, 데이터베이스 `gpuf_data`) | `pg_up` · 연결 수 `pg_stat_activity_count` ÷ `pg_settings_max_connections` (postgres_exporter, 모니터링 클러스터 Pod ×1, `job="postgres-exporter"`). VM 디스크는 MON-STD-26 | | | | 위험 `pg_up == 0` 2분 (룰 `PostgresDown`) · 경고 연결 80% (룰 없음, 대시보드 타일 색만) | 운영 경험 (postgres_exporter 기본값) + 기준선 | DB 런북 (김현수) | 가설 |
 | MON-STD-14 | 결과 제공 | 결과물 업로드 실패 · 다운로드 오류 (학습 Job 카운터 · Backend 로그) | | | | 경고 1회 · 위험 연속 3회 | 운영 경험 | S3 권한 · 네트워크 점검 런북 | 가설 |
-| MON-STD-23 | Kafka (브로커 3대 172.30.0.40 ~ .42, KRaft 컨트롤러 겸함, 2주차 도입 ADR-7 · 8) | 브로커 지표 JMX Exporter(김현수, :7071, `job="kafka-jmx"`) + consumer lag `kafka_consumergroup_lag` (kafka_exporter, 모니터링 클러스터 Pod ×1). 그룹: 복구 컨트롤러 · `collector` | | | | 경고 lag 증가 5분 · 위험 브로커 `up==0` 1분 (2026-11-12 확인: 브로커 3대 · 파티션 복제 3벌. 「브로커 1대, 복제 없음」 전제로 정한 값이라 재검토 필요) | 운영 경험 (kafka_exporter 기본 룰) | 데이터 담당 호출 런북. 컨트롤러 lag 증가 = 복구 지연 | 가설 |
+| MON-STD-23 | Kafka (브로커 3대 172.30.0.40 ~ .42, KRaft 컨트롤러 겸함, 2주차 도입 ADR-7 · 8) | 브로커 지표 JMX Exporter(김현수, :7071, `job="kafka-jmx"`) + consumer lag `kafka_consumergroup_lag` (kafka_exporter, 모니터링 클러스터 Pod ×1). 그룹: 복구 컨트롤러 · 수집기 `data-collector` | | | | 경고 `data-collector` 토픽별 lag 합 > 1000 10분 (룰 `CollectorLagHigh`. 1000은 임시값, 2026-11-18 평소 0 → 실험에서 평소 lag을 본 뒤 조정. 커밋한 적 없는 파티션의 -1은 제외) · 위험 브로커 `up==0` 1분 (2026-11-12 확인: 브로커 3대 · 파티션 복제 3벌. 「브로커 1대, 복제 없음」 전제로 정한 값이라 재검토 필요) | 운영 경험 (kafka_exporter 기본 룰) | 데이터 담당 호출 런북. 컨트롤러 lag 증가 = 복구 지연 | 가설 |
 
 ### 4.8 모니터링 서버 자체
 
@@ -127,10 +128,12 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-18 | | | 「모니터링 스택」 ping 성공 여부 · 응답 시간 (pfSense · 인터넷만, VPN 대상은 AWS 재구축 뒤) | 2026-11-13 |
 | MON-STD-20 | | | 「Kubernetes 워크로드」 마지막 종료(exit 75 = STOP 표시) · 학습 Pod | 2026-11-13 |
 | MON-STD-22 | `Watchdog` · `MonitoringNodeDiskWarning` · `MonitoringNodeDiskCritical` · `MonitoringTargetDown` (`deploy/base/mimir/rules/self.yml`) | | 「모니터링 스택」 타일 다운 대상 · Watchdog · 디스크 최대, 그래프 노드 루트 디스크 사용률(80 · 90% 선) | 2026-11-13 |
-| MON-STD-23 | | | 「Kafka 브로커」 전체 (consumer lag은 kafka_exporter 도입 뒤) | 2026-11-13 |
+| MON-STD-13 | `PostgresDown` (`deploy/base/mimir/rules/infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「PostgreSQL」 전체 | 2026-11-18 |
+| MON-STD-23 | `CollectorLagHigh` (`infra.yml`, 테스트 `tests/infra_test.yml`). 브로커 다운 룰은 미구현 | `deploy/README.md` 「알람이 울리면」 | 「Kafka 브로커」 전체 · 「수집기 lag」 행(1000 선) | 2026-11-18 |
 | MON-STD-24 | | | 「Proxmox 호스트」 전체 (온도는 5분 평균, 80 · 90°C · NVMe 70°C 선) | 2026-11-13 |
+| MON-STD-26 | `HostDiskWarning` · `HostDiskCritical` (`infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kafka · DB VM」 · 「pfSense」 타일 디스크 최대, 그래프 루트 디스크 사용률(80 · 90% 선) | 2026-11-18 |
 | MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | (HOLD 목록 패널은 v_incidents 대시보드 때) | |
-| 나머지 01 ~ 05 · 08 · 09 · 11 ~ 14 · 17 · 19 · 21 | | | | |
+| 나머지 01 ~ 05 · 08 · 09 · 11 · 12 · 14 · 17 · 19 · 21 | | | | |
 | SLO-1 ~ 4 | | | | |
 
 ## 6. 채우는 순서와 변경 규칙
@@ -143,6 +146,6 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | 5 SLO (5~6주) | SLO 행 목표 |
 | 6 검증 (6주) | 추적표 전 행, 상태 `측정 못 함` 정리 |
 
-- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 26).
+- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 27).
 - 값을 바꾸면 근거 링크를 같이 바꾼다. 근거 없는 변경은 가설 열로만.
 - 룰 annotation `standard` 값이 이 표에 없으면 CI에서 실패시킨다 (2단계에서 promtool 테스트에 추가).
