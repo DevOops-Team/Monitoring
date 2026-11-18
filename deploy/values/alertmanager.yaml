@@ -31,7 +31,7 @@ configmapReload:
   enabled: false
 
 # 라우팅: Watchdog → healthchecks.io (데드맨), RecoveryHold → Slack(해결 알림 없음), 나머지 → Slack #alerts-gpu
-# 분류기 라우트(pipeline=failover)는 분류기를 올릴 때 추가
+# 분류기용 원인 알람(pipeline=failover)은 Slack으로 보내지 않는다. 분류기를 올리기 전까지는 받는 곳 없는 수신자로 둔다
 config:
   global:
     slack_api_url_file: /run/secrets/slack_webhook_url
@@ -48,12 +48,21 @@ config:
         group_wait: 0s
         group_interval: 1m
         repeat_interval: 1m      # healthchecks.io 체크 period 1m · grace 4m → 미수신 5m에 알림
+      # 원인 알람(Xid · Pod 종료 · 사이트)은 사람이 아니라 분류기가 읽는다 (docs/classifier.md 2절).
+      # 분류기가 실 클러스터에 올라오면 이 수신자에 웹훅을 넣는다. 그 전에는 Alertmanager 화면에서만 보인다
+      - matchers: ["pipeline = failover"]
+        receiver: classifier
+        group_by: [alertname, cluster, node, pod, gpu_uuid]   # 사건 하나 = 알림 하나
+        group_wait: 0s           # 원인 알람은 약 30초만 발화한다. 기다리면 그 사이 꺼져서 못 보낸다
+        group_interval: 1m
+        repeat_interval: 1m      # 분류기가 503을 주면 다시 보낸다. 중복은 분류기가 거른다 (docs/classifier.md 8절)
       # HOLD는 "일어난 사건"이라 룰이 약 5분 발화하고 꺼진다. 꺼짐 = 해결이 아니므로 resolved를 보내지 않는 수신자로.
       # job·사유별로 따로 묶어 여러 HOLD가 한 메시지에 뭉치지 않게 한다 (MON-STD-25)
       - matchers: ["alertname = RecoveryHold"]
         receiver: slack-event
         group_by: [alertname, cluster, job_id, reason]
   receivers:
+    - name: classifier           # 아직 받는 곳 없음(위 라우트 주석)
     - name: slack
       slack_configs:
         - channel: "#alerts-gpu"
