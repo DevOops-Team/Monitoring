@@ -1,0 +1,51 @@
+# 온프레 데이터 경로(PostgreSQL · 수집기 · Kafka/DB VM · pfSense)의 증상 알람. 사람용(Slack)이고 분류기 입력이 아니다.
+# exporter 자체가 죽은 경우(up == 0)는 self.yml의 MonitoringTargetDown이 잡는다
+groups:
+  - name: onprem-infra
+    rules:
+      # pg_up은 postgres_exporter가 DB에 접속되는지다. exporter는 살아 있고(up == 1) DB만 안 붙을 때 0
+      - alert: PostgresDown
+        expr: pg_up{job="postgres-exporter"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'PostgreSQL(172.30.0.50) 접속 불가 — 수집기가 이벤트를 DB에 쓰지 못한다'
+          standard: MON-STD-26
+
+      # 커밋한 적 없는 파티션은 lag이 -1로 나오므로 0 이상만 합친다.
+      # 1000은 임시값: 실험에서 평소 lag을 본 뒤 조정한다(지금은 0)
+      - alert: CollectorLagHigh
+        expr: >
+          sum by (consumergroup, topic) (
+            kafka_consumergroup_lag{job="kafka-exporter", consumergroup="data-collector"} >= 0
+          ) > 1000
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: '수집기({{ $labels.consumergroup }})가 {{ $labels.topic }}을(를) 못 따라감: 안 읽은 메시지 {{ $value }}건이 10분째 — DB 반영이 늦는다'
+          standard: MON-STD-23
+
+      # Kafka 3대 · DB VM(vm-host)과 pfSense 2대(pfsense-host)의 루트 디스크. 기준은 모니터링 노드(MON-STD-22)와 같다
+      - alert: HostDiskWarning
+        expr: >
+          1 - node_filesystem_avail_bytes{job=~"vm-host|pfsense-host", mountpoint="/"}
+            / node_filesystem_size_bytes{job=~"vm-host|pfsense-host", mountpoint="/"} > 0.80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.host }} 루트 디스크 80% 초과'
+          standard: MON-STD-27
+
+      - alert: HostDiskCritical
+        expr: >
+          1 - node_filesystem_avail_bytes{job=~"vm-host|pfsense-host", mountpoint="/"}
+            / node_filesystem_size_bytes{job=~"vm-host|pfsense-host", mountpoint="/"} > 0.90
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.host }} 루트 디스크 90% 초과. Kafka 로그 보존 · PostgreSQL 데이터 확인'
+          standard: MON-STD-27
