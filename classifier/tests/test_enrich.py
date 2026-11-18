@@ -1,0 +1,99 @@
+from datetime import datetime, timezone
+
+from classifier.enrich import Enricher, _q
+from classifier.signals import Signal
+
+TS = datetime(2026, 11, 18, 14, 2, 11, tzinfo=timezone.utc)
+GPU = "GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7"
+UP = [{"job": "prometheus-agent", "__value__": 1.0}, {"job": "otel-gateway", "__value__": 1.0},
+      {"job": "fluent-bit", "node": "n1", "__value__": 1.0}]
+POD = {"namespace": "training", "pod": "job-3f9a1c2e-g0003-w-0-0",
+       "label_devoops_job_id": "3f9a1c2e", "label_devoops_generation": "3", "__value__": 1.0}
+
+
+def signal(**kw) -> Signal:
+    base = dict(signal="xid", source="dmesg", alert="GpuXid", cluster="eks-a", ts=TS, node="n1", xid=79)
+    return Signal(**{**base, **kw})
+
+
+class FakeMimir:
+    """식에 들어 있는 지표 이름으로 답을 고른다. 받은 (식, 시각)을 기록한다."""
+    def __init__(self, **answers):
+        self.answers, self.calls = answers, []
+
+    def __call__(self, expr, at=None):
+        self.calls.append((expr, at))
+        for name, rows in self.answers.items():
+            if name in expr:
+                if isinstance(rows, Exception):
+                    raise rows
+                return rows
+        return []
+
+
+def test_all_found():
+    mimir = FakeMimir(kube_pod_labels=[POD], DCGM_FI_DEV_GPU_TEMP=[{"UUID": GPU, "__value__": 41.0}],
+                      kube_node_labels=[{"label_topology_kubernetes_io_zone": "us-east-2a", "__value__": 1.0}], up=UP)
+    ctx = Enricher(mimir)(signal())
+    assert (ctx.job_id, ctx.generation, ctx.gpu_uuid, ctx.az, ctx.collector_healthy) == (
+        "3f9a1c2e", 3, GPU, "us-east-2a", True)
+    at = {expr.split("{")[0].split("(")[-1]: t for expr, t in mimir.calls}
+    assert at["kube_pod_labels"] == TS and at["DCGM_FI_DEV_GPU_TEMP"] == TS     # 신호 발생 시각 기준
+    assert at["up"] is None                                                     # 수집 경로는 지금 기준
+
+
+def test_nothing_found_is_unknown():
+    ctx = Enricher(FakeMimir())(signal())
+    assert (ctx.job_id, ctx.generation, ctx.gpu_uuid, ctx.az, ctx.collector_healthy) == (
+        None, None, None, "unknown", False)
+
+
+def test_query_failure_is_unknown():
+    err = TimeoutError("timed out")
+    ctx = Enricher(FakeMimir(kube_pod_labels=err, DCGM_FI_DEV_GPU_TEMP=err, kube_node_labels=err, up=err))(signal())
+    assert (ctx.job_id, ctx.collector_healthy, ctx.az) == (None, False, "unknown")
+
+
+def test_collector_needs_all_three_up():
+    assert not Enricher(FakeMimir(up=UP[:2]))(signal()).collector_healthy               # fluent-bit 없음
+    down = [UP[0], UP[1], {**UP[2], "__value__": 0.0}]
+    assert not Enricher(FakeMimir(up=down))(signal()).collector_healthy
+
+
+def test_two_jobs_on_node_is_unresolved():
+    other = {**POD, "pod": "job-aaaa1111-g0001-w-0-0", "label_devoops_job_id": "aaaa1111"}
+    ctx = Enricher(FakeMimir(kube_pod_labels=[POD, other]))(signal())
+    assert (ctx.job_id, ctx.generation) == (None, None)
+
+
+def test_same_job_two_generations_takes_latest():
+    old = {**POD, "pod": "job-3f9a1c2e-g0002-w-0-0", "label_devoops_generation": "2"}
+    assert Enricher(FakeMimir(kube_pod_labels=[old, POD]))(signal()).generation == 3
+
+
+def test_pod_exit_looks_up_by_pod():
+    mimir = FakeMimir(kube_pod_labels=[POD])
+    ctx = Enricher(mimir)(signal(signal="pod_exit", source="pod", xid=None, exit_code=137, pod=POD["pod"]))
+    assert ctx.job_id == "3f9a1c2e"
+    job_expr = next(e for e, _ in mimir.calls if "kube_pod_labels" in e)
+    assert f'pod="{POD["pod"]}"' in job_expr and "kube_pod_info" not in job_expr
+    assert not any("DCGM" in e for e, _ in mimir.calls)         # Xid 신호가 아니면 GPU를 찾지 않는다
+
+
+def test_gpu_uuid_in_label_skips_lookup():
+    mimir = FakeMimir()
+    Enricher(mimir)(signal(gpu_uuid=GPU))
+    assert not any("DCGM" in e for e, _ in mimir.calls)
+
+
+def test_site_asks_nothing():
+    mimir = FakeMimir(up=UP)
+    ctx = Enricher(mimir)(signal(signal="site", source="site", xid=None, node=None))
+    assert (ctx.collector_healthy, ctx.az, mimir.calls) == (False, "unknown", [])
+
+
+def test_label_values_are_escaped():
+    assert _q('n1"} or up{x="') == 'n1\\"} or up{x=\\"'
+    mimir = FakeMimir()
+    Enricher(mimir)(signal(node='n1"} or vector(1) #'))
+    assert all('node="n1\\"} or vector(1) #"' in e for e, _ in mimir.calls if "node=" in e)

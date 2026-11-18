@@ -3,6 +3,7 @@
 환경 변수
   KAFKA_BOOTSTRAP  브로커 주소. 없으면 표준 출력으로만 낸다(로컬 확인용)
   REQUIRE_KAFKA    true면 KAFKA_BOOTSTRAP 없이 시작하지 않는다. 배포 매니페스트는 항상 true
+  MIMIR_URL        예 http://mimir:9009. 없으면 수집 경로를 확인할 수 없어 전부 hold로 낸다
   RULE_VERSION     rules.yaml의 git SHA 앞 7자 (이미지 빌드 때 넣음). Kafka 헤더로 나간다
 """
 from __future__ import annotations
@@ -16,6 +17,7 @@ from fastapi import Body, FastAPI, HTTPException, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
 from . import pipeline as p
+from .enrich import Enricher, mimir_query
 from .event import Context
 from .publish import Publisher, StdoutProducer, kafka_producer
 from .rules import Rules
@@ -23,7 +25,7 @@ from .signals import Signal
 
 
 def _unknown_context(s: Signal) -> Context:
-    """Mimir 보강(enrich.py)을 붙이기 전의 자리. 수집 경로를 확인할 수 없으니 전부 hold로 나간다."""
+    """MIMIR_URL이 없을 때. 수집 경로를 확인할 수 없으니 전부 hold로 나간다."""
     return Context(az="unknown", collector_healthy=False)
 
 
@@ -32,8 +34,10 @@ def pipeline_from_env() -> p.Pipeline:
     if not bootstrap and os.environ.get("REQUIRE_KAFKA", "").lower() == "true":
         raise RuntimeError("REQUIRE_KAFKA=true인데 KAFKA_BOOTSTRAP이 없다")
     producer = kafka_producer(bootstrap) if bootstrap else StdoutProducer()
-    p.log("startup", kafka=bootstrap or "stdout")
-    return p.Pipeline(Rules.load(), Publisher(producer, os.environ.get("RULE_VERSION", "dev")), _unknown_context)
+    mimir = os.environ.get("MIMIR_URL")
+    enrich = Enricher(mimir_query(mimir)) if mimir else _unknown_context
+    p.log("startup", kafka=bootstrap or "stdout", mimir=mimir or "none")
+    return p.Pipeline(Rules.load(), Publisher(producer, os.environ.get("RULE_VERSION", "dev")), enrich)
 
 
 def create_app(pipeline: p.Pipeline | None = None) -> FastAPI:
