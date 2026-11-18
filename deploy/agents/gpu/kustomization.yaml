@@ -1,0 +1,11 @@
+# GPU 노드에만 올리는 것. base(어느 클러스터나 공통)와 따로 둔다: 관리 클러스터 · kind에는 GPU가 없다.
+# GPU가 있는 클러스터의 overlay(overlays/eks-*)가 ../../base와 함께 이 디렉터리를 가져간다.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: monitoring
+resources:
+  - dcgm-exporter/daemonset.yaml
+configMapGenerator:
+  # 이름 끝에 해시가 붙어 목록이 바뀌면 Pod가 다시 뜬다
+  - name: dcgm-exporter-counters
+    files: [counters.csv=dcgm-exporter/counters.csv]
