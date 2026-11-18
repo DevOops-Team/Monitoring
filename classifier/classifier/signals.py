@@ -106,6 +106,6 @@ def parse_alert(alert: dict[str, Any], now: datetime | None = None) -> Signal | 
         gpu_uuid=_gpu_uuid(labels),
         xid=_int(labels, "xid") if signal == "xid" else None,
         exit_code=_int(labels, "exit_code") if signal == "pod_exit" else None,
-        pod=_require(labels, "pod") if signal == "pod_exit" else None,
+        pod=_ident(labels, "pod") if signal == "pod_exit" else None,
         log_line=annotations.get("log_line") or None,
     )

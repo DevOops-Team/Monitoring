@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from prometheus_client import CollectorRegistry, Counter
+from prometheus_client import CollectorRegistry, Counter, Gauge
 
 from . import dedup
 from .event import Context, build, dedup_code, dedup_target, iso_z
@@ -71,6 +71,11 @@ class Pipeline:
         self.invalid = Counter("classifier_events_invalid", "스키마 검증 실패로 내지 않은 이벤트", registry=self.registry)
         self.published = Counter("classifier_events_published", "발행한 이벤트",
                                  ["type", "category", "action"], registry=self.registry)
+        # 0이면 Pod 종료 신호가 전부 hold로 나간다. 재시작 전까지 0으로 남는 경우도 있어 알람으로 봐야 한다
+        Gauge("classifier_lifecycle_healthy", "job.lifecycle을 읽고 있는가 (1 = 읽는 중)",
+              registry=self.registry).set_function(lambda: float(self.lifecycle.healthy))
+        Gauge("classifier_pending_pod_exits", "판정을 기다리는 Pod 종료 신호",
+              registry=self.registry).set_function(lambda: float(len(self.pending)))
 
     def handle(self, alert: dict[str, Any], now: datetime) -> str:
         with self._lock:

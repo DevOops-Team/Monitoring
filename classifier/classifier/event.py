@@ -27,8 +27,8 @@ def iso_z(ts: datetime) -> str:
 
 
 def dedup_target(s: Signal, ctx: Context) -> str:
-    """대상 = gpu_uuid, 없으면 node, site는 cluster."""
-    return s.gpu_uuid or ctx.gpu_uuid or s.node or s.cluster
+    """대상 = gpu_uuid, 없으면 node, site는 cluster. Pod 종료는 그 Pod(같은 노드의 다른 Pod가 끝난 것은 다른 사건)."""
+    return s.pod or s.gpu_uuid or ctx.gpu_uuid or s.node or s.cluster
 
 
 def dedup_code(s: Signal) -> str:
