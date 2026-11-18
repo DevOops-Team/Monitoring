@@ -32,7 +32,7 @@ ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/
 `base/mimir/rules/records.yml` 레코딩 룰 3개: 대시보드 타일(OOM kill · OTel 거절)용. `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
 `base/mimir/rules/infra.yml` 4개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `base/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 
-`base/mimir/rules/failover.yml` 3개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown`). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트(수신자 `classifier`, 분류기 배포 전에는 받는 곳 없음)로 간다. 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
+`base/mimir/rules/failover.yml` 3개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown`). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료는 분류기 웹훅(수신자 `classifier`), 사이트는 받는 곳 없는 수신자(`classifier-pending`). 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
 `recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 컨트롤러 이미지가 배포되어 `recovery_hold_total`이 수집되기 전까지는 발화하지 않는다.
 
@@ -208,7 +208,18 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=node_t
 ## 분류기 (`classifier/` · `deploy/classifier/`, 11/18)
 
 Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. 설계와 판정 표는 `docs/classifier.md`.
-**아직 실 클러스터에 올리지 않았다.** 남은 것: GHCR 이미지 빌드(CI), Gitops Application, Alertmanager `pipeline=failover` 라우트, 원인 알람 룰.
+**실 클러스터(모니터링 클러스터 `monitoring` 네임스페이스)에는 Argo CD가 올린다**(11/18): Application `gpu-monitoring-classifier` → Gitops 레포 `monitoring/onprem/classifier`. 그 overlay가 이 레포의 `deploy/classifier/base`를 릴리스 태그로 참조하고 이미지 태그를 고정한다.
+
+- **버전을 올릴 때**: 이 레포 main 머지로 태그 · 이미지가 생긴 뒤, Gitops overlay의 `?ref=vX.Y.Z`와 `newTag`를 같이 바꾼다(배포 봇은 아직 연결하지 않았다)
+- **pull secret**: 이미지 패키지가 비공개라 Secret `ghcr-pull`이 필요하다. Git에 없다. 관리 클러스터 `platform`의 것을 복사한다(값이 화면에 나오지 않는다):
+  ```bash
+  kubectl --kubeconfig <관리 클러스터 admin.conf> -n platform get secret ghcr-pull -o json \
+  | jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.managedFields,.metadata.annotations)' \
+  | kubectl --kubeconfig <모니터링 클러스터 admin.conf> -n monitoring apply -f -
+  ```
+- **알람이 들어오는 길**: Alertmanager 라우트 `pipeline=failover` + `signal=~"xid|pod_exit"` → 웹훅 `http://classifier.monitoring.svc:8080/alerts`. 사이트 알람은 아직 보내지 않는다(`values/alertmanager.yaml` 주석)
+- **확인**: `kubectl -n monitoring get deploy classifier`(1/1) · `kubectl -n monitoring logs deploy/classifier` · 아래 지표
+- **끄기**: 웹훅만 끊으려면 `values/alertmanager.yaml`의 수신자 `classifier`에서 `webhook_configs`를 지운다. 분류기는 떠 있어도 알람이 안 오면 아무것도 내지 않는다
 
 | 무엇 | 어디 |
 |---|---|
