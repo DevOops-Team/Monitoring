@@ -13,14 +13,16 @@ groups:
       # GPU 단위(cluster · node · UUID)로 합쳐서 본다: dcgm-exporter는 GPU를 쓰는 Pod 이름을 라벨로 붙여서,
       # 학습 Pod가 죽으면 같은 값의 새 시계열이 생긴다. 합치지 않으면 그때 한 번 더 울린다.
       # 한계: 같은 번호가 연달아 나면 값이 안 바뀌어 두 번째는 못 본다
+      # 출처를 고정한다(monitoring 네임스페이스의 dcgm-exporter 컨테이너). 이 세 라벨은 Agent가 긁는 대상에서 붙이는 것이라
+      # 지표를 내는 쪽이 정할 수 없다. 이름만 보면 학습 Pod(사용자 코드, :8000 /metrics)가 같은 이름의 지표를 내 장애를 꾸밀 수 있다
       - alert: FailoverXidDcgm
         expr: >
-          (max by (cluster, node, UUID) (DCGM_FI_DEV_XID_ERRORS) != 0)
+          (max by (cluster, node, UUID) (DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter"}) != 0)
           unless
           (
-              max by (cluster, node, UUID) (last_over_time(DCGM_FI_DEV_XID_ERRORS[10m] offset 1m))
+              max by (cluster, node, UUID) (last_over_time(DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter"}[10m] offset 1m))
             ==
-              max by (cluster, node, UUID) (DCGM_FI_DEV_XID_ERRORS)
+              max by (cluster, node, UUID) (DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter"})
           )
         labels:
           pipeline: failover
@@ -31,20 +33,21 @@ groups:
         annotations:
           # 이 번호가 처음 찍힌 샘플의 시각(최근 2분 안에서 가장 이른 것)
           event_ts: >-
-            {{ with printf "min_over_time(max by (cluster, node, UUID) (timestamp(DCGM_FI_DEV_XID_ERRORS{cluster=%q, UUID=%q} == %v))[2m:15s])" $labels.cluster $labels.UUID $value | query }}{{ (. | first | value | toTime).UTC.Format "2006-01-02T15:04:05Z" }}{{ end }}
+            {{ with printf "min_over_time(max by (cluster, node, UUID) (timestamp(DCGM_FI_DEV_XID_ERRORS{job=\"annotated-pods\", namespace=\"monitoring\", container=\"dcgm-exporter\", cluster=%q, UUID=%q} == %v))[2m:15s])" $labels.cluster $labels.UUID $value | query }}{{ (. | first | value | toTime).UTC.Format "2006-01-02T15:04:05Z" }}{{ end }}
           summary: 'Xid {{ $value }}: {{ $labels.cluster }} {{ $labels.node }} {{ $labels.UUID }}'
 
       # 학습 컨테이너(trainer)가 정상 완료가 아닌 사유로 끝난 뒤 90초만 울린다. ckpt-init · ckpt-sidecar는 보지 않는다.
       # 값 = 종료 시각(kube_pod_completion_time) → event_ts로 쓴다.
       # kube-state-metrics는 재시작하지 않는 컨테이너의 종료 코드를 내지 않아 사유(Error · OOMKilled …)만 보낸다
+      # job="kube-state-metrics"로 출처를 고정한다(위 Xid 룰과 같은 이유)
       - alert: FailoverPodExit
         expr: >
           max by (cluster, namespace, pod, node, reason) (
-              kube_pod_completion_time{namespace="training"}
+              kube_pod_completion_time{job="kube-state-metrics", namespace="training"}
             * on (cluster, namespace, pod) group_left (reason)
-              (kube_pod_container_status_terminated_reason{namespace="training", container="trainer", reason!="Completed"} == 1)
+              (kube_pod_container_status_terminated_reason{job="kube-state-metrics", namespace="training", container="trainer", reason!="Completed"} == 1)
             * on (cluster, namespace, pod) group_left (node)
-              kube_pod_info{namespace="training"}
+              kube_pod_info{job="kube-state-metrics", namespace="training"}
           ) > time() - 90
         labels:
           pipeline: failover

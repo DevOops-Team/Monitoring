@@ -9,9 +9,9 @@ tests:
   - name: Xid가 새로 찍히면 1분만 울리고 event_ts는 고정이다
     interval: 15s
     input_series:
-      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa", job="annotated-pods", exported_pod="job-3f9a1c2e-g0001-workers-0-0"}'
+      - series: 'DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter", cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa", exported_pod="job-3f9a1c2e-g0001-workers-0-0"}'
         values: '0x20 79x40'
-      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-24", UUID="GPU-bbbb", job="annotated-pods"}'
+      - series: 'DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter", cluster="eks-a", node="ip-10-0-1-24", UUID="GPU-bbbb"}'
         values: '0x60'
     alert_rule_test:
       - eval_time: 5m
@@ -38,9 +38,9 @@ tests:
   - name: 같은 GPU의 라벨만 바뀌면 다시 울리지 않는다
     interval: 15s
     input_series:
-      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa", exported_pod="job-3f9a1c2e-g0001-workers-0-0"}'
+      - series: 'DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter", cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa", exported_pod="job-3f9a1c2e-g0001-workers-0-0"}'
         values: '0x20 79x7 stale'
-      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa"}'
+      - series: 'DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter", cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa"}'
         values: '_x29 79x30'
     alert_rule_test:
       - eval_time: 7m
@@ -57,7 +57,7 @@ tests:
   - name: 번호가 바뀌면 다시 울린다 (Xid 45도 거르지 않는다)
     interval: 15s
     input_series:
-      - series: 'DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa"}'
+      - series: 'DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter", cluster="eks-a", node="ip-10-0-1-23", UUID="GPU-aaaa"}'
         values: '0x20 79x19 45x20'
     alert_rule_test:
       - eval_time: 10m15s
@@ -68,34 +68,54 @@ tests:
               event_ts: '1970-01-01T00:10:15Z'
               summary: 'Xid 45: eks-a ip-10-0-1-23 GPU-aaaa'
 
+  # 3-1) 학습 Pod가 같은 이름의 지표를 내도(출처 라벨이 다르다) 울리지 않는다
+  - name: dcgm-exporter가 아닌 곳에서 온 Xid 지표는 보지 않는다
+    interval: 15s
+    input_series:
+      - series: 'DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="training", container="trainer", cluster="eks-a", node="ip-10-0-1-23", exported_UUID="GPU-aaaa"}'
+        values: '0x20 79x40'
+      - series: 'kube_pod_container_status_terminated_reason{job="annotated-pods", cluster="eks-a", namespace="training", pod="p", exported_container="trainer", container="trainer", reason="Error"}'
+        values: '_x21 1x40'
+      - series: 'kube_pod_completion_time{job="annotated-pods", cluster="eks-a", namespace="training", pod="p"}'
+        values: '_x21 305x40'
+      - series: 'kube_pod_info{job="annotated-pods", cluster="eks-a", namespace="training", pod="p", node="n"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 5m30s
+        alertname: FailoverXidDcgm
+        exp_alerts: []
+      - eval_time: 5m30s
+        alertname: FailoverPodExit
+        exp_alerts: []
+
   # 4) rank 0의 trainer가 5분 5초에 Error로 끝났다(지표에는 5분 15초부터 보인다). 90초 동안만 울리고 event_ts = 종료 시각
   #    rank 1은 정상 완료, rank 2는 사이드카만 끝남, 다른 네임스페이스 Pod는 대상이 아니다
   - name: trainer가 비정상 종료하면 종료 시각으로 울린다
     interval: 15s
     input_series:
-      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0", container="trainer", reason="Error", job="kube-state-metrics"}'
+      - series: 'kube_pod_container_status_terminated_reason{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0", container="trainer", reason="Error"}'
         values: '_x21 1x40'
-      - series: 'kube_pod_completion_time{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0", job="kube-state-metrics"}'
+      - series: 'kube_pod_completion_time{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0"}'
         values: '_x21 305x40'
-      - series: 'kube_pod_info{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0", node="ip-10-0-1-23", job="kube-state-metrics"}'
+      - series: 'kube_pod_info{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0", node="ip-10-0-1-23"}'
         values: '1x60'
-      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1", container="trainer", reason="Completed"}'
+      - series: 'kube_pod_container_status_terminated_reason{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1", container="trainer", reason="Completed"}'
         values: '_x21 1x40'
-      - series: 'kube_pod_completion_time{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1"}'
+      - series: 'kube_pod_completion_time{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1"}'
         values: '_x21 305x40'
-      - series: 'kube_pod_info{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1", node="ip-10-0-1-24"}'
+      - series: 'kube_pod_info{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1", node="ip-10-0-1-24"}'
         values: '1x60'
-      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-2", container="ckpt-sidecar", reason="Error"}'
+      - series: 'kube_pod_container_status_terminated_reason{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-2", container="ckpt-sidecar", reason="Error"}'
         values: '_x21 1x40'
-      - series: 'kube_pod_completion_time{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-2"}'
+      - series: 'kube_pod_completion_time{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-2"}'
         values: '_x21 305x40'
-      - series: 'kube_pod_info{cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-2", node="ip-10-0-1-25"}'
+      - series: 'kube_pod_info{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-2", node="ip-10-0-1-25"}'
         values: '1x60'
-      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-a", namespace="platform", pod="other", container="trainer", reason="Error"}'
+      - series: 'kube_pod_container_status_terminated_reason{job="kube-state-metrics", cluster="eks-a", namespace="platform", pod="other", container="trainer", reason="Error"}'
         values: '_x21 1x40'
-      - series: 'kube_pod_completion_time{cluster="eks-a", namespace="platform", pod="other"}'
+      - series: 'kube_pod_completion_time{job="kube-state-metrics", cluster="eks-a", namespace="platform", pod="other"}'
         values: '_x21 305x40'
-      - series: 'kube_pod_info{cluster="eks-a", namespace="platform", pod="other", node="ip-10-0-1-26"}'
+      - series: 'kube_pod_info{job="kube-state-metrics", cluster="eks-a", namespace="platform", pod="other", node="ip-10-0-1-26"}'
         values: '1x60'
     alert_rule_test:
       - eval_time: 5m
@@ -120,11 +140,11 @@ tests:
   - name: OOMKilled는 사유로 구분된다
     interval: 15s
     input_series:
-      - series: 'kube_pod_container_status_terminated_reason{cluster="eks-b", namespace="training", pod="job-7c1d-g0002-workers-0-3", container="trainer", reason="OOMKilled"}'
+      - series: 'kube_pod_container_status_terminated_reason{job="kube-state-metrics", cluster="eks-b", namespace="training", pod="job-7c1d-g0002-workers-0-3", container="trainer", reason="OOMKilled"}'
         values: '_x21 1x40'
-      - series: 'kube_pod_completion_time{cluster="eks-b", namespace="training", pod="job-7c1d-g0002-workers-0-3"}'
+      - series: 'kube_pod_completion_time{job="kube-state-metrics", cluster="eks-b", namespace="training", pod="job-7c1d-g0002-workers-0-3"}'
         values: '_x21 305x40'
-      - series: 'kube_pod_info{cluster="eks-b", namespace="training", pod="job-7c1d-g0002-workers-0-3", node="ip-10-1-1-9"}'
+      - series: 'kube_pod_info{job="kube-state-metrics", cluster="eks-b", namespace="training", pod="job-7c1d-g0002-workers-0-3", node="ip-10-1-1-9"}'
         values: '1x60'
     alert_rule_test:
       - eval_time: 5m30s
