@@ -33,6 +33,7 @@ configMapGenerator:
       - grafana/dashboards/infra/k8s-workloads.json
       - grafana/dashboards/infra/vm-hosts.json
       - grafana/dashboards/infra/pfsense.json
+      - grafana/dashboards/infra/postgres.json
     options:
       disableNameSuffixHash: true
       # 대시보드 8개부터 ConfigMap이 약 270KB라, 클라이언트 쪽 apply가 통째로 복사해 두는
