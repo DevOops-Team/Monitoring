@@ -751,13 +751,239 @@
     },
     {
       "type": "row",
+      "title": "수집기 lag (data-collector)",
+      "collapsed": false,
+      "panels": [],
+      "id": 24,
+      "gridPos": {
+        "x": 0,
+        "y": 20,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "토픽별 lag",
+      "description": "수집기(data-collector)가 아직 읽지 않은 메시지 수 = 토픽의 마지막 오프셋 − 수집기가 커밋한 오프셋. 0 근처가 정상이고, 계속 늘면 수집기가 멈췄거나 못 따라가는 것 → DB에 이벤트가 늦게 들어간다. 커밋한 적 없는 파티션(-1)은 뺐다. kafka_exporter 값",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (topic) (kafka_consumergroup_lag{job=\"kafka-exporter\", consumergroup=\"data-collector\"} >= 0)",
+          "legendFormat": "{{topic}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 25,
+      "gridPos": {
+        "x": 0,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "소비 속도 (토픽별, 초당)",
+      "description": "수집기가 커밋한 오프셋이 늘어나는 속도. 위 「메시지 유입」과 비슷해야 한다. 유입은 있는데 이 값이 0이면 수집기가 멈춘 것",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (topic) (rate(kafka_consumergroup_current_offset{job=\"kafka-exporter\", consumergroup=\"data-collector\"}[5m]))",
+          "legendFormat": "{{topic}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 26,
+      "gridPos": {
+        "x": 8,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "컨슈머 수",
+      "description": "data-collector 그룹에 붙어 있는 컨슈머 수. 수집기 Pod 수와 같아야 한다. 0이거나 선이 끊기면 수집기가 그룹에서 빠진 것",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "kafka_consumergroup_members{job=\"kafka-exporter\", consumergroup=\"data-collector\"}",
+          "legendFormat": "{{consumergroup}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 27,
+      "gridPos": {
+        "x": 16,
+        "y": 21,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
       "title": "요청 지연 · 부하",
       "collapsed": false,
       "panels": [],
       "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 20,
+        "y": 29,
         "w": 24,
         "h": 1
       }
@@ -828,7 +1054,7 @@
       "id": 13,
       "gridPos": {
         "x": 0,
-        "y": 21,
+        "y": 30,
         "w": 8,
         "h": 8
       }
@@ -899,7 +1125,7 @@
       "id": 14,
       "gridPos": {
         "x": 8,
-        "y": 21,
+        "y": 30,
         "w": 8,
         "h": 8
       }
@@ -971,7 +1197,7 @@
       "id": 15,
       "gridPos": {
         "x": 16,
-        "y": 21,
+        "y": 30,
         "w": 8,
         "h": 8
       }
@@ -984,7 +1210,7 @@
       "id": 16,
       "gridPos": {
         "x": 0,
-        "y": 29,
+        "y": 38,
         "w": 24,
         "h": 1
       }
@@ -1064,7 +1290,7 @@
       "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 39,
         "w": 12,
         "h": 8
       }
@@ -1135,7 +1361,7 @@
       "id": 18,
       "gridPos": {
         "x": 12,
-        "y": 30,
+        "y": 39,
         "w": 12,
         "h": 8
       }
@@ -1148,7 +1374,7 @@
       "id": 19,
       "gridPos": {
         "x": 0,
-        "y": 38,
+        "y": 47,
         "w": 24,
         "h": 1
       }
@@ -1219,7 +1445,7 @@
       "id": 20,
       "gridPos": {
         "x": 0,
-        "y": 39,
+        "y": 48,
         "w": 12,
         "h": 8
       }
@@ -1290,7 +1516,7 @@
       "id": 21,
       "gridPos": {
         "x": 12,
-        "y": 39,
+        "y": 48,
         "w": 12,
         "h": 8
       }
@@ -1361,7 +1587,7 @@
       "id": 22,
       "gridPos": {
         "x": 0,
-        "y": 47,
+        "y": 56,
         "w": 12,
         "h": 8
       }
@@ -1432,7 +1658,7 @@
       "id": 23,
       "gridPos": {
         "x": 12,
-        "y": 47,
+        "y": 56,
         "w": 12,
         "h": 8
       }
