@@ -150,6 +150,9 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 ## 7. 상태와 재시작
 
 - 중복 제거 창과 의도된 종료 표는 메모리에 둔다. **시작할 때 Kafka에서 다시 만든다**: `gpu.fault` 최근 1시간, `job.lifecycle` 최근 24시간. 컨슈머 그룹 없이 시각으로 위치를 잡아 읽으므로 수집기(`data-collector`)와 무관하다.
+- `gpu.fault`는 시작할 때 한 번만 읽는다(복제본이 하나라 그 뒤로는 내가 낸 것을 내가 기억한다). `job.lifecycle`은 따라잡은 뒤 계속 이어 읽고, 5초마다 브로커에 물어 읽을 수 있는 상태인지 확인한다. 못 읽는 동안의 `pod_exit`는 `hold`로 나간다(4절).
+- 복원이 끝나야 웹훅을 받는다. 복원에 실패하면(브로커 접속 불가 · 30초 안에 못 따라잡음) 시작을 멈추고 쿠버네티스가 다시 띄우게 둔다. 기억 없이 받으면 같은 사건을 또 내기 때문이다.
+- 오프셋을 커밋하지 않는다. 구현: `classifier/classifier/kafka_reader.py`.
 - 이유: 컨트롤러는 `event_id`로만 중복을 거른다. 분류기가 재시작한 뒤 Alertmanager가 같은 알람을 다시 보내면, 창을 잊은 분류기는 같은 사건을 새 이벤트로 낸다.
 - 복제본은 1개다. 2개면 웹훅이 번갈아 들어가 중복 제거가 깨진다. 2중화는 3중화 단계에서 다룬다.
 - 토픽 보존 기간(브로커 기본 7일, 실제 값은 김현수 확인 중)이 24시간보다 짧으면 복원 범위를 줄인다.
@@ -159,6 +162,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 - [ ] (나) Xid 64 · 94 · 95 · 119를 NVIDIA 문서 원문과 대조해 3.2절에 추가
 - [ ] (나, EKS 테스트) dcgm-exporter 지표의 라벨 이름(`node` · `UUID`)을 실제 값으로 확인. 다르면 커널 로그 경로와 DCGM 경로의 `dedup_key` 대상이 달라져 같은 Xid가 두 건으로 나간다
 - [ ] (나, EKS overlay) KSM `--metric-labels-allowlist`에 `nodes=[topology.kubernetes.io/zone]` 추가. 그 전에는 `az`가 `unknown`
+- [ ] (나, 실 클러스터 배포 때) 분류기용 Alertmanager 라우트(`pipeline=failover`)는 `repeat_interval`을 짧게(예 1분) 준다. 기본 4시간이면 분류기가 놓친 알람(재시작으로 사라진 대기 신호 · Kafka 전달 실패)이 다시 오지 않는다. 다시 온 알람은 중복 제거로 걸러지므로 짧게 줘도 된다
 - [ ] (나 · 한송이) `pod_exit` 대기 30초를 E2E 실측으로 조정
 - [ ] (김현수) `job.lifecycle` 토픽 보존 기간, rank별 종료 사유 `job.trainer_exited` 도입 여부
 - [ ] (나) 종료 코드 75가 실제로 없어지면 3.1절과 fault-event.md 「이벤트를 만들지 않는 종료」를 같이 고침
