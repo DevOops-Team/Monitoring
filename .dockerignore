@@ -1,0 +1,6 @@
+# 이미지 빌드는 레포 루트를 컨텍스트로 쓴다(classifier/Dockerfile). 필요한 것만 넣는다
+*
+!classifier/requirements.txt
+!classifier/classifier/
+!schemas/fault-event.v1.json
+**/__pycache__

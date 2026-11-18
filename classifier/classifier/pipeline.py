@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
-from prometheus_client import CollectorRegistry, Counter
+from prometheus_client import CollectorRegistry, Counter, Gauge
 
 from . import dedup
 from .event import Context, build, dedup_code, dedup_target, iso_z
@@ -23,6 +23,7 @@ from .signals import RejectError, Signal, parse_alert
 logger = logging.getLogger("classifier")
 
 POD_EXIT_WAIT = timedelta(seconds=30)       # 임시값. E2E에서 job.fenced와 Pod 종료의 실제 간격을 재서 고친다
+MAX_PENDING = 1000                          # 기다리는 신호의 상한. 넘으면 기다리지 않고 hold로 낸다(메모리 보호)
 RETRY_AFTER = timedelta(seconds=5)          # 기다리던 신호의 발행이 실패했을 때 다시 해 볼 간격
 NO_RECOVERY = ("hold", "none")              # 복구를 부르지 않는 action. 원인 사건으로 치지 않는다
 
@@ -71,6 +72,11 @@ class Pipeline:
         self.invalid = Counter("classifier_events_invalid", "스키마 검증 실패로 내지 않은 이벤트", registry=self.registry)
         self.published = Counter("classifier_events_published", "발행한 이벤트",
                                  ["type", "category", "action"], registry=self.registry)
+        # 0이면 Pod 종료 신호가 전부 hold로 나간다. 재시작 전까지 0으로 남는 경우도 있어 알람으로 봐야 한다
+        Gauge("classifier_lifecycle_healthy", "job.lifecycle을 읽고 있는가 (1 = 읽는 중)",
+              registry=self.registry).set_function(lambda: float(self.lifecycle.healthy))
+        Gauge("classifier_pending_pod_exits", "판정을 기다리는 Pod 종료 신호",
+              registry=self.registry).set_function(lambda: float(len(self.pending)))
 
     def handle(self, alert: dict[str, Any], now: datetime) -> str:
         with self._lock:
@@ -125,8 +131,11 @@ class Pipeline:
         if s.signal != "pod_exit":
             return self._emit(s, ctx, now)
         if now < s.ts + POD_EXIT_WAIT:
-            if not any(p.s == s for p in self.pending):     # Alertmanager 재전송
-                self.pending.append(Pending(s, ctx, s.ts + POD_EXIT_WAIT))
+            if any(p.s == s for p in self.pending):         # Alertmanager 재전송
+                return DEFERRED
+            if len(self.pending) >= MAX_PENDING:
+                return self._emit(s, ctx, now, hold=True)
+            self.pending.append(Pending(s, ctx, s.ts + POD_EXIT_WAIT))
             return DEFERRED
         return self._pod_exit(s, ctx, now)
 

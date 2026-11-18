@@ -111,6 +111,8 @@ def test_healthz_and_metrics(env):
     assert 'classifier_events_published_total{action="isolate_migrate",category="hw",type="fault.detected"} 1.0' in text
     assert "classifier_unmatched_total 1.0" in text
     assert "classifier_signals_rejected_total 1.0" in text
+    assert "classifier_lifecycle_healthy 0.0" in text       # 읽는 쪽을 붙이지 않은 상태
+    assert "classifier_pending_pod_exits 0.0" in text
 
 
 def test_default_context_holds_everything(monkeypatch, capsys):

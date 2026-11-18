@@ -58,6 +58,8 @@ def test_built_events_pass_schema(s, ctx):
 def test_dedup_target_and_code():
     assert make(signal())["dedup_key"] == f"{GPU}|79|{int(TS.timestamp())}"
     assert make(signal(signal="spot", source="spot", xid=None, gpu_uuid=None))["dedup_key"].startswith("ip-10-0-1-23|spot|")
+    pod = make(signal(signal="pod_exit", source="pod", xid=None, gpu_uuid=None, exit_code=137, pod="job-a-g0001-w-0-0"))
+    assert pod["dedup_key"].startswith("job-a-g0001-w-0-0|pod|")
     site = make(signal(signal="site", source="site", xid=None, gpu_uuid=None, node=None),
                 Context(az="us-east-2a", collector_healthy=False))
     assert site["dedup_key"].startswith("eks-a|site|") and site["gpu_uuid"] is None
