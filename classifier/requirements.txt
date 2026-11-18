@@ -1,1 +1,4 @@
 PyYAML>=6.0,<7
+jsonschema>=4.23,<5
+rfc3339-validator>=0.1.4,<1
+confluent-kafka>=2.6,<3

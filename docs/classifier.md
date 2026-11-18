@@ -23,6 +23,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `intended.py` | `job.lifecycle`을 읽어 「의도된 종료」 표와 작업별 최신 세대를 유지한다(4절) |
 | `rules.py` · `rules.yaml` | 3절 표로 `category` · `suggested_action` · `confidence`를 정한다 |
 | `dedup.py` | 같은 사건을 한 번만 낸다. 규칙은 fault-event.md 2.1절(±45초 창, 키와 action이 둘 다 같으면 재발행 안 함) |
+| `event.py` | 신호 + 판정 + Mimir 값 → v1 장애 이벤트. `event_id`(= trace-id)는 판정마다 새로 만든다 |
 | `publish.py` | v1 스키마 검증 → 봉투 → Kafka 발행(6절) |
 | `app.py` | `POST /alerts` · `/healthz` · `/metrics` |
 
@@ -114,7 +115,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 |---|---|
 | `event_id` | payload의 `event_id`와 같은 값 (= trace-id) |
 | `schema_version` | 정수 `1` (payload 안의 `schema_version`은 문자열 `"1"`) |
-| `type` | `fault.detected` · `fault.held`(action이 `hold`) · `fault.reclassified`(같은 `dedup_key`로 action이 바뀜) |
+| `type` | `fault.reclassified`(같은 `dedup_key`로 action이 바뀜. `hold`로 바뀐 경우도 이것) · `fault.held`(처음부터 `hold`) · `fault.detected`(그 밖) |
 | `occurred_at` | 분류기 판정 시각 (ADR-15) |
 | `source` | `classifier` |
 | `cluster` · `node` · `job_id` · `generation` | payload와 같은 값 |
