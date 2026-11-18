@@ -180,6 +180,11 @@ def test_restore_after_restart(env):
     fresh = p.Pipeline(pipe.rules, pipe.publisher, pipe.enrich, life)
     fresh.restore(fake.sent[0])
     fresh.restore({"payload": {"dedup_key": "깨진 메시지"}})        # 건너뛴다
+    forged = json.loads(json.dumps(fake.sent[0]))
+    forged["source"] = "someone-else"                               # 분류기가 낸 것이 아니면 기억에 넣지 않는다
+    forged["payload"]["dedup_key"] = "node-9|48|1795010531"
+    fresh.restore(forged)
+    assert fresh.dedup.decide("node-9", "48", T0, "reset_then_migrate").kind == "new"
     assert fresh.handle(xid(), at(60)) == p.DUPLICATE
     assert fresh.handle(pod_exit(rank=1), at(60)) == p.ABSORBED
     assert len(fake.sent) == 1
