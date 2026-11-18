@@ -12,15 +12,17 @@ import logging
 import os
 import threading
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from fastapi import Body, FastAPI, HTTPException, Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 
+from . import dedup, intended
 from . import pipeline as p
 from .enrich import Enricher, mimir_query
 from .event import Context
+from .kafka_reader import TopicReader, kafka_consumer
 from .publish import Publisher, StdoutProducer, kafka_producer
 from .rules import Rules
 from .signals import Signal
@@ -39,7 +41,25 @@ def pipeline_from_env() -> p.Pipeline:
     mimir = os.environ.get("MIMIR_URL")
     enrich = Enricher(mimir_query(mimir)) if mimir else _unknown_context
     p.log("startup", kafka=bootstrap or "stdout", mimir=mimir or "none")
-    return p.Pipeline(Rules.load(), Publisher(producer, os.environ.get("RULE_VERSION", "dev")), enrich)
+    lifecycle = intended.Lifecycle()
+    pipeline = p.Pipeline(Rules.load(), Publisher(producer, os.environ.get("RULE_VERSION", "dev")), enrich, lifecycle)
+    if bootstrap:
+        restore_from_kafka(bootstrap, pipeline, lifecycle)
+    return pipeline
+
+
+def restore_from_kafka(bootstrap: str, pipeline: p.Pipeline, lifecycle: intended.Lifecycle) -> None:
+    """기억을 Kafka에서 되살린 뒤에 돌아온다. 실패하면 예외로 시작을 멈춘다(기억 없이 받으면 같은 사건을 또 낸다)."""
+    faults = TopicReader(kafka_consumer(bootstrap), "gpu.fault",
+                         timedelta(seconds=dedup.KEEP_SECONDS), pipeline.restore)
+    faults.catch_up()
+    faults.close()      # 복제본이 하나라 내가 낸 것은 내가 기억한다. 이어 읽지 않는다
+
+    jobs = TopicReader(kafka_consumer(bootstrap), "job.lifecycle", intended.KEEP,
+                       lambda e: lifecycle.apply(e, datetime.now(timezone.utc)),
+                       on_health=lambda healthy: setattr(lifecycle, "healthy", healthy))
+    jobs.catch_up()
+    jobs.follow()
 
 
 def create_app(pipeline: p.Pipeline | None = None) -> FastAPI:

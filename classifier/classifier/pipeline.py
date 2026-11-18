@@ -16,7 +16,7 @@ from prometheus_client import CollectorRegistry, Counter
 from . import dedup
 from .event import Context, build, dedup_code, dedup_target, iso_z
 from .intended import Lifecycle
-from .publish import InvalidEvent, Publisher
+from .publish import SOURCE, InvalidEvent, Publisher, validate
 from .rules import Rules, Verdict
 from .signals import RejectError, Signal, parse_alert
 
@@ -97,13 +97,16 @@ class Pipeline:
     def restore(self, envelope: dict[str, Any]) -> None:
         """시작할 때 Kafka gpu.fault에서 읽은, 전에 낸 이벤트 1건을 기억에 되돌린다 (7절)."""
         try:
+            if envelope.get("source") != SOURCE:
+                raise ValueError(f"source={envelope.get('source')}")
             e = envelope["payload"]
+            validate(e)
             ts = datetime.fromisoformat(e["ts"].replace("Z", "+00:00"))
             with self._lock:
                 self.dedup.record(e["dedup_key"], e["suggested_action"])
                 if e["source"] != "pod":
                     self._remember_cause(e["job_id"], e["generation"], e["suggested_action"], ts)
-        except (KeyError, TypeError, ValueError) as err:    # 우리가 낸 형식이 아닌 메시지. 건너뛴다
+        except (KeyError, TypeError, ValueError) as err:    # 분류기가 낸 v1 이벤트가 아니다. 기억에 넣지 않는다
             log("restore.skipped", reason=repr(err))
 
     def _handle(self, alert: dict[str, Any], now: datetime) -> str:
