@@ -1,0 +1,180 @@
+# Monitoring 이미지 CI (ADR-26 GHCR · ADR-40 버전). Data · K8s 레포 ci.yml과 같은 흐름이고 이미지는 하나다.
+#
+#   이미지                             Dockerfile              쓰임
+#   ghcr.io/devoops-team/classifier    classifier/Dockerfile   분류기, 온프레 모니터링 클러스터 (ADR-18 · ADR-29, docs/classifier.md)
+#
+#   PR · develop push : 테스트 + 이미지 빌드 · 점검 (push 안 함)
+#   main push(머지)   : 같은 검사 → 릴리스 버전 계산 → classifier가 바뀌었으면 push {X.Y.Z, X.Y, main, sha-<7자리>}
+#                       → 버전 봇이 태그 vX.Y.Z · Release 생성
+#
+# 버전은 레포 단위 하나. develop → main PR 본문의 '## 릴리스 노트'에서 나온다(release-notes.yml).
+#   대시보드 · 문서만 바뀐 머지도 레포 버전은 올라가지만, 이미지는 classifier가 바뀐 머지에서만 그 버전으로 올라간다.
+#
+# 다른 레포와 다른 점
+#   - 빌드 컨텍스트가 폴더가 아니라 레포 루트다. 분류기가 발행 전 검증에 쓰는 schemas/fault-event.v1.json이 classifier/ 밖에 있다
+#   - 버전 봇이 이 레포에 연결되기 전(Variable VERSION_APP_ID 없음)에는 main에서도 push · 태그를 하지 않는다.
+#     태그 없이 push만 하면 매 머지가 같은 버전으로 계산돼 같은 태그를 덮어쓴다
+#   - Gitops 반영(배포 봇)은 아직 없다. 분류기 overlay가 Gitops에 생길 때 deploy job을 더한다
+#
+# main 필수 검사로 등록할 이름: "classifier · test" · "classifier · image" · "release-notes / release notes"
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # 버전 계산 (main push에서만 release=true). 로직은 Gitops 재사용 워크플로.
+  plan:
+    name: version
+    uses: DevOops-Team/Gitops/.github/workflows/release-plan.yml@main
+    permissions:
+      contents: read
+      pull-requests: read
+
+  # main push에서 이미지를 push할지: 이미지에 들어가는 파일이 이번 머지에서 바뀌었나
+  changes:
+    name: changes
+    runs-on: ubuntu-24.04
+    outputs:
+      classifier: ${{ steps.diff.outputs.classifier }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          changed=true
+          if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+             && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+            printf '바뀐 파일:\n%s\n' "$files"
+            grep -qE '^(classifier/|schemas/fault-event\.v1\.json$|\.dockerignore$|\.github/workflows/ci\.yml$)' <<<"$files" || changed=false
+          fi
+          echo "classifier=$changed" >> "$GITHUB_OUTPUT"
+          echo "### classifier 이미지 대상: $changed" >> "$GITHUB_STEP_SUMMARY"
+
+  test:
+    name: classifier · test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"          # Dockerfile 베이스와 같게
+      - name: pip install
+        working-directory: classifier
+        run: pip install -r requirements-dev.txt
+      - name: test
+        working-directory: classifier
+        run: python -m pytest -q          # schemas/examples와 같은 판정이 나오는지, 낸 이벤트가 v1 스키마를 통과하는지 포함
+
+  image:
+    name: classifier · image
+    needs: [changes, test, plan]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write                     # GHCR push (GITHUB_TOKEN)
+    env:
+      IMAGE: ghcr.io/devoops-team/classifier
+      LOCAL: devoops/classifier:ci
+      PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.release == 'true' && needs.changes.outputs.classifier == 'true' && vars.VERSION_APP_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0                  # 판정 표의 마지막 커밋을 찾는다
+      - id: rules
+        name: 판정 표 버전 (Kafka 헤더 rule_version으로 나간다)
+        run: echo "version=$(git log -1 --format=%h -- classifier/classifier/rules.yaml)" >> "$GITHUB_OUTPUT"
+      - uses: docker/setup-buildx-action@v3
+      - name: 이미지 빌드
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: classifier/Dockerfile
+          build-args: RULE_VERSION=${{ steps.rules.outputs.version }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ env.LOCAL }}
+          cache-from: type=gha,scope=classifier
+          cache-to: type=gha,mode=max,scope=classifier
+      - name: 이미지 점검
+        env:
+          RULES: ${{ steps.rules.outputs.version }}
+        run: |
+          # 모듈 로드, 스키마 · 판정 표가 이미지 안 제자리에 있는지
+          docker run --rm "$LOCAL" python -c "import classifier.app, confluent_kafka; from classifier.publish import SCHEMA_PATH; from classifier.rules import Rules; assert SCHEMA_PATH.exists(); Rules.load(); print('ok')"
+          test "$(docker run --rm "$LOCAL" id -u)" = "1000"
+          test "$(docker run --rm "$LOCAL" printenv RULE_VERSION)" = "$RULES"
+          # 브로커 주소 없이 배포 모드로 뜨면 안 된다 (표준 출력으로만 내는 로컬 모드가 되는 것 방지)
+          ! docker run --rm -e REQUIRE_KAFKA=true "$LOCAL" python -c "from classifier.app import pipeline_from_env; pipeline_from_env()" 2>/dev/null
+
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        if: env.PUSH == 'true'
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.plan.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.plan.outputs.version }}
+            type=raw,value=main
+            type=sha,prefix=sha-,format=short
+          labels: |
+            org.opencontainers.image.title=classifier
+            org.opencontainers.image.description=${{ needs.plan.outputs.description }}
+          annotations: |
+            org.opencontainers.image.description=${{ needs.plan.outputs.description }}
+      - id: push
+        name: GHCR push (위와 같은 빌드, 캐시 재사용)
+        if: env.PUSH == 'true'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: classifier/Dockerfile
+          build-args: RULE_VERSION=${{ steps.rules.outputs.version }}
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha,scope=classifier
+      - name: Record digest
+        if: env.PUSH == 'true'
+        env:
+          DIGEST: ${{ steps.push.outputs.digest }}
+        run: echo "### classifier \`${IMAGE}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
+
+  # 이미지 push가 끝난 뒤 버전 봇이 태그 vX.Y.Z · Release를 만든다 (classifier가 안 바뀐 머지에서도 레포 버전은 올라간다).
+  #   Variable VERSION_APP_ID, 비밀키는 Environment release(main만)의 Secret VERSION_APP_PRIVATE_KEY. 연결 전에는 건너뛴다
+  release:
+    name: release
+    needs: [plan, image]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.release == 'true' && vars.VERSION_APP_ID != ''
+    uses: DevOops-Team/Gitops/.github/workflows/release-publish.yml@main
+    with:
+      tag: ${{ needs.plan.outputs.tag }}
+      notes: ${{ needs.plan.outputs.notes }}
+      app-id: ${{ vars.VERSION_APP_ID }}
+    secrets:
+      VERSION_APP_PRIVATE_KEY: ${{ secrets.VERSION_APP_PRIVATE_KEY }}   # 이름으로 넘김 — 값은 Environment release(main만)
