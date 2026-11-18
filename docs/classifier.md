@@ -19,7 +19,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 모듈 | 하는 일 |
 |---|---|
 | `signals.py` | 웹훅의 알람 1건을 내부 신호로 바꾼다. `ts`는 annotation `event_ts`만 쓴다(수신 시각 금지). resolved 알람은 버린다 |
-| `enrich.py` | Mimir 조회로 `job_id` · `generation`(`kube_pod_labels`) · `collector_healthy`(`up`) · `az`를 채운다. 조회가 실패하면 `collector_healthy=false` |
+| `enrich.py` | Mimir 조회로 신호에 없는 값을 채운다. 조회가 실패하면 모르는 값으로 둔다(`collector_healthy=false` · `job_id=null`). 아래 표 |
 | `intended.py` | `job.lifecycle`을 읽어 「의도된 종료」 표와 작업별 최신 세대를 유지한다(4절) |
 | `rules.py` · `rules.yaml` | 3절 표로 `category` · `suggested_action` · `confidence`를 정한다 |
 | `dedup.py` | 같은 사건을 한 번만 낸다. 규칙은 fault-event.md 2.1절(±45초 창, 키와 action이 둘 다 같으면 재발행 안 함) |
@@ -27,6 +27,15 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `publish.py` | v1 스키마 검증 → 봉투 → Kafka 발행(6절) |
 | `pipeline.py` | 위 단계를 알람 1건마다 순서대로 부르고 결과를 카운터 `classifier_alerts_total{outcome}`로 센다 |
 | `app.py` | `POST /alerts` · `/healthz` · `/metrics`. Kafka 전달에 실패한 알람이 있으면 503을 돌려줘 Alertmanager가 다시 보내게 한다(이미 낸 것은 중복 제거로 걸러짐) |
+
+`enrich.py`가 묻는 것 (site 신호는 묻지 않는다: `collector_healthy=false` · `az=unknown`):
+
+| 채우는 값 | 지표 | 기준 시각 | 못 찾으면 |
+|---|---|---|---|
+| `collector_healthy` | 그 클러스터의 `up{job="prometheus-agent"}` · `up{job="otel-gateway"}`와 그 노드의 `up{job="fluent-bit"}`가 **셋 다 1** | 지금(분류 시점) | `false` → `hold` |
+| `job_id` · `generation` | `kube_pod_labels`의 `label_devoops_job_id` · `label_devoops_generation`. `pod_exit`는 Pod 이름으로, 나머지는 `kube_pod_info`로 그 노드의 Pod를 찾는다 | 신호 발생 시각(직전 5분) | `null`. 한 노드에 작업이 둘이어도 `null` → 컨트롤러가 HOLD |
+| `gpu_uuid` | 커널 로그 경로 Xid만. dcgm-exporter 지표의 `UUID` 라벨(g4dn은 노드당 GPU 1장) | 신호 발생 시각(직전 5분) | `null` → 중복 제거 대상이 `node`가 된다 |
+| `az` | `kube_node_labels`의 `label_topology_kubernetes_io_zone` | 지금 | `unknown` |
 
 ## 2. 알람 → 분류기 라벨 계약
 
@@ -135,6 +144,8 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 ## 8. 확인 필요
 
 - [ ] (나) Xid 64 · 94 · 95 · 119를 NVIDIA 문서 원문과 대조해 3.2절에 추가
+- [ ] (나, EKS 테스트) dcgm-exporter 지표의 라벨 이름(`node` · `UUID`)을 실제 값으로 확인. 다르면 커널 로그 경로와 DCGM 경로의 `dedup_key` 대상이 달라져 같은 Xid가 두 건으로 나간다
+- [ ] (나, EKS overlay) KSM `--metric-labels-allowlist`에 `nodes=[topology.kubernetes.io/zone]` 추가. 그 전에는 `az`가 `unknown`
 - [ ] (나 · 한송이) `pod_exit` 대기 30초를 E2E 실측으로 조정
 - [ ] (김현수) `job.lifecycle` 토픽 보존 기간, rank별 종료 사유 `job.trainer_exited` 도입 여부
 - [ ] (나) 종료 코드 75가 실제로 없어지면 3.1절과 fault-event.md 「이벤트를 만들지 않는 종료」를 같이 고침

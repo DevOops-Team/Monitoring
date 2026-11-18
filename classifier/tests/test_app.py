@@ -114,9 +114,9 @@ def test_healthz_and_metrics(env):
 
 
 def test_default_context_holds_everything(monkeypatch, capsys):
-    """Mimir 보강 전: 수집 경로를 확인할 수 없으니 hold로만 나간다."""
-    monkeypatch.delenv("KAFKA_BOOTSTRAP", raising=False)
-    monkeypatch.delenv("REQUIRE_KAFKA", raising=False)
+    """MIMIR_URL 없음: 수집 경로를 확인할 수 없으니 hold로만 나간다."""
+    for name in ("KAFKA_BOOTSTRAP", "REQUIRE_KAFKA", "MIMIR_URL"):
+        monkeypatch.delenv(name, raising=False)
     client = TestClient(create_app())
     assert post(client, alert(ts(30))).json() == {"published": 1}
     out = json.loads(capsys.readouterr().out)
