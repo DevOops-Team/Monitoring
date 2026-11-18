@@ -114,7 +114,7 @@
     },
     {
       "type": "stat",
-      "title": "꺼진 인터페이스",
+      "title": "링크 다운",
       "description": "pfSense에 등록된 인터페이스(WAN · LAN · AWS_VTI1 · AWS_VTI2) 중 꺼진 수. 인터페이스가 켜져 있다는 뜻이지 VPN 터널이 연결됐다는 뜻은 아니다 — 터널은 아래 트래픽으로 본다",
       "datasource": {
         "type": "prometheus",
@@ -180,8 +180,8 @@
     },
     {
       "type": "stat",
-      "title": "게이트웨이 ping",
-      "description": "모니터링 클러스터 → CARP VIP 172.30.0.1 (blackbox). 0이면 LAN에서 방화벽에 닿지 않는다",
+      "title": "게이트웨이",
+      "description": "모니터링 클러스터 → CARP VIP 172.30.0.1 ping(blackbox). 1 = 응답. 0이면 LAN에서 방화벽에 닿지 않는다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -246,8 +246,8 @@
     },
     {
       "type": "stat",
-      "title": "인터넷 ping",
-      "description": "모니터링 클러스터 → 1.1.1.1 (pfSense WAN 경유). 게이트웨이는 1인데 이것만 0이면 방화벽 바깥(WAN · 회선) 문제",
+      "title": "인터넷",
+      "description": "모니터링 클러스터 → 1.1.1.1 ping(pfSense WAN 경유). 1 = 응답. 게이트웨이는 1인데 이것만 0이면 방화벽 바깥(WAN · 회선) 문제",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
