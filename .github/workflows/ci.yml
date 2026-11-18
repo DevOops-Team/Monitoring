@@ -3,7 +3,7 @@
 #   이미지                             Dockerfile              쓰임
 #   ghcr.io/devoops-team/classifier    classifier/Dockerfile   분류기, 온프레 모니터링 클러스터 (ADR-18 · ADR-29, docs/classifier.md)
 #
-#   PR · develop push : 테스트 + 이미지 빌드 · 점검 (push 안 함)
+#   PR               : 테스트 + 이미지 빌드 · 점검 (push 안 함)
 #   main push(머지)   : 같은 검사 → 릴리스 버전 계산 → classifier가 바뀌었으면 push {X.Y.Z, X.Y, main, sha-<7자리>}
 #                       → 버전 봇이 태그 vX.Y.Z · Release 생성
 #
@@ -22,7 +22,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [develop, main]
+    branches: [main]   # develop 커밋은 PR에서 점검 — push까지 걸면 같은 커밋이 두 번 돈다 (GPU-214)
   workflow_dispatch:
 
 permissions:
