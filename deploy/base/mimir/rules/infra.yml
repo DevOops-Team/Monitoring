@@ -11,7 +11,7 @@ groups:
           severity: critical
         annotations:
           summary: 'PostgreSQL(172.30.0.50) 접속 불가 — 수집기가 이벤트를 DB에 쓰지 못한다'
-          standard: MON-STD-26
+          standard: MON-STD-13
 
       # 커밋한 적 없는 파티션은 lag이 -1로 나오므로 0 이상만 합친다.
       # 1000은 임시값: 실험에서 평소 lag을 본 뒤 조정한다(지금은 0)
@@ -37,7 +37,7 @@ groups:
           severity: warning
         annotations:
           summary: '{{ $labels.host }} 루트 디스크 80% 초과'
-          standard: MON-STD-27
+          standard: MON-STD-26
 
       - alert: HostDiskCritical
         expr: >
@@ -48,4 +48,4 @@ groups:
           severity: critical
         annotations:
           summary: '{{ $labels.host }} 루트 디스크 90% 초과. Kafka 로그 보존 · PostgreSQL 데이터 확인'
-          standard: MON-STD-27
+          standard: MON-STD-26

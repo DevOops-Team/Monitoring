@@ -30,6 +30,7 @@ ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/
 룰: `base/mimir/rules/self.yml` 4개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown), Mimir ruler가 15초마다 평가.
 `base/mimir/rules/recovery.yml` 1개(`RecoveryHold`, MON-STD-25): 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화. 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
 `base/mimir/rules/records.yml` 레코딩 룰 3개: 대시보드 타일(OOM kill · OTel 거절)용. `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
+`base/mimir/rules/infra.yml` 4개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `base/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
 `recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 컨트롤러 이미지가 배포되어 `recovery_hold_total`이 수집되기 전까지는 발화하지 않는다.
 
@@ -72,11 +73,19 @@ kubectl -n monitoring get pods,pvc,svc
 V=172.30.0.35
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=count by (job) (up == 1)'   # pve-host 5 · kubelet 3 · …
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up == 0'                    # 다운 대상
-curl -s  "http://$V:9009/prometheus/api/v1/rules"                                                     # 알람 룰 5개 + 레코딩 룰 3개, Watchdog firing이 정상
+curl -s  "http://$V:9009/prometheus/api/v1/rules"                                                     # 알람 룰 9개 + 레코딩 룰 3개, Watchdog firing이 정상
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=probe_success'              # 2개 다 1
 kubectl -n monitoring port-forward svc/prometheus-agent 9090   # Agent 대상 상태 화면
 ```
 Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`에 Watchdog. Grafana `http://172.30.0.35:3000` 로그인 후 데이터소스 Mimir · Loki · Tempo.
+
+## 알람이 울리면 (`infra.yml`, 11/18)
+
+| 알람 | 뜻 | 먼저 볼 것 |
+|---|---|---|
+| `PostgresDown` (critical) | postgres_exporter가 DB(172.30.0.50)에 2분째 접속하지 못한다. 수집기가 이벤트를 DB에 못 쓰고 Grafana의 DB 패널이 빈다 | 「Kafka · DB VM」에서 db VM이 살아 있는지 → 살아 있으면 PostgreSQL 프로세스 · 접속 수(「PostgreSQL」 연결 사용) → 데이터 담당(김현수). exporter 자체가 죽은 것이면 이 알람이 아니라 `MonitoringTargetDown`이 온다 |
+| `CollectorLagHigh` (warning) | 수집기(`data-collector`)가 안 읽은 메시지가 토픽 하나에 1000건 넘게 10분째 쌓여 있다. DB 반영이 늦는다. 1000은 임시값 | 「Kafka 브로커」 수집기 lag 행: 소비 속도가 0이면 수집기가 멈춘 것(관리 클러스터 `data-system/collector` Pod · 로그), 0이 아니면 유입이 몰린 것 → 데이터 담당 |
+| `HostDiskWarning` · `HostDiskCritical` | Kafka 3대 · DB VM · pfSense 2대 중 하나의 루트 디스크가 80% · 90%를 5분째 넘었다 | 「Kafka · DB VM」 · 「pfSense」 루트 디스크 그래프로 어느 호스트인지 · 언제부터 늘었는지 → Kafka는 로그 보존, DB는 테이블 크기(「PostgreSQL」) → Kafka · DB VM은 데이터 담당, pfSense는 인프라 담당(박기현) |
 
 ## 대시보드 (Grafana 폴더 「인프라」)
 
