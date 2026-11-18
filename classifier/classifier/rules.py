@@ -34,7 +34,7 @@ class Rules:
 
     def ignored(self, s: Signal) -> bool:
         ignore = self.table["ignore"]
-        return s.xid in ignore["xid"] or s.exit_code in ignore["exit_code"]
+        return s.xid in ignore["xid"] or s.exit_code in ignore["exit_code"] or s.reason in ignore["reason"]
 
     def judge(self, s: Signal, collector_healthy: bool) -> Verdict | None:
         """None = 이벤트를 만들지 않는다."""

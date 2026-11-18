@@ -138,7 +138,7 @@ def test_timer_flushes_waiting_pod_exit(env):
     _, fake = env
     client = TestClient(create_app(Pipeline(Rules.load(), Publisher(fake, "abc1234"),
                                             lambda s: Context(az="us-east-2a", collector_healthy=True))))
-    pod = alert(ts(28), signal="pod_exit", pod="job-3f9a1c2e-g0003-w-0-0", exit_code="137")
+    pod = alert(ts(28), signal="pod_exit", pod="job-3f9a1c2e-g0003-w-0-0", reason="Error")
     with client:                                    # with 안에서만 타이머가 돈다
         assert post(client, pod).json() == {"deferred": 1}
         deadline = time.monotonic() + 6

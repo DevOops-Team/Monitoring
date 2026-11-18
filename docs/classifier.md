@@ -51,7 +51,8 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 라벨 | `node` | `site` 제외 | 노드 이름 |
 | 라벨 | `gpu_uuid` | `xid`(알 수 있을 때) | `GPU-…`. 커널 로그 경로는 PCI 주소만 알므로 비워 두면 분류기가 dcgm-exporter 라벨로 찾는다 |
 | 라벨 | `xid` | `xid` | 번호 |
-| 라벨 | `pod` · `exit_code` | `pod_exit` | 학습 컨테이너가 끝난 Pod와 종료 코드 |
+| 라벨 | `pod` · `reason` | `pod_exit` | 학습 컨테이너(`trainer`)가 끝난 Pod와 종료 사유(`Error` · `OOMKilled` …) |
+| 라벨 | `exit_code` | `pod_exit`(알 수 있을 때) | 종료 코드. kube-state-metrics는 재시작하지 않는 컨테이너의 종료 코드를 내지 않아 지금 룰은 비워 보낸다(2026-11-18 kind 확인). 종료 원인은 코드가 아니라 사유와 `job.lifecycle`로 가린다(ADR-43) |
 | annotation | `event_ts` | 모든 알람 | **원본 신호 발생 시각**(UTC). 룰 평가 시각이 아니다 |
 | annotation | `log_line` | 있으면 | 근거가 된 로그 한 줄 |
 
@@ -67,7 +68,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 조건 | 결과 | 근거 |
 |---|---|---|
 | Xid 45 | 이벤트 없음(버림) | 앞선 오류의 뒤처리이고 컨트롤러 조치가 만드는 Xid라 루프가 된다 ([worker-agents.md](worker-agents.md)) |
-| 종료 코드 0 · 75 | 이벤트 없음 | 정상 완료 · 펜싱 정상 동작 (fault-event.md 3절) |
+| 종료 사유 `Completed`, 종료 코드 0 · 75(코드가 있을 때) | 이벤트 없음 | 정상 완료 · 펜싱 정상 동작 (fault-event.md 3절). 코드 없이 온 펜싱 종료는 아래 「의도된 종료」로 걸러진다 |
 | 의도된 종료(4절) | 이벤트 없음 | 김현수 답 2026-11-18 (GPU-120) |
 | `collector_healthy=false`이고 site가 아님 | 표의 `category`는 그대로, `suggested_action=hold` · `confidence` 0.5 | 스키마 강제 규칙. 예시 08 |
 
@@ -89,7 +90,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 |---|---|---|---|---|---|
 | `spot` | 회수 예고 | `infra` | `evacuate_preemptive` | 1.0 | ADR-36. 예시 05 |
 | `site` | 클러스터 수집 끊김 | `site` | `fence_evacuate` | 0.7 | VPN 단절과 구분은 컨트롤러가 한다(fault-event.md 4절). 예시 06. `node` · `gpu_uuid`는 null |
-| `pod_exit` | 종료 코드가 0 · 75가 아님, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | 같은 오류 반복은 컨트롤러가 `refuse`로 올린다 |
+| `pod_exit` | 종료 사유가 `Completed`가 아님, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | 같은 오류 반복은 컨트롤러가 `refuse`로 올린다 |
 
 ## 4. 의도된 종료 거르기
 
