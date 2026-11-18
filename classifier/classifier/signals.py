@@ -10,6 +10,7 @@ from typing import Any
 _SOURCE = {"pod_exit": "pod", "spot": "spot", "site": "site"}
 _XID_SOURCES = ("dmesg", "dcgm")
 _GPU_UUID = re.compile(r"^GPU-[0-9a-f-]+$")     # v1 스키마와 같은 형식
+_POD_NAME = re.compile(r"^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$")     # 쿠버네티스 이름 규칙
 _FUTURE_SKEW = timedelta(minutes=5)             # 노드 시계 오차 여유. 과거 쪽은 막지 않는다(밀린 로그 줄도 같은 사건으로 묶어야 함)
 
 
@@ -44,6 +45,14 @@ def _ident(labels: dict[str, str], name: str) -> str:
     v = _require(labels, name)
     if "|" in v:
         raise RejectError(f"label {name}: '|' 포함")
+    return v
+
+
+def _pod(labels: dict[str, str]) -> str:
+    """Pod 종료의 dedup_key 대상이 된다. 이름 모양이 아니면 받지 않는다."""
+    v = _require(labels, "pod")
+    if not _POD_NAME.fullmatch(v):
+        raise RejectError("label pod: 쿠버네티스 이름 형식이 아님")
     return v
 
 
@@ -106,6 +115,6 @@ def parse_alert(alert: dict[str, Any], now: datetime | None = None) -> Signal | 
         gpu_uuid=_gpu_uuid(labels),
         xid=_int(labels, "xid") if signal == "xid" else None,
         exit_code=_int(labels, "exit_code") if signal == "pod_exit" else None,
-        pod=_ident(labels, "pod") if signal == "pod_exit" else None,
+        pod=_pod(labels) if signal == "pod_exit" else None,
         log_line=annotations.get("log_line") or None,
     )

@@ -196,3 +196,10 @@ def test_two_pods_on_one_node_are_two_incidents(env):
     first, second = pod_exit(rank=0), pod_exit(rank=1)
     second["labels"]["node"] = first["labels"]["node"]
     assert [pipe.handle(a, at(45)) for a in (first, second, first)] == [p.PUBLISHED, p.PUBLISHED, p.DUPLICATE]
+
+
+def test_pending_is_bounded(env, monkeypatch):
+    pipe, fake, _ = env
+    monkeypatch.setattr(p, "MAX_PENDING", 2)
+    assert [pipe.handle(pod_exit(rank=r), at(10)) for r in range(3)] == [p.DEFERRED, p.DEFERRED, p.PUBLISHED]
+    assert len(pipe.pending) == 2 and fake.sent[0]["payload"]["suggested_action"] == "hold"

@@ -51,6 +51,7 @@ def test_resolved_is_skipped():
     ({"node": "n1|x"}, None),               # dedup_key 구분자
     ({"cluster": "a|b"}, None),
     ({"signal": "pod_exit"}, None),         # pod · exit_code 없음
+    ({"signal": "pod_exit", "exit_code": "1", "pod": "Job_A|x"}, None),     # 쿠버네티스 이름 형식이 아님
     (None, {"event_ts": ""}),
     (None, {"event_ts": "2026-11-18T14:02:11"}),   # 시간대 없음
     (None, {"event_ts": "2026-11-18T14:09:00Z"}),  # 5분 넘게 미래
