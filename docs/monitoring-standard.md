@@ -105,6 +105,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-22 | 모니터링 클러스터 (11/09 VM → k8s 3노드, ADR-18) | 노드 디스크 (Mimir · Loki · Tempo PVC, 30일 보존) `MonitoringNodeDisk*` · Alertmanager Watchdog 데드맨 수신 · 스크레이프 대상 `MonitoringTargetDown` · 매니저 CronJob 프로브 | | | | 디스크 경고 80% · 위험 90% · Watchdog 미수신 5분 | 운영 경험 + 용량 계산 (6주 10GB 미만 추정) | 모니터링 클러스터 복구 런북 `deploy/README.md` (부 담당이 재설치 가능하게) | 가설 |
+| MON-STD-27 | 분류기 (모니터링 클러스터 `monitoring/classifier`, Pod ×1 · 목표 ×2) | 생존 `up{job="classifier"}` (Agent가 Pod를 찾아 긁는다. Pod가 없으면 시계열 자체가 없어 `absent(up == 1)`로 본다) · `classifier_lifecycle_healthy` (`job.lifecycle`을 읽고 있는가. 0이면 Pod 종료 신호가 전부 `hold`, 메시지 반영 실패로 0이 되면 재시작 전까지 안 돌아온다) | `up` 1 · `classifier_lifecycle_healthy` 1 (2026-11-19) | | | 위험 Pod 없음 또는 긁기 실패 3분 (룰 `ClassifierDown`. 3분 = 버전 올리기 · Agent 재시작 구간에 안 울리게 둔 여유) · 위험 `classifier_lifecycle_healthy == 0` 2분 (룰 `ClassifierLifecycleUnhealthy`) | 운영 경험 (교체 예정: EKS 테스트에서 버전 올리기 · 브로커 재시작 때 끊기는 시간 실측) | 분류기 런북 `deploy/README.md` 「알람이 울리면」. 분류기가 멈추면 `gpu.fault`가 안 나가 자동 복구가 시작되지 않는다 | 가설 |
 
 ### 4.9 플랫폼 SLO
 
@@ -133,6 +134,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-24 | | | 「Proxmox 호스트」 전체 (온도는 5분 평균, 80 · 90°C · NVMe 70°C 선) | 2026-11-13 |
 | MON-STD-26 | `HostDiskWarning` · `HostDiskCritical` (`infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kafka · DB VM」 · 「pfSense」 타일 디스크 최대, 그래프 루트 디스크 사용률(80 · 90% 선) | 2026-11-18 |
 | MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | (HOLD 목록 패널은 v_incidents 대시보드 때) | |
+| MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/base/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | (패널 없음) | 2026-11-19 |
 | 나머지 01 ~ 05 · 08 · 09 · 11 · 12 · 14 · 17 · 19 · 21 | | | | |
 | SLO-1 ~ 4 | | | | |
 
@@ -146,6 +148,6 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | 5 SLO (5~6주) | SLO 행 목표 |
 | 6 검증 (6주) | 추적표 전 행, 상태 `측정 못 함` 정리 |
 
-- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 27).
+- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 28).
 - 값을 바꾸면 근거 링크를 같이 바꾼다. 근거 없는 변경은 가설 열로만.
 - 룰 annotation `standard` 값이 이 표에 없으면 CI에서 실패시킨다 (2단계에서 promtool 테스트에 추가).

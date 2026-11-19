@@ -175,7 +175,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 - [ ] (나) `FailoverXidDcgm`은 같은 번호가 연달아 나면 값이 안 바뀌어 두 번째를 못 본다 → `DCGM_EXP_XID_ERRORS_COUNT` 검토
 - [ ] (나) `FailoverSiteDown`은 일부러 내린 클러스터와 Agent 하나만 죽은 경우에도 울린다. 구분할 근거 후보: MultiKueueCluster의 `devoops/fenced=true`
 - [ ] (나 · 한송이) `OOMKilled`를 따로 판정할지(지금은 `Error`와 같이 `restart_in_place`). 한송이 POD-003 · 004는 설정 수정이 필요한 실패로 다루기를 기대한다
-- [ ] (나, 실 클러스터 배포 때) `classifier_lifecycle_healthy == 0`이 이어지면 Slack으로 알리는 룰. 0인 동안 `pod_exit`는 전부 `hold`이고, 메시지 반영 실패로 0이 되면 재시작 전까지 돌아오지 않는다
+- [x] `classifier_lifecycle_healthy == 0`이 이어지면 Slack으로 알리는 룰 — `ClassifierLifecycleUnhealthy`(2분), 분류기가 없거나 안 긁히면 `ClassifierDown`(3분). `deploy/base/mimir/rules/classifier.yml`(11/19, MON-STD-27). 0인 동안 `pod_exit`는 전부 `hold`이고, 메시지 반영 실패로 0이 되면 재시작 전까지 돌아오지 않는다
 - [ ] (나 · 한송이) `pod_exit` 대기 30초를 E2E 실측으로 조정
 - [ ] (김현수) `job.lifecycle` 토픽 보존 기간, rank별 종료 사유 `job.trainer_exited` 도입 여부
 - [ ] (나) 종료 코드 75가 실제로 없어지면 3.1절과 fault-event.md 「이벤트를 만들지 않는 종료」를 같이 고침
