@@ -406,7 +406,8 @@ EKS가 뜬 날마다:
 
 ```bash
 aws sso login --profile devoops                 # 로그인은 하루쯤 지나면 만료된다
-ssh -N -D 1080 master1@172.30.0.11              # 별도 터미널에서 띄워 둔다. 비밀번호를 물으므로 Claude Code의 !로는 안 된다
+ssh -N -D 1080 master1@172.30.0.11              # 별도 터미널에서 띄워 둔다. 비밀번호를 물으므로 Claude Code의 !로는 안 된다.
+                                                # 비밀번호 뒤 아무것도 안 나오고 멈춘 것처럼 보이면 열린 것(-N = 통로만). 닫으면 끊긴다
 aws eks update-kubeconfig --name devoops-prod-eks-a --region us-east-2 --profile devoops --kubeconfig ~/.kube/eks-a.yaml
 # 프록시는 환경 변수가 아니라 kubeconfig에 넣는다: HTTPS_PROXY로 걸면 토큰을 받는 aws eks get-token까지 SOCKS를 타다 실패한다
 kubectl --kubeconfig ~/.kube/eks-a.yaml config set-cluster \
