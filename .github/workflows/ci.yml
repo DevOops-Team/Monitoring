@@ -15,8 +15,7 @@
 #   - 빌드 컨텍스트가 폴더가 아니라 레포 루트다. 분류기가 발행 전 검증에 쓰는 schemas/fault-event.v1.json이 classifier/ 밖에 있다
 #   - 버전 봇이 이 레포에 연결되기 전(Variable VERSION_APP_ID 없음)에는 main에서도 push · 태그를 하지 않는다.
 #     태그 없이 push만 하면 매 머지가 같은 버전으로 계산돼 같은 태그를 덮어쓴다
-#   - 배포 봇이 이 레포에 연결되기 전(Variable DEPLOY_APP_ID 없음)에는 deploy를 건너뛴다.
-#     그동안은 Gitops monitoring/onprem/classifier의 newTag를 손으로 올린다 (deploy/README.md 「분류기」)
+#   - 배포 봇은 2026-11-19에 연결됐다(Variable DEPLOY_APP_ID · Environment gitops-deploy). 변수가 없으면 deploy를 건너뛴다
 #
 # main 필수 검사로 등록할 이름: "classifier · test" · "classifier · image" · "release-notes / release notes"
 name: CI
