@@ -260,7 +260,7 @@ jobs:
   #   Variable VERSION_APP_ID, 비밀키는 Environment release(main만)의 Secret VERSION_APP_PRIVATE_KEY. 연결 전에는 건너뛴다
   release:
     name: release
-    needs: [plan, image, hostengine-image]
+    needs: [plan, image]   # dcgm-hostengine은 기다리지 않는다: 그 빌드가 실패해 release가 건너뛰어지면 deploy가 태그 없이 돈다
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.release == 'true' && vars.VERSION_APP_ID != ''
     uses: DevOops-Team/Gitops/.github/workflows/release-publish.yml@main
     with:
