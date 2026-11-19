@@ -373,6 +373,95 @@ cd classifier && MIMIR_URL=http://172.30.0.35:9009 .venv/bin/uvicorn classifier.
 - **`recovery_*` 지표 0건**: 복구 컨트롤러 Pod도 같은 어노테이션이 없었다. 「알람이 조용하다」와 「지표가 아예 안 들어온다」는 Mimir에서 `up`으로 구분한다
 - **EKS 노드 이름이 전부 `ip-…`**: node-exporter 지표에 `node_role`(training · spare · system)을 붙였다. 붙기 전(11/19 16:55 이전) 구간을 걸친 그래프는 같은 노드가 선 두 개로 보인다
 
+## 장애 주입 (11/20, GPU-92)
+
+주입은 두 가지다. ① trainer 강제 종료(진짜 신호, 룰부터 전부 실제 경로) ② 한송이 시나리오 Xid 79 → 48(분류기에 시험 알람을 직접 넣음, 룰은 건너뜀).
+`dcgmi`로 GPU에 Xid를 넣는 것은 이번엔 안 한다: dcgm-exporter가 내장 엔진이라 넣어도 지표에 안 나온다(사이드카는 테스트 뒤 따로).
+
+**복구 컨트롤러가 실행 모드다.** 주입하면 실제로 복구(새 세대 제출 · 노드 격리)가 일어난다. 주입마다 한송이에게 먼저 알리고 순서를 맞춘다. 격리 해제는 한송이가 한다.
+
+**준비** (위 「EKS가 뜬 날 확인 순서」 1 ~ 10이 끝난 뒤)
+
+1. 학습 작업 하나(eks-a, 2랭크 이상)를 띄우고 `train_*` 지표가 들어오는지 본다(10번)
+2. 첫 체크포인트 승인(`job.lifecycle`의 `checkpoint.approved`) 뒤에 주입한다. 그 전이면 복구할 체크포인트가 없다
+3. 띄워 둘 것: Alertmanager `http://172.30.0.35:9093` · Grafana · 아래 시각 기록표
+4. 주입 시각은 누를 때 `date '+%T'`로 적는다(KST)
+
+### ① trainer 강제 종료
+
+EKS kubeconfig가 있는 터미널에서 한다. trainer 컨테이너는 PID 1이 `torchrun`이고 그 아래 `python … train.py`가 워커다.
+PID 1은 컨테이너 안에서 `kill -9`가 먹지 않으므로 **워커를 죽인다** → `torchrun`이 실패로 끝나고 컨테이너가 `Error`로 끝난다.
+
+```bash
+# 대상 Pod (작업 · 세대 · 랭크가 같이 보인다)
+kubectl -n training get pods -o wide -L devoops/job-id,devoops/generation,batch.kubernetes.io/job-completion-index
+POD=<랭크 1 Pod>
+
+# 1) 프로세스 목록 먼저. PID 1 = torchrun, cmdline에 train.py가 있는 다른 PID = 워커
+kubectl -n training exec "$POD" -c trainer -- sh -c 'for p in /proc/[0-9]*; do printf "%s " "${p#/proc/}"; tr "\0" " " < "$p/cmdline"; echo; done'
+
+# 2) 워커 강제 종료 (sh 내장 kill. 이미지에 /bin/kill이 없을 수 있다)
+date '+%T'; kubectl -n training exec "$POD" -c trainer -- sh -c 'kill -9 <워커 PID>'
+```
+
+볼 것 (위에서부터 순서대로 나와야 한다. 수집 15초 · 룰 평가 15초 · 분류기 대기 30초라 **주입 뒤 2분 안에 `gpu.fault`**)
+
+| # | 무엇 | 어디서 | 기대 |
+|---|---|---|---|
+| 1 | 컨테이너 종료 | `kube_pod_container_status_terminated_reason{cluster="eks-a", namespace="training", container="trainer"} == 1` | 그 Pod가 `reason="Error"` |
+| 2 | 원인 알람 | Alertmanager | `FailoverPodExit`, 수신자 `classifier`, 라벨 `pod` · `node` · `reason` |
+| 3 | 분류기 수신 | `classifier_alerts_total{outcome="deferred"}` | +1. 30초 뒤 `published` +1 |
+| 4 | 발행 | Loki `{k8s_cluster_name="monitoring", service_name="pod"} \| kubernetes_container_name="classifier" \|= "event.published"` | `action` `restart_in_place` · `job_id` 채워짐. `dedup_key` 끝의 숫자 = 원본 신호 시각(epoch초) |
+| 5 | 다른 랭크 | 1 · 4를 다시 본다 | 다른 랭크 Pod가 언제 · 어떻게 끝나는지 적는다(같이 `Error` → `gpu.fault` 한 건 더? 펜싱으로 지워짐 → `intended`?). 같은 세대에 `restart_in_place`가 두 번 나가면 컨트롤러가 한 번만 복구하는지 한송이와 확인 |
+| 6 | 컨트롤러 안전망 | `sum by (reason) (recovery_hold_total)` | 늘지 않는다. `job.failed`만 받고 300초 안에 `gpu.fault`가 안 오면 컨트롤러가 HOLD한다(`unclassified_job_failure`, 이 이름이 지표 라벨로도 나오는지는 미확인 → 전체 증가로 본다) |
+| 7 | 복구 | Grafana PostgreSQL `events`에서 그 `job_id`: `recovery.decided` → `job.submitted`(새 세대) → `job.resumed` · `train_current_step{job_id="…"}` 새 `generation` 증가 | 새 세대가 이어서 학습 |
+| 8 | 덤: 진짜 Xid | Loki `{k8s_cluster_name="eks-a", service_name="kernel"} \|= "NVRM: Xid"` · `DCGM_FI_DEV_XID_ERRORS{cluster="eks-a"}` | 워커가 GPU를 쓰던 중이면 Xid 45가 날 수 있다. 나면 `FailoverXidDcgm`(`xid="45"`)이 울리고 분류기는 `ignored`. **로그 줄 원문을 측정 노트에 그대로 붙인다**(커널 로그 Xid 룰을 이 원문에 맞춰 쓴다) |
+
+### ② 한송이 시나리오: Xid 79 → 48
+
+**한송이가 요청할 때만 넣는다.** 받을 것: 작업 ID · 현재 세대 · EKS 이름 · 대상 노드 · 시각.
+노드 이름이 실제여야 분류기가 Mimir에서 `job_id` · `collector_healthy` · `gpu_uuid`를 채운다(가짜 노드면 `hold`).
+`source="dmesg"`로 보내고 `gpu_uuid`를 비우면 분류기가 dcgm-exporter 라벨에서 찾는다.
+
+```bash
+# 다른 터미널에 띄워 둔다 (모니터링 클러스터 kubeconfig. 분류기를 밖으로 열지 않는다)
+kubectl --kubeconfig <모니터링 admin.conf> -n monitoring port-forward svc/classifier 18080:8080
+
+CLUSTER=eks-a NODE=<한송이가 준 노드> XID=79 TAG="TEST NODE-004"   # 48은 XID=48 TAG="TEST NODE-005"
+TS=$(date -u +%Y-%m-%dT%H:%M:%SZ); date '+%T'
+curl -s -X POST localhost:18080/alerts -H 'Content-Type: application/json' -d "{\"alerts\":[{\"status\":\"firing\",
+  \"labels\":{\"alertname\":\"ManualXidTest\",\"pipeline\":\"failover\",\"signal\":\"xid\",\"source\":\"dmesg\",\"cluster\":\"$CLUSTER\",\"node\":\"$NODE\",\"xid\":\"$XID\"},
+  \"annotations\":{\"event_ts\":\"$TS\",\"log_line\":\"$TAG\"}}]}"
+```
+
+- 응답 `{"published":1}`이면 나갔다. Loki `event.published`에서 79 = `isolate_migrate`, 48 = `reset_then_migrate`, `job_id`가 채워졌는지 본다
+- `hold`로 나가면: `job_id`가 없거나(그 노드에 작업이 없음 · 둘 이상) 수집이 비정상(`collector_healthy=false`: 그 클러스터 Agent · OTel 게이트웨이 · 그 노드 Fluent Bit 중 하나가 `up` 0)
+- **45초 안에 같은 것을 다시 보내면 `duplicate`**(같은 사건). 다시 보내야 하면 1분 기다린다
+- 79의 복구가 끝나면 한송이가 새 세대 · 새 노드 · 시각을 준다 → 그 노드로 48
+- 시험 이벤트는 실제 `gpu.fault`에 남는다. 구분은 `raw.log_line`의 `TEST NODE-00x`
+
+### HOLD가 나면
+
+`RecoveryHold` 알람이 Slack `#alerts-gpu`에 와야 한다(Slack 화면은 사용자가 확인). `recovery_hold_total{job_id, reason}`가 늘었는지 같이 적는다.
+
+### 시각 기록표
+
+주입마다 한 줄. 시각은 KST, 원 시각을 남기고 차이는 나중에 계산한다(정의가 바뀌어도 다시 계산할 수 있게).
+
+| 주입 | 작업 · 세대 · 노드 | T0 주입 | T1 원본 신호(`dedup_key` epoch) | T2 알람 발화(Alertmanager) | T3 발행(Loki `event.published`) | T4 `recovery.decided` | T5 `job.resumed` | 결과 · 메모 |
+|---|---|---|---|---|---|---|---|---|
+| ① kill -9 | | | | | | | | |
+| ② Xid 79 | | | | | | | | |
+| ② Xid 48 | | | | | | | | |
+
+감지 = T3 − T0, 분류 = T3 − T1, 복구 = T5 − T3. 끝나면 `docs/measurements/2026-11-20-…md`로 옮긴다.
+
+### 끝난 뒤 (EKS를 내리기 전에)
+
+- dcgm-exporter 메모리 최대값: `max by (cluster) (max_over_time(container_memory_working_set_bytes{container="dcgm-exporter"}[6h]))` → 한도 조정(768Mi · 512Mi 안)의 근거
+- `POWER_VIOLATION` 원인: 학습 중 노드와 유휴(spare) 노드의 `rate(DCGM_FI_DEV_POWER_VIOLATION[10m])` 비교(11/19 측정 노트 3절)
+- 내릴 때 `FailoverSiteDown`이 약 8분 뜨는 것은 정상(위)
+
 ## 다음
 
 ~~S3 백엔드~~(11/16) → ~~ArgoCD 원격 등록~~(11/17) → ~~관리 클러스터용 수집 층~~(11/10) → replicas 3 + anti-affinity(Mimir · Loki는 replication_factor 3) → ~~EKS overlay~~(11/18, EKS에서 확인은 11/19) → ~~분류기 본체~~(11/18, 실 클러스터 배포는 남음) · ~~kafka_exporter~~(11/17) · 원인 알람 룰(Xid · Pod 종료 · 스팟 · 사이트).
