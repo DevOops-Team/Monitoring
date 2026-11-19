@@ -210,7 +210,7 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=node_t
 Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. 설계와 판정 표는 `docs/classifier.md`.
 **실 클러스터(모니터링 클러스터 `monitoring` 네임스페이스)에는 Argo CD가 올린다**(11/18): Application `gpu-monitoring-classifier` → Gitops 레포 `monitoring/onprem/classifier`. 그 overlay가 이 레포의 `deploy/classifier/base`를 릴리스 태그로 참조하고 이미지 태그를 고정한다.
 
-- **버전을 올릴 때**: 배포 봇이 연결되면(`ci.yml`의 `deploy`, Variable `DEPLOY_APP_ID`) `classifier/`가 바뀐 main 머지에서 Gitops overlay의 `newTag` · `digest`가 자동으로 바뀐다. 연결 전에는 Gitops overlay의 `newTag`를 손으로 올린다. `?ref=vX.Y.Z`(매니페스트 base)는 봇이 바꾸지 않는다: `deploy/classifier/base`가 바뀐 릴리스에서만 손으로 올린다
+- **버전을 올릴 때**: 손으로 할 일이 없다(배포 봇 연결 11/19). `classifier/` · `schemas/fault-event.v1.json` · `.dockerignore` · `.github/workflows/ci.yml`이 바뀐 main 머지에서 `ci.yml`의 `deploy`가 Gitops overlay의 `newTag` · `digest`와 `?ref=vX.Y.Z`(매니페스트 base)를 같은 릴리스로 바꾼다. `deploy/classifier/base`만 바뀐 머지는 이미지가 안 올라가 `deploy`도 돌지 않는다: 그때만 Gitops overlay의 `?ref=`를 손으로 올린다
 - **pull secret**: 이미지 패키지가 비공개라 Secret `ghcr-pull`이 필요하다. Git에 없다. 관리 클러스터 `platform`의 것을 복사한다(값이 화면에 나오지 않는다):
   ```bash
   kubectl --kubeconfig <관리 클러스터 admin.conf> -n platform get secret ghcr-pull -o json \
