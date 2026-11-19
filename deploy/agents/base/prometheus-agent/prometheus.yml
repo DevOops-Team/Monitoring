@@ -56,11 +56,16 @@ scrape_configs:
     kubernetes_sd_configs:
       - role: pod
         namespaces: {names: [monitoring]}
+        attach_metadata: {node: true}   # 아래 node_role을 만들 노드 라벨을 읽는다
     relabel_configs:
       - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_name]
         regex: node-exporter;metrics
         action: keep
       - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
+      # EKS 노드 이름은 전부 ip-…라 이름으로는 종류를 알 수 없다. 노드 라벨로 node_role을 붙여 대시보드 범례에 쓴다:
+      # GPU 노드는 devoops/node-role(training · spare), CPU 노드는 workload=system. 두 라벨이 없는 온프레 노드에는 붙지 않는다
+      - {source_labels: [__meta_kubernetes_node_label_devoops_node_role], regex: (.+), target_label: node_role}
+      - {source_labels: [__meta_kubernetes_node_label_workload], regex: (system), target_label: node_role}
 
   # kube-state-metrics: Pod · 노드 · 워크로드 상태. 헤드리스 Service의 엔드포인트를 긁는다
   - job_name: kube-state-metrics
