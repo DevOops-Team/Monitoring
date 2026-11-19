@@ -102,7 +102,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `mon-collect` | 수집 파이프라인 | Agent remote_write · WAL, Fluent Bit 출력, OTel 게이트웨이 큐 · 거절 | cluster |
 | `pve-hosts` | Proxmox 호스트 | 5대 온도(5분 평균) · 자원 · nic0 · 배터리 · AC | host |
 | `kafka-jmx` | Kafka 브로커 | 브로커 · 컨트롤러 · 파티션 복제 · 처리량 · 수집기(data-collector) lag · 요청 p99 · JVM | - |
-| `k8s-nodes` | Kubernetes 노드 | 두 클러스터 노드 9대의 자원 · PSI · 디스크 · NIC · OOM · NTP | cluster · node |
+| `k8s-nodes` | Kubernetes 노드 | 온프레 두 클러스터 노드 9대와 EKS 노드의 자원 · PSI · 디스크 · NIC · OOM · NTP. EKS 노드는 이름이 전부 `ip-…`라 범례 · 표 · 노드 목록에 종류(`node_role`: training = GPU 학습 · spare = GPU 예비 · system = CPU)를 붙여 보여 준다. 이 라벨은 수집 층 Agent의 `node-exporter` 잡이 노드 라벨에서 만든다 | cluster · node |
 | `k8s-workloads` | Kubernetes 워크로드 | Pod 상태 · 재시작 · 대기 사유 · 마지막 종료 코드 · 워크로드 복제 · 학습 Pod | cluster · namespace |
 | `vm-hosts` | Kafka · DB VM | Kafka 3대 · DB VM의 자원 · PSI · 루트 디스크(80 · 90% 선) · 디스크 IO · eth0 | host |
 | `pfsense` | pfSense | 주 · 대기의 인터페이스 상태 · 트래픽(WAN · LAN · AWS VPN 터널) · 오류 · 드롭 · 게이트웨이/인터넷 ping · 상태 동기화(pfsync) · 자원 · 루트 디스크 | host |
