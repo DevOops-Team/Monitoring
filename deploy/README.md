@@ -387,9 +387,40 @@ cd classifier && MIMIR_URL=http://172.30.0.35:9009 .venv/bin/uvicorn classifier.
 3. 띄워 둘 것: Alertmanager `http://172.30.0.35:9093` · Grafana · 아래 시각 기록표
 4. 주입 시각은 누를 때 `date '+%T'`로 적는다(KST)
 
+### EKS에 kubectl로 붙기
+
+EKS API는 사설 주소만 열려 있어 노트북에서 바로 닿지 않는다. 온프레 관리 클러스터 master1을 거치는 SOCKS 터널로 들어간다(IaC `terraform/run.sh --proxy`와 같은 방식).
+권한은 따로 받을 것이 없다: Terraform이 SSO 관리자 역할(`AWSReservedSSO_AdministratorAccess_…`)을 클러스터 관리자로 등록한다(IaC `terraform/modules/eks/access.tf`).
+
+처음 한 번: AWS 프로필 `devoops`(IaC `run.sh` 기본값과 같은 이름)
+
+```bash
+aws configure sso --profile devoops
+#   SSO session name: devoops (노트북 안 별명)
+#   SSO start URL: Confluence 「7. 접속 정보」의 포털 주소 (끝의 /#/는 뺀다), SSO region: 주소 안의 리전(ap-northeast-2)
+#   계정 947027666399 → 역할 AdministratorAccess, 기본 region us-east-2
+aws sts get-caller-identity --profile devoops   # Arn에 AWSReservedSSO_AdministratorAccess
+```
+
+EKS가 뜬 날마다:
+
+```bash
+aws sso login --profile devoops                 # 로그인은 하루쯤 지나면 만료된다
+ssh -N -D 1080 master1@172.30.0.11              # 별도 터미널에서 띄워 둔다. 비밀번호를 물으므로 Claude Code의 !로는 안 된다
+aws eks update-kubeconfig --name devoops-prod-eks-a --region us-east-2 --profile devoops --kubeconfig ~/.kube/eks-a.yaml
+# 프록시는 환경 변수가 아니라 kubeconfig에 넣는다: HTTPS_PROXY로 걸면 토큰을 받는 aws eks get-token까지 SOCKS를 타다 실패한다
+kubectl --kubeconfig ~/.kube/eks-a.yaml config set-cluster \
+  "$(kubectl --kubeconfig ~/.kube/eks-a.yaml config view -o jsonpath='{.clusters[0].name}')" \
+  --proxy-url=socks5://127.0.0.1:1080
+export KUBECONFIG=~/.kube/eks-a.yaml
+kubectl -n training get pods                    # 보이면 준비 끝
+```
+
+eks-b는 이름만 바꾼다(`devoops-prod-eks-b`, `~/.kube/eks-b.yaml`). 터널은 하나로 같이 쓴다.
+
 ### ① trainer 강제 종료
 
-EKS kubeconfig가 있는 터미널에서 한다. trainer 컨테이너는 PID 1이 `torchrun`이고 그 아래 `python … train.py`가 워커다.
+위 「EKS에 kubectl로 붙기」를 마친 터미널에서 한다. trainer 컨테이너는 PID 1이 `torchrun`이고 그 아래 `python … train.py`가 워커다.
 PID 1은 컨테이너 안에서 `kill -9`가 먹지 않으므로 **워커를 죽인다** → `torchrun`이 실패로 끝나고 컨테이너가 `Error`로 끝난다.
 
 ```bash
