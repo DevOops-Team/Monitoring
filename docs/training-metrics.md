@@ -5,7 +5,8 @@ train.py(노찬경, GPU-96)가 `/metrics`로 내보내는 지표의 이름 · �
 - 합의: 2026-11-05 (Slack). 포트 8000, phase 기준 `warmup_steps` 승인
 - 변경 요청: 2026-11-06. 랭크별 계산 시간(프로파일러 샘플링) · 데이터 대기 지표 추가, `train_step_seconds`는 Job 스텝 시간으로 의미 정정 (3-1절). 찬경 답 대기
 - 구현: trainer 컨테이너의 train.py가 `prometheus_client`로 직접 노출. 사이드카 경유 아님 (스텝 시간은 학습 루프 안에서만 잴 수 있고 rank마다 나와야 해서)
-- 수집: 워커 Prometheus Agent가 Pod 어노테이션(`kubernetes_sd` role pod)으로 찾아 15초마다 scrape → 중앙 Prometheus
+- 수집: 워커 Prometheus Agent가 Pod 어노테이션(`kubernetes_sd` role pod)으로 찾아 15초마다 scrape → 중앙 Prometheus. 어노테이션(`prometheus.io/scrape` · `port: "8000"` · `path: /metrics`)은 Backend가 JobSet의 Pod 템플릿에 붙인다(Backend v1.7.0, 2026-11-19). 그 전에는 없어서 수집되지 않았다
+- 첫 수집 확인: 2026-11-19 EKS, 작업 `fd6e69de`. 값은 [measurements/2026-11-19-eks-first-test.md](measurements/2026-11-19-eks-first-test.md) 4절
 
 ## 1. 지표 8개
 
@@ -21,7 +22,7 @@ train.py(노찬경, GPU-96)가 `/metrics`로 내보내는 지표의 이름 · �
 | `train_last_checkpoint_step` | gauge | `job_id` `generation` `rank` | 마지막으로 `.done`을 만든 step | `/ckpt/step-{8}.done` 생성 직후 |
 
 - 접두어 `train_`, 단위는 접미어(`_seconds`). 이 여덟 개 외에는 추가하지 않는다 (필요하면 이 문서부터)
-- 모든 rank가 전부 낸다. rank 0만 쓰는 progress.json(DynamoDB, 프론트용)과는 별개
+- 모든 rank가 전부 낸다. rank 0만 쓰는 progress.json(DynamoDB, 프론트용)과는 별개. 단 2026-11-19 첫 수집에서 `train_last_checkpoint_step`은 rank 0에서만 나왔다(다른 7개는 rank마다). 규약과 구현 중 어느 쪽을 맞출지는 김현수와 확인
 - `train_stage`가 있는 이유: 체크포인트 저장 중엔 step이 안 오르는 게 정상. 이걸 "학습 정체"로 오판하지 않으려고 (한송이 "장애 판단" 6절의 현재 단계와 같은 용도)
 
 ## 2. 라벨 값
@@ -45,6 +46,7 @@ buckets=(0.1, 0.3, 1, 3, 10, 30)   # 초. +Inf는 자동
 - 약 3배 간격 (SRE Book 6장 "Worrying About Your Tail": 지수 간격이면 분포가 보인다)
 - GPT-2 small · T4 · batch 4 기준 추정값. **기준선 3h 누적 측정 뒤 p50이 한가운데 오도록 조정** → 바뀌면 이 문서와 train.py 같이 (histogram 버킷 변경은 비가산이라 바꾼 시점 전후를 섞어 쓰지 않는다)
 - 왜 histogram인가: 분포(p50 · p99)를 봐야 한다. gauge 하나면 느린 step 몇 개가 평균에 묻힌다. `train_data_wait_seconds`도 같은 버킷을 쓴다
+- 2026-11-19 첫 수집(SmolLM2-135M · T4 · 2랭크): step 평균 1.34초라 샘플이 전부 (1, 3] 한 칸에 들어갔다. 지금 버킷으로는 분포가 보이지 않는다. 넓은 범위에 촘촘한 버킷(0.25 · 0.5 · 0.75 · 1 · 1.5 · 2 · 3 · 5 · 7.5 · 10 · 15 · 20 · 30 · 60)을 김현수에게 제안함. 정해지면 위 값과 `Data/trainer/devoops_ckpt.py`의 `STEP_BUCKETS`를 같은 날 바꾼다. 기준선 수집 전이어야 한다
 - `histogram_quantile`은 버킷 안에서 선형 보간한다. 샘플이 전부 (0.3, 1] 버킷이면 p50은 실제 값과 무관하게 0.65로 나온다 (A5 promtool 테스트). 비율로 쓰면 상쇄되지만 절대값으로 쓸 땐 버킷 경계가 곧 해상도 → 기준선 측정 뒤 버킷 조정이 중요한 이유
 
 ## 3-1. 랭크별 계산 시간: 왜 스텝 시간으로는 안 되고, 어떻게 재나

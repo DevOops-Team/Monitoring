@@ -165,7 +165,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 ## 8. 확인 필요
 
 - [ ] (나) Xid 64 · 94 · 95 · 119를 NVIDIA 문서 원문과 대조해 3.2절에 추가
-- [ ] (나, EKS 테스트) dcgm-exporter 지표의 라벨 이름(`node` · `UUID`)을 실제 값으로 확인. 다르면 커널 로그 경로와 DCGM 경로의 `dedup_key` 대상이 달라져 같은 Xid가 두 건으로 나간다
+- [x] dcgm-exporter 지표의 라벨 이름(`node` · `UUID`) 확인 — 11/19 EKS(T4 · 4.8.4)에서 둘 다 그대로 나온다. 수정 없음. (원래 걱정: 다르면 커널 로그 경로와 DCGM 경로의 `dedup_key` 대상이 달라져 같은 Xid가 두 건으로 나간다)
 - [x] (나, EKS overlay) KSM `--metric-labels-allowlist`에 `nodes=[topology.kubernetes.io/zone]` 추가 — `deploy/agents/overlays/eks`(11/18). kind에서 `az`가 채워지는 것 확인. EKS가 아닌 클러스터는 `az`가 `unknown`
 - [x] 분류기용 Alertmanager 라우트(`pipeline=failover`)는 `group_wait` 0초 · `repeat_interval` 1분 — `deploy/values/alertmanager.yaml`(11/18). 기본 4시간이면 분류기가 놓친 알람(재시작으로 사라진 대기 신호 · Kafka 전달 실패)이 다시 오지 않는다. 다시 온 알람은 중복 제거로 걸러진다
 - [x] 분류기 실 클러스터 배포와 웹훅 연결(11/18): Gitops `monitoring/onprem/classifier`, Alertmanager 수신자 `classifier`. Xid · Pod 종료만 보낸다

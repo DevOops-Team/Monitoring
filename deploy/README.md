@@ -35,7 +35,7 @@ ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/
 
 `base/mimir/rules/failover.yml` 3개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown`). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료는 분류기 웹훅(수신자 `classifier`), 사이트는 받는 곳 없는 수신자(`classifier-pending`). 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
-`recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 컨트롤러 이미지가 배포되어 `recovery_hold_total`이 수집되기 전까지는 발화하지 않는다.
+`recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 복구 컨트롤러 Pod의 수집 어노테이션은 11/19에 들어갔다(Gitops `onprem/controllers/recovery-controller`, 그 전까지는 `recovery_hold_total`이 수집되지 않아 울릴 수 없었다). 확인: `up{cluster="onprem-manager", namespace="platform"}` 3. HOLD가 한 번도 없으면 `recovery_hold_total` 시계열 자체가 없다.
 
 ## 적용
 
@@ -325,7 +325,8 @@ EKS는 비용 때문에 켰다 끈다. 그래서 **클러스터 이름을 파일
 |---|---|---|
 | Agent · KSM · OTel 게이트웨이 | CPU 노드 (`workload=system`, t3.large 1대) | GPU 노드는 스팟이라 회수되면 수집이 같이 죽는다. 버퍼는 hostPath |
 | Fluent Bit · node-exporter | 전 노드 | 어떤 taint든 통과 |
-| dcgm-exporter 4.8.4 | GPU 노드 (`devoops/gpu=true`) | 수집 5초. Agent의 `annotated-pods` 잡이 긁는다(`job="annotated-pods"`) |
+| dcgm-exporter 4.8.4 | GPU 노드 (`devoops/gpu=true`) | 수집 5초. Agent의 `annotated-pods` 잡이 긁는다(`job="annotated-pods"`). 메모리는 T4에서 약 435MiB를 쓴다(한도 1Gi, 256Mi에서는 OOMKilled 반복) |
+| 학습 Pod의 trainer 지표 (`train_*`, :8000) | 학습 Pod (`training` 네임스페이스) | 같은 `annotated-pods` 잡. 어노테이션은 Backend가 JobSet Pod 템플릿에 붙인다(Backend v1.7.0부터). 우리 쪽 설정은 없다 |
 
 **올라가는 길**
 
@@ -361,9 +362,16 @@ pfSense의 IPsec 인바운드(EKS 172.28.0.0/16 → `172.30.0.35` 9009 · 3100 �
 cd classifier && MIMIR_URL=http://172.30.0.35:9009 .venv/bin/uvicorn classifier.app:create_app --factory --port 18080
 ```
 
-내릴 때 볼 것: 클러스터를 내리면 `up`이 끊긴다. `MonitoringTargetDown` · Agent 부재 알람(MON-STD-15)이 어떻게 뜨는지 적어 둔다(일부러 내린 것과 장애를 구분하는 방법은 아직 없다).
+내릴 때: `FailoverSiteDown`이 클러스터마다 약 8분 뜬다(11/19 17:48 ~ 17:56). 받는 곳 없는 수신자로 가서 Slack · 분류기에는 오지 않는다. `MonitoringTargetDown`은 뜨지 않는다(대상이 사라질 뿐 `up == 0`이 생기지 않는다). 일부러 내린 것과 장애를 구분하는 방법은 아직 없다.
 
-확인 전(11/18): 4 · 5 · 7 · 8은 GPU가 있어야 볼 수 있어 kind로는 못 봤다. 1~3 · 6은 kind에서 이름 `kind-eks`로 확인했다.
+**11/19 첫 테스트 결과**: 1 ~ 10번 확인, 11번은 장애 주입 날. 값과 타임라인은 `docs/measurements/2026-11-19-eks-first-test.md`.
+
+**겪은 것 (11/19)**
+
+- **dcgm-exporter 10대가 전부 재시작 반복**: `up{container="dcgm-exporter"} == 0`, KSM 마지막 종료 사유 `OOMKilled`. 한도 256Mi가 실제 사용량(약 435MiB)보다 작았다. kind에는 GPU가 없어 볼 수 없던 값이다
+- **`train_*` 지표 0건**: 학습은 도는데 `up{namespace="training"}`이 없으면 학습 Pod에 `prometheus.io/scrape` 어노테이션이 없는 것이다(Backend jobspec). 이미 떠 있는 Pod에는 나중에 붙지 않는다. 새로 제출한 작업부터
+- **`recovery_*` 지표 0건**: 복구 컨트롤러 Pod도 같은 어노테이션이 없었다. 「알람이 조용하다」와 「지표가 아예 안 들어온다」는 Mimir에서 `up`으로 구분한다
+- **EKS 노드 이름이 전부 `ip-…`**: node-exporter 지표에 `node_role`(training · spare · system)을 붙였다. 붙기 전(11/19 16:55 이전) 구간을 걸친 그래프는 같은 노드가 선 두 개로 보인다
 
 ## 다음
 
