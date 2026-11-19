@@ -129,6 +129,19 @@ scrape_configs:
       - {target_label: cluster, replacement: monitoring}
       - {source_labels: [__meta_kubernetes_pod_node_name], target_label: node}
 
+  # 분류기(deploy/classifier/base): classifier_alerts_total{outcome} · classifier_lifecycle_healthy 등. 룰은 mimir/rules/classifier.yml.
+  # Service 주소가 아니라 Pod를 찾아 긁는다: classifier_lifecycle_healthy는 Pod마다 값이 달라, 복제본이 2개가 되면 Service로는 한쪽만 보인다
+  - job_name: classifier
+    kubernetes_sd_configs:
+      - role: pod
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_label_app_kubernetes_io_name, __meta_kubernetes_pod_container_port_name]
+        regex: classifier;http
+        action: keep
+      - {target_label: cluster, replacement: monitoring}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
+
   # --- 밖에서 찔러 보기 (blackbox_exporter 경유). 대상 주소가 instance 라벨이 된다 ---
   # pfSense LAN 게이트웨이와 인터넷(공인 DNS). VPN 터널 · 워커 쪽은 AWS 재구축 뒤 대상만 추가
   - job_name: blackbox-icmp
