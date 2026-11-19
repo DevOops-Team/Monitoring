@@ -1,7 +1,11 @@
-# Monitoring 이미지 CI (ADR-26 GHCR · ADR-40 버전). Data · K8s 레포 ci.yml과 같은 흐름이고 이미지는 하나다.
+# Monitoring 이미지 CI (ADR-26 GHCR · ADR-40 버전). Data · K8s 레포 ci.yml과 같은 흐름이고 이미지는 둘이다.
 #
-#   이미지                             Dockerfile              쓰임
-#   ghcr.io/devoops-team/classifier    classifier/Dockerfile   분류기, 온프레 모니터링 클러스터 (ADR-18 · ADR-29, docs/classifier.md)
+#   이미지                                   Dockerfile                    쓰임
+#   ghcr.io/devoops-team/classifier          classifier/Dockerfile         분류기, 온프레 모니터링 클러스터 (ADR-18 · ADR-29, docs/classifier.md)
+#   ghcr.io/devoops-team/dcgm-hostengine     dcgm-hostengine/Dockerfile    dcgm-exporter 사이드카, EKS GPU 노드 (Xid 주입용 엔진, GPU-92)
+#
+#   dcgm-hostengine은 배포 봇을 쓰지 않는다: EKS 수집 층은 Gitops overlay 없이 이 레포 main을 따라가므로
+#   deploy/agents/gpu/dcgm-exporter/daemonset.yaml의 태그를 손으로 올린다. GHCR 패키지는 공개(EKS에 pull secret 없음)
 #
 #   PR               : 테스트 + 이미지 빌드 · 점검 (push 안 함)
 #   main push(머지)   : 같은 검사 → 릴리스 버전 계산 → classifier가 바뀌었으면 push {X.Y.Z, X.Y, main, sha-<7자리>}
@@ -48,6 +52,7 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       classifier: ${{ steps.diff.outputs.classifier }}
+      hostengine: ${{ steps.diff.outputs.hostengine }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -58,14 +63,17 @@ jobs:
           BEFORE: ${{ github.event.before }}
         run: |
           changed=true
+          hostengine=true
           if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
             files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
             printf '바뀐 파일:\n%s\n' "$files"
             grep -qE '^(classifier/|schemas/fault-event\.v1\.json$|\.dockerignore$|\.github/workflows/ci\.yml$)' <<<"$files" || changed=false
+            grep -qE '^(dcgm-hostengine/|\.github/workflows/ci\.yml$)' <<<"$files" || hostengine=false
           fi
           echo "classifier=$changed" >> "$GITHUB_OUTPUT"
-          echo "### classifier 이미지 대상: $changed" >> "$GITHUB_STEP_SUMMARY"
+          echo "hostengine=$hostengine" >> "$GITHUB_OUTPUT"
+          echo "### classifier 이미지 대상: $changed · dcgm-hostengine 이미지 대상: $hostengine" >> "$GITHUB_STEP_SUMMARY"
 
   test:
     name: classifier · test
@@ -165,6 +173,65 @@ jobs:
           DIGEST: ${{ steps.push.outputs.digest }}
         run: echo "### classifier \`${IMAGE}@${DIGEST}\`" >> "$GITHUB_STEP_SUMMARY"
 
+  # dcgm-exporter 사이드카 엔진. 흐름은 위 classifier image와 같다(빌드 한 번 → 점검 → main 릴리스면 그 이미지를 push).
+  #   GPU가 없어 엔진이 실제로 GPU를 잡는지는 여기서 못 본다(EKS에서 확인, deploy/README.md 「EKS 수집 층」)
+  hostengine-image:
+    name: dcgm-hostengine · image
+    needs: [changes, plan]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/devoops-team/dcgm-hostengine
+      LOCAL: devoops/dcgm-hostengine:ci
+      PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.release == 'true' && needs.changes.outputs.hostengine == 'true' && vars.VERSION_APP_ID != '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.plan.outputs.version }},enable=${{ env.PUSH }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.plan.outputs.version }},enable=${{ env.PUSH }}
+            type=raw,value=main,enable=${{ env.PUSH }}
+            type=sha,prefix=sha-,format=short,enable=${{ env.PUSH }}
+          labels: |
+            org.opencontainers.image.title=dcgm-hostengine
+      - name: 이미지 빌드
+        uses: docker/build-push-action@v6
+        with:
+          context: dcgm-hostengine
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: |
+            ${{ env.LOCAL }}
+            ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=dcgm-hostengine
+          cache-to: type=gha,mode=max,scope=dcgm-hostengine
+      - name: 이미지 점검
+        run: |
+          # 엔진 · dcgmi가 실행되는지(GPU 없이도 버전은 나온다), 크기 기록 (GPU 노드 루트 디스크가 작다)
+          docker run --rm "$LOCAL" nv-hostengine --version
+          docker run --rm "$LOCAL" dcgmi --version
+          echo "### dcgm-hostengine 크기 $(docker image inspect "$LOCAL" --format '{{.Size}}' | numfmt --to=iec)" >> "$GITHUB_STEP_SUMMARY"
+      - name: Log in to GHCR
+        if: env.PUSH == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: GHCR push (점검한 이미지 그대로)
+        if: env.PUSH == 'true'
+        run: |
+          docker push --all-tags "$IMAGE" | tee push.log
+          echo "### dcgm-hostengine \`${IMAGE}@$(grep -oE 'sha256:[0-9a-f]{64}' push.log | sort -u | head -1)\`" >> "$GITHUB_STEP_SUMMARY"
+
   # push한 이미지를 Gitops overlay에 반영한다 (ADR-23). 바꾸는 것은 overlay의 images 항목(newTag · digest)과
   #   원격 base ?ref= 태그다 (base-ref, GPU-212). 태그는 release job이 만들므로 그 뒤에 돈다.
   #   release가 건너뛰어지면(버전 봇 연결 전 · 릴리스 아님) ref는 그대로 두고 이미지만 반영한다.
@@ -193,7 +260,7 @@ jobs:
   #   Variable VERSION_APP_ID, 비밀키는 Environment release(main만)의 Secret VERSION_APP_PRIVATE_KEY. 연결 전에는 건너뛴다
   release:
     name: release
-    needs: [plan, image]
+    needs: [plan, image, hostengine-image]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.release == 'true' && vars.VERSION_APP_ID != ''
     uses: DevOops-Team/Gitops/.github/workflows/release-publish.yml@main
     with:
