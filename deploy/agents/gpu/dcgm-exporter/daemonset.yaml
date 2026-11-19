@@ -51,7 +51,9 @@ spec:
             - {name: metrics, containerPort: 9400}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
-            limits: {memory: 256Mi}
+            # 256Mi에서는 초기화 직후 OOMKilled로 계속 재시작했다(11/19 EKS g4dn.xlarge 10대 전부). 1Gi는 일단 살리려는 값이고,
+            # 실제 최대 사용량을 잰 뒤 줄인다
+            limits: {memory: 1Gi}
           securityContext:
             runAsNonRoot: false
             runAsUser: 0
