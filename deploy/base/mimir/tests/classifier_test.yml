@@ -1,0 +1,73 @@
+# promtool test rules. scripts/deploy-k8s.sh의 lint 단계가 돌린다
+rule_files:
+  - ../rules/classifier.yml
+evaluation_interval: 15s
+
+tests:
+  # 1) 5분에 Pod가 사라져 up 시계열이 끊긴다 → 3분 지나야 울리고, 새 Pod가 긁히면 꺼진다
+  - name: 분류기 Pod가 3분 넘게 없으면 울린다
+    interval: 15s
+    input_series:
+      - series: 'up{job="classifier", cluster="monitoring", pod="classifier-a"}'
+        values: '1x20 stale _x19'
+      - series: 'up{job="classifier", cluster="monitoring", pod="classifier-b"}'
+        values: '_x40 1x20'
+    alert_rule_test:
+      - eval_time: 7m
+        alertname: ClassifierDown
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: ClassifierDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: classifier, cluster: monitoring}
+            exp_annotations:
+              summary: '분류기가 없거나 지표가 안 긁힌다 — gpu.fault가 나가지 않아 자동 복구가 시작되지 않는다'
+              standard: MON-STD-27
+      - eval_time: 11m
+        alertname: ClassifierDown
+        exp_alerts: []
+
+  # 2) Pod는 있는데 긁기가 실패한다(up == 0) → 같은 알람. 1분짜리 끊김(버전 올리기)은 안 울린다
+  - name: 분류기 지표가 3분 넘게 안 긁히면 울린다
+    interval: 15s
+    input_series:
+      - series: 'up{job="classifier", cluster="monitoring", pod="classifier-a"}'
+        values: '1x8 0x4 1x8 0x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ClassifierDown
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: ClassifierDown
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: ClassifierDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: classifier, cluster: monitoring}
+            exp_annotations:
+              summary: '분류기가 없거나 지표가 안 긁힌다 — gpu.fault가 나가지 않아 자동 복구가 시작되지 않는다'
+              standard: MON-STD-27
+
+  # 3) job.lifecycle 읽기가 1분 끊겼다 돌아오면 안 울린다. 2분 넘게 0이면 울리고, 1로 돌아오면 꺼진다
+  - name: job.lifecycle을 2분 넘게 못 읽으면 울린다
+    interval: 15s
+    input_series:
+      - series: 'classifier_lifecycle_healthy{job="classifier", cluster="monitoring", pod="classifier-a"}'
+        values: '1x8 0x4 1x8 0x20 1x20'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: ClassifierLifecycleUnhealthy
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: ClassifierLifecycleUnhealthy
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: ClassifierLifecycleUnhealthy
+        exp_alerts:
+          - exp_labels: {severity: critical, job: classifier, cluster: monitoring, pod: classifier-a}
+            exp_annotations:
+              summary: '분류기(classifier-a)가 job.lifecycle을 못 읽는다 — Pod 종료 신호가 전부 hold로 나간다. 안 돌아오면 분류기 재시작'
+              standard: MON-STD-27
+      - eval_time: 12m
+        alertname: ClassifierLifecycleUnhealthy
+        exp_alerts: []
