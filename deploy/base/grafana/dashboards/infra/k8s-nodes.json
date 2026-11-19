@@ -49,7 +49,7 @@
           "uid": "prometheus"
         },
         "query": {
-          "query": "label_values(up{job=\"node-exporter\", cluster=~\"$cluster\"}, node)",
+          "query": "query_result(label_replace(label_join(max by (node, node_role) (up{job=\"node-exporter\", cluster=~\"$cluster\"}), \"disp\", \" · \", \"node_role\", \"node\"), \"disp\", \"$1\", \"disp\", \" · (.*)\"))",
           "refId": "var"
         },
         "refresh": 2,
@@ -60,7 +60,8 @@
         "current": {
           "text": "All",
           "value": "$__all"
-        }
+        },
+        "regex": "/disp=\"(?<text>[^\"]+)\".*node=\"(?<value>[^\"]+)\"/"
       }
     ]
   },
@@ -480,7 +481,7 @@
     {
       "type": "table",
       "title": "노드 요약",
-      "description": "monitoring1~3 = .31~.33 · master1~3 = .11~.13 · worker1~3 = .21~.23. 가동 시간이 갑자기 짧아졌으면 재부팅된 것",
+      "description": "monitoring1~3 = .31~.33 · master1~3 = .11~.13 · worker1~3 = .21~.23. 가동 시간이 갑자기 짧아졌으면 재부팅된 것. 종류(node_role)는 EKS 노드에만 있다: training = GPU 학습 · spare = GPU 예비 · system = CPU.",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -492,7 +493,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster, node) (up{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"})",
+          "expr": "max by (cluster, node, node_role) (up{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"})",
           "instant": true,
           "format": "table"
         },
@@ -502,7 +503,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster, node) (time() - node_boot_time_seconds{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"})",
+          "expr": "max by (cluster, node, node_role) (time() - node_boot_time_seconds{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"})",
           "instant": true,
           "format": "table"
         },
@@ -512,7 +513,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count by (cluster, node) (node_cpu_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mode=\"idle\"})",
+          "expr": "count by (cluster, node, node_role) (node_cpu_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mode=\"idle\"})",
           "instant": true,
           "format": "table"
         },
@@ -522,7 +523,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster, node) (node_memory_MemTotal_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"})",
+          "expr": "max by (cluster, node, node_role) (node_memory_MemTotal_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"})",
           "instant": true,
           "format": "table"
         },
@@ -532,7 +533,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster, node) (1 - node_memory_MemAvailable_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"} / node_memory_MemTotal_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"})",
+          "expr": "max by (cluster, node, node_role) (1 - node_memory_MemAvailable_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"} / node_memory_MemTotal_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"})",
           "instant": true,
           "format": "table"
         },
@@ -542,7 +543,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster, node) (1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"})",
+          "expr": "max by (cluster, node, node_role) (1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"})",
           "instant": true,
           "format": "table"
         }
@@ -559,6 +560,7 @@
               "Time": true
             },
             "renameByName": {
+              "node_role": "종류",
               "Value #A": "up",
               "Value #B": "가동 시간",
               "Value #C": "CPU 코어",
@@ -569,12 +571,13 @@
             "indexByName": {
               "cluster": 0,
               "node": 1,
-              "Value #A": 2,
-              "Value #B": 3,
-              "Value #C": 4,
-              "Value #D": 5,
-              "Value #E": 6,
-              "Value #F": 7
+              "node_role": 2,
+              "Value #A": 3,
+              "Value #B": 4,
+              "Value #C": 5,
+              "Value #D": 6,
+              "Value #E": 7,
+              "Value #F": 8
             }
           }
         }
@@ -665,8 +668,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "1 - avg by (cluster, node) (rate(node_cpu_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mode=\"idle\"}[5m]))",
-          "legendFormat": "{{node}}"
+          "expr": "1 - avg by (cluster, node, node_role) (rate(node_cpu_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mode=\"idle\"}[5m]))",
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
@@ -738,7 +741,7 @@
             "uid": "prometheus"
           },
           "expr": "1 - node_memory_MemAvailable_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"} / node_memory_MemTotal_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}",
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
@@ -810,7 +813,7 @@
             "uid": "prometheus"
           },
           "expr": "1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"}",
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
@@ -889,8 +892,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max by (cluster, node) (node_load5{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}) / count by (cluster, node) (node_cpu_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mode=\"idle\"})",
-          "legendFormat": "{{node}}"
+          "expr": "max by (cluster, node, node_role) (node_load5{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}) / count by (cluster, node, node_role) (node_cpu_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mode=\"idle\"})",
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
@@ -974,7 +977,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(node_pressure_cpu_waiting_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}[5m])",
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
@@ -1045,7 +1048,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(node_pressure_memory_waiting_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}[5m])",
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
@@ -1116,7 +1119,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(node_pressure_io_waiting_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}[5m])",
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
@@ -1200,7 +1203,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(node_disk_io_time_seconds_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"sd.*|vd.*|xvd.*|nvme.*\"}[5m])",
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
@@ -1271,8 +1274,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (node) (rate(node_disk_read_bytes_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"sd.*|vd.*|xvd.*|nvme.*\"}[5m]))",
-          "legendFormat": "{{node}} 읽기"
+          "expr": "sum by (node, node_role) (rate(node_disk_read_bytes_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"sd.*|vd.*|xvd.*|nvme.*\"}[5m]))",
+          "legendFormat": "{{node_role}} {{node}} 읽기"
         },
         {
           "refId": "B",
@@ -1280,8 +1283,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (node) (rate(node_disk_written_bytes_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"sd.*|vd.*|xvd.*|nvme.*\"}[5m]))",
-          "legendFormat": "{{node}} 쓰기"
+          "expr": "sum by (node, node_role) (rate(node_disk_written_bytes_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"sd.*|vd.*|xvd.*|nvme.*\"}[5m]))",
+          "legendFormat": "{{node_role}} {{node}} 쓰기"
         }
       ],
       "fieldConfig": {
@@ -1352,7 +1355,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(node_network_receive_bytes_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"eth.*|ens.*|enp.*\"}[5m])",
-          "legendFormat": "{{node}} 받음"
+          "legendFormat": "{{node_role}} {{node}} 받음"
         },
         {
           "refId": "B",
@@ -1361,7 +1364,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(node_network_transmit_bytes_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"eth.*|ens.*|enp.*\"}[5m])",
-          "legendFormat": "{{node}} 보냄"
+          "legendFormat": "{{node_role}} {{node}} 보냄"
         }
       ],
       "fieldConfig": {
@@ -1432,7 +1435,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(node_network_receive_errs_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"eth.*|ens.*|enp.*\"}[5m]) + rate(node_network_transmit_errs_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"eth.*|ens.*|enp.*\"}[5m])",
-          "legendFormat": "{{node}} 오류"
+          "legendFormat": "{{node_role}} {{node}} 오류"
         },
         {
           "refId": "B",
@@ -1441,7 +1444,7 @@
             "uid": "prometheus"
           },
           "expr": "rate(node_network_receive_drop_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"eth.*|ens.*|enp.*\"}[5m]) + rate(node_network_transmit_drop_total{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", device=~\"eth.*|ens.*|enp.*\"}[5m])",
-          "legendFormat": "{{node}} 드롭"
+          "legendFormat": "{{node_role}} {{node}} 드롭"
         }
       ],
       "fieldConfig": {
@@ -1525,7 +1528,7 @@
             "uid": "prometheus"
           },
           "expr": "increase(node_vmstat_oom_kill{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}[5m])",
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
@@ -1596,7 +1599,7 @@
             "uid": "prometheus"
           },
           "expr": "node_timex_offset_seconds{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\"}",
-          "legendFormat": "{{node}}"
+          "legendFormat": "{{node_role}} {{node}}"
         }
       ],
       "fieldConfig": {
