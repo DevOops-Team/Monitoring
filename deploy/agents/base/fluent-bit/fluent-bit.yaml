@@ -1,4 +1,4 @@
-# Fluent Bit 설정(YAML 형식). 입력 2개 → kubernetes 필터 → OTLP 출력(게이트웨이). 어느 클러스터에서나 같은 파일
+# Fluent Bit 설정(YAML 형식). 입력 3개(컨테이너 · 커널 · 노드 서비스) → kubernetes 필터 → OTLP 출력(게이트웨이). 어느 클러스터에서나 같은 파일
 service:
   flush: 1
   log_level: warn                  # info면 OTLP 출력이 매초 'HTTP status=200'을 찍어 자기 로그가 Loki를 채운다
@@ -42,6 +42,26 @@ pipeline:
       read_from_tail: on
       strip_underscores: off
       storage.type: filesystem
+    # Pod가 아닌 노드 서비스 로그: etcd(Kubespray etcd_deployment_type: host) · kubelet · containerd. 셋 다 /var/log/containers에 없다.
+    # 전체 저널을 읽고 세 유닛만 남긴다(EKS에는 etcd가 없어 둘만 나온다). Proxmox 호스트 role과 같이 service_name="journal"
+    - name: systemd
+      tag: host.unit
+      path: /var/log/journal
+      db: /var/lib/monitoring-agents/fluent-bit/systemd-units.db
+      read_from_tail: on
+      strip_underscores: off
+      storage.type: filesystem
+      processors:
+        logs:
+          - name: grep
+            regex: _SYSTEMD_UNIT ^(etcd|kubelet|containerd)\.service$
+          # 실행 명령줄 · 실행 파일 경로는 보내지 않는다(kubelet 인자 등이 Loki(무인증) · S3에 30일 남는 것을 막는다). Proxmox role과 같음
+          - name: content_modifier
+            action: delete
+            key: _CMDLINE
+          - name: content_modifier
+            action: delete
+            key: _EXE
 
   filters:
     # Pod 메타데이터(namespace_name · pod_name · container_name · host)를 record의 kubernetes 키에 붙인다.

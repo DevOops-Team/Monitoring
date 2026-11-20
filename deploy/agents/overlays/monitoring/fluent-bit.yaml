@@ -1,6 +1,6 @@
 # 모니터링 클러스터용 Fluent Bit 설정. 입력 · 필터 · service 블록은 base(../../base/fluent-bit/fluent-bit.yaml)와 같고,
 # 출력만 게이트웨이가 아니라 Loki OTLP 직접이다.
-# 라벨: 리소스 속성은 고정 값만 넣을 수 있다(레코드 필드 참조 불가, 5.1.1에서 확인) → 라벨은 k8s_cluster_name · service_name(pod | kernel) 둘.
+# 라벨: 리소스 속성은 고정 값만 넣을 수 있다(레코드 필드 참조 불가, 5.1.1에서 확인) → 라벨은 k8s_cluster_name · service_name(pod | kernel | journal) 둘.
 # 네임스페이스 · Pod · 컨테이너 이름은 구조화 메타데이터(kubernetes_namespace_name 등)로 들어간다. 관리 클러스터처럼 라벨이 아니다
 service:
   flush: 1
@@ -39,6 +39,23 @@ pipeline:
       read_from_tail: on
       strip_underscores: off
       storage.type: filesystem
+    - name: systemd
+      tag: host.unit
+      path: /var/log/journal
+      db: /var/lib/monitoring-agents/fluent-bit/systemd-units.db
+      read_from_tail: on
+      strip_underscores: off
+      storage.type: filesystem
+      processors:
+        logs:
+          - name: grep
+            regex: _SYSTEMD_UNIT ^(etcd|kubelet|containerd)\.service$
+          - name: content_modifier
+            action: delete
+            key: _CMDLINE
+          - name: content_modifier
+            action: delete
+            key: _EXE
 
   filters:
     - name: kubernetes
@@ -88,7 +105,7 @@ pipeline:
             key: service.name
             value: pod
     - name: opentelemetry
-      match: host.*
+      match: host.kernel
       host: 172.30.0.35
       port: 3100
       logs_uri: /otlp/v1/logs
@@ -112,3 +129,29 @@ pipeline:
             action: upsert
             key: service.name
             value: kernel               # 관리 클러스터 커널 로그와 같은 값
+    # 노드 서비스(etcd · kubelet · containerd). 유닛 이름은 _SYSTEMD_UNIT 구조화 메타데이터
+    - name: opentelemetry
+      match: host.unit
+      host: 172.30.0.35
+      port: 3100
+      logs_uri: /otlp/v1/logs
+      tls: off
+      http2: off
+      logs_body_key: MESSAGE
+      logs_body_key_attributes: true
+      log_response_payload: false
+      retry_limit: no_limits
+      storage.total_limit_size: 1G
+      processors:
+        logs:
+          - name: opentelemetry_envelope
+          - name: content_modifier
+            context: otel_resource_attributes
+            action: upsert
+            key: k8s.cluster.name
+            value: monitoring
+          - name: content_modifier
+            context: otel_resource_attributes
+            action: upsert
+            key: service.name
+            value: journal              # 관리 클러스터 · Proxmox 호스트와 같은 값
