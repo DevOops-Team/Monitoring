@@ -76,7 +76,7 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 - 이유: Tempo 3.0에서 「확장형 모놀리식」이 없어졌다. 모놀리식을 3개 띄우면 서로 모르는 Tempo 3개가 되어 트레이스가 Pod마다 흩어진다. 늘리는 공식 방법은 마이크로서비스 모드뿐이고 **Kafka가 필수**다
 - 구조: `앱 → distributor → Kafka(토픽) → block-builder → S3` / `Kafka → live-store(최근 데이터)`, 조회는 `query-frontend → querier → S3 + live-store`, 압축은 `backend-scheduler · backend-worker`
 - 차트: `grafana-community/tempo-distributed` **3.25.0**(app 3.1.1, 11/05 출시). 3.29.1은 11/18 출시라 2주 규칙에 걸린다
-- Kafka 토픽(현수 요청 보냄 11/20): `tempo.ingest`(이름 미정), 파티션 3 · 복제 3 · `min.insync.replicas` 2, 보존 짧게(예 24시간). live-store 수 = 파티션 수
+- Kafka 토픽(현수가 생성 11/20, 데이터 파트 설계 · Kafka 흐름 문서 토픽 표에 있음): `tempo.ingest`, 파티션 3 · 복제 3 · `min.insync.replicas` 2, 보존 24시간 + 파티션당 1GB 상한(`retention.bytes`, 브로커 디스크를 학습 사건과 같이 써서 트레이스가 몰려도 못 채우게). 접속 `172.30.0.40~42:9092`(PLAINTEXT, 인증 없음), 컨슈머 그룹은 Tempo 이름으로. live-store 수 = 파티션 수(3)
 - rollout-operator: live-store를 존마다 두는 HA에 필요(차트가 요구)
 - OTLP 받는 주소: `.35:4317/4318`의 대상 Service를 distributor로 바꾼다. 보내는 쪽(OTel 게이트웨이) 설정은 그대로
 - Gitops: Application `gpu-monitoring-tempo`를 새 차트로 교체, AppProject에 차트 · rollout-operator 리소스 허용
@@ -99,7 +99,7 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 
 ## 5. 결정 (사용자 2026-11-20)
 
-1. **Tempo는 분산형(B)으로 간다.** 1개 유지(A)도 검토했으나 진짜 HA를 택함. Kafka가 데이터 파트 설비라 토픽은 현수 합의 뒤
+1. **Tempo는 분산형(B)으로 간다.** 1개 유지(A)도 검토했으나 진짜 HA를 택함. Kafka는 데이터 파트 설비 → 현수 합의 · 토픽 생성 완료(11/20)
 2. **Agent 묶음은 전용 라벨**로 구분한다(`cluster` 재사용 안 함). 라벨 이름은 구현 때
 3. **분류기는 active-standby**(Lease 대장 하나만 처리)
 4. **Jira는 GPU-227 하나로 통일**
