@@ -1,0 +1,1401 @@
+{
+  "uid": "training-jobs",
+  "title": "학습 작업",
+  "tags": [
+    "training",
+    "trainer",
+    "MON-STD-08"
+  ],
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "timezone": "browser",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "refresh": "30s",
+  "graphTooltip": 1,
+  "annotations": {
+    "list": []
+  },
+  "links": [],
+  "templating": {
+    "list": [
+      {
+        "name": "cluster",
+        "label": "클러스터",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(train_current_step, cluster)",
+          "refId": "var"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "job_id",
+        "label": "작업",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(train_current_step{cluster=~\"$cluster\"}, job_id)",
+          "refId": "var"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      },
+      {
+        "name": "generation",
+        "label": "세대",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "query": {
+          "query": "label_values(train_current_step{cluster=~\"$cluster\", job_id=~\"$job_id\"}, generation)",
+          "refId": "var"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {
+          "text": "All",
+          "value": "$__all"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "stat",
+      "title": "학습 작업",
+      "description": "지표를 내고 있는 작업(job_id · 세대) 수",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(count by (job_id, generation) (train_current_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"})) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 1,
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "스텝 평균",
+      "description": "한 step에 걸린 시간(steady 구간, 5분 평균). 작업이 여러 개면 그 평균. 버킷이 성겨 분위수 대신 평균(sum ÷ count)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "avg(sum by (cluster, job_id, generation) (rate(train_step_seconds_sum{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m])) / sum by (cluster, job_id, generation) (rate(train_step_seconds_count{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m])))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 2,
+      "gridPos": {
+        "x": 4,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "스트래글러",
+      "description": "가장 느린 랭크의 GPU 계산 시간 ÷ 랭크 중앙값(MON-STD-08). 1.0 = 정상 · 1.5 이상 2분 = 경고 · 2.0 = 위험",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(train_rank_compute_seconds{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"} / on (job_id, generation) group_left quantile by (job_id, generation) (0.5, train_rank_compute_seconds{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"}))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#FF9830",
+                "value": 1.5
+              },
+              {
+                "color": "#F2495C",
+                "value": 2
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 2
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 3,
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "데이터 대기",
+      "description": "배치가 GPU에 올라올 때까지 기다린 시간이 가장 긴 랭크(5분 평균). 정상은 ms 미만, 0.1초를 넘으면 노드(로더 · 디스크 · CPU) 쪽 문제",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(sum by (cluster, job_id, generation, rank) (rate(train_data_wait_seconds_sum{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m])) / sum by (cluster, job_id, generation, rank) (rate(train_data_wait_seconds_count{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m])))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#FF9830",
+                "value": 0.1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "미저장 스텝",
+      "description": "현재 step − 마지막 체크포인트 step 중 가장 큰 값. 지금 장애가 나면 잃는 step 수",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max(max by (cluster, job_id, generation) (train_current_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"}) - max by (cluster, job_id, generation) (train_last_checkpoint_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"}))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "정체 작업",
+      "description": "단계가 「학습」인데 5분 동안 step이 안 오른 작업 수. 저장 중에는 step이 안 올라도 정상이라 세지 않는다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count((max by (job_id, generation) (train_stage{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", stage=\"train\"}) == 1) and (max by (job_id, generation) (delta(train_current_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"}[5m])) == 0)) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#F2495C",
+                "value": 1
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 6,
+      "gridPos": {
+        "x": 20,
+        "y": 0,
+        "w": 4,
+        "h": 4
+      }
+    },
+    {
+      "type": "row",
+      "title": "요약",
+      "collapsed": false,
+      "panels": [],
+      "id": 7,
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "table",
+      "title": "작업 요약",
+      "description": "세대 = 복구로 다시 시작할 때마다 +1. 미저장 = 현재 step − 체크포인트 step. 끝난 작업은 시간 범위를 그때로 옮겨야 나온다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, job_id, generation) (train_current_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"})",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, job_id, generation) (train_last_checkpoint_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"})",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, job_id, generation) (train_current_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"}) - max by (cluster, job_id, generation) (train_last_checkpoint_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"})",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, job_id, generation) (train_stage{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", stage=\"init\"} or train_stage{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", stage=\"train\"} * 2 or train_stage{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", stage=\"checkpoint\"} * 3 or train_stage{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", stage=\"finalize\"} * 4)",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "E",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, job_id, generation) (rate(train_step_seconds_sum{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m])) / sum by (cluster, job_id, generation) (rate(train_step_seconds_count{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m]))",
+          "instant": true,
+          "format": "table"
+        },
+        {
+          "refId": "F",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count by (cluster, job_id, generation) (train_current_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"})",
+          "instant": true,
+          "format": "table"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "cluster": "클러스터",
+              "job_id": "작업",
+              "generation": "세대",
+              "Value #A": "현재 step",
+              "Value #B": "체크포인트 step",
+              "Value #C": "미저장",
+              "Value #D": "단계",
+              "Value #E": "스텝 평균",
+              "Value #F": "랭크 수"
+            },
+            "indexByName": {
+              "cluster": 0,
+              "job_id": 1,
+              "generation": 2,
+              "Value #D": 3,
+              "Value #F": 4,
+              "Value #A": 5,
+              "Value #B": 6,
+              "Value #C": 7,
+              "Value #E": 8
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "-"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "단계"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "type": "value",
+                    "options": {
+                      "0": {
+                        "text": "-",
+                        "color": "#8e8e8e",
+                        "index": 0
+                      },
+                      "1": {
+                        "text": "준비",
+                        "color": "#5794F2",
+                        "index": 1
+                      },
+                      "2": {
+                        "text": "학습",
+                        "color": "#73BF69",
+                        "index": 2
+                      },
+                      "3": {
+                        "text": "저장",
+                        "color": "#FF9830",
+                        "index": 3
+                      },
+                      "4": {
+                        "text": "마무리",
+                        "color": "#B877D9",
+                        "index": 4
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-text"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "스텝 평균"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 8,
+      "gridPos": {
+        "x": 0,
+        "y": 5,
+        "w": 24,
+        "h": 7
+      }
+    },
+    {
+      "type": "state-timeline",
+      "title": "단계",
+      "description": "준비(init) → 학습(train) ↔ 저장(checkpoint) → 마무리(finalize). 저장이 길어지면 그동안 step이 멈춘다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, job_id, generation) (train_stage{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", stage=\"init\"} or train_stage{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", stage=\"train\"} * 2 or train_stage{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", stage=\"checkpoint\"} * 3 or train_stage{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", stage=\"finalize\"} * 4)",
+          "legendFormat": "{{job_id}} g{{generation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "-",
+                  "color": "#8e8e8e",
+                  "index": 0
+                },
+                "1": {
+                  "text": "준비",
+                  "color": "#5794F2",
+                  "index": 1
+                },
+                "2": {
+                  "text": "학습",
+                  "color": "#73BF69",
+                  "index": 2
+                },
+                "3": {
+                  "text": "저장",
+                  "color": "#FF9830",
+                  "index": 3
+                },
+                "4": {
+                  "text": "마무리",
+                  "color": "#B877D9",
+                  "index": 4
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#8e8e8e",
+                "value": null
+              }
+            ]
+          },
+          "custom": {
+            "fillOpacity": 70,
+            "lineWidth": 0,
+            "spanNulls": false
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "never",
+        "rowHeight": 0.8,
+        "alignValue": "left",
+        "legend": {
+          "showLegend": true,
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "id": 9,
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 24,
+        "h": 6
+      }
+    },
+    {
+      "type": "row",
+      "title": "진행",
+      "collapsed": false,
+      "panels": [],
+      "id": 10,
+      "gridPos": {
+        "x": 0,
+        "y": 18,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "현재 step · 체크포인트 step",
+      "description": "실선 = 완료한 step, 계단 = 마지막으로 저장된 step. 둘 사이 간격이 장애 때 잃는 양",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, job_id, generation) (train_current_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"})",
+          "legendFormat": "step {{job_id}} g{{generation}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, job_id, generation) (train_last_checkpoint_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"})",
+          "legendFormat": "저장 {{job_id}} g{{generation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 11,
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "스텝 시간 (평균)",
+      "description": "한 step의 벽시계 시간(steady, 5분 평균). FSDP 동기화로 랭크 간 값이 같아 작업 단위로 본다. 누가 느린지는 아래 「스트래글러」",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, job_id, generation) (rate(train_step_seconds_sum{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m])) / sum by (cluster, job_id, generation) (rate(train_step_seconds_count{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m]))",
+          "legendFormat": "{{job_id}} g{{generation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 12,
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "loss",
+      "description": "마지막 step의 loss(랭크 평균)",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "avg by (cluster, job_id, generation) (train_loss{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"})",
+          "legendFormat": "{{job_id}} g{{generation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 13,
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "진행 속도",
+      "description": "분당 완료 step 수(5분 기울기). 저장 중에는 0으로 떨어진다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, job_id, generation) (deriv(train_current_step{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"}[5m])) * 60",
+          "legendFormat": "{{job_id}} g{{generation}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 14,
+      "gridPos": {
+        "x": 12,
+        "y": 27,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "row",
+      "title": "스트래글러 (MON-STD-08)",
+      "collapsed": false,
+      "panels": [],
+      "id": 15,
+      "gridPos": {
+        "x": 0,
+        "y": 35,
+        "w": 24,
+        "h": 1
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "스트래글러 비율",
+      "description": "랭크의 GPU 계산 시간 ÷ 같은 작업 랭크들의 중앙값. 점선 1.5 = 경고(2분) · 2.0 = 위험. 랭크가 2개면 중앙값이 두 값의 평균이라 비율이 작게 나온다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "train_rank_compute_seconds{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"} / on (job_id, generation) group_left quantile by (job_id, generation) (0.5, train_rank_compute_seconds{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"})",
+          "legendFormat": "{{job_id}} g{{generation}} r{{rank}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "#FF9830",
+                "value": 1.5
+              },
+              {
+                "color": "#F2495C",
+                "value": 2
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 16,
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 24,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "랭크 계산 시간",
+      "description": "프로파일된 step에서 이 랭크의 GPU 계산 커널 시간 합(NCCL 제외). 한 랭크만 길면 그 GPU가 느린 것",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "train_rank_compute_seconds{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"}",
+          "legendFormat": "{{job_id}} g{{generation}} r{{rank}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 17,
+      "gridPos": {
+        "x": 0,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "랭크 통신 시간",
+      "description": "같은 step의 NCCL 시간 합. 다른 랭크를 기다린 시간이 여기 들어가므로 느린 랭크가 있으면 나머지 랭크에서 길어진다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "train_rank_comm_seconds{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\"}",
+          "legendFormat": "{{job_id}} g{{generation}} r{{rank}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 18,
+      "gridPos": {
+        "x": 8,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "랭크 데이터 대기",
+      "description": "step 시작부터 배치가 GPU에 올라올 때까지(steady, 5분 평균). 점선 0.1초. 한 랭크만 튀면 GPU가 아니라 그 노드 문제",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum by (cluster, job_id, generation, rank) (rate(train_data_wait_seconds_sum{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m])) / sum by (cluster, job_id, generation, rank) (rate(train_data_wait_seconds_count{cluster=~\"$cluster\", job_id=~\"$job_id\", generation=~\"$generation\", phase=\"steady\"}[5m]))",
+          "legendFormat": "{{job_id}} g{{generation}} r{{rank}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "never",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "#FF9830",
+                "value": 0.1
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 19,
+      "gridPos": {
+        "x": 16,
+        "y": 44,
+        "w": 8,
+        "h": 8
+      }
+    }
+  ]
+}

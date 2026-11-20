@@ -65,9 +65,18 @@ dashboardProviders:
         allowUiUpdates: false
         options:
           path: /var/lib/grafana/dashboards/gpu
+      - name: training
+        orgId: 1
+        folder: 학습
+        type: file
+        disableDeletion: false
+        allowUiUpdates: false
+        options:
+          path: /var/lib/grafana/dashboards/training
 dashboardsConfigMaps:
   infra: grafana-dashboards-infra
   gpu: grafana-dashboards-gpu
+  training: grafana-dashboards-training
 
 datasources:
   datasources.yaml:
