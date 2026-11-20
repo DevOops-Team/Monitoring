@@ -29,7 +29,7 @@ ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/
 수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`) · Kafka · DB VM 4대(`job="vm-host"`) · kafka_exporter · postgres_exporter(아래 「Kafka · DB VM 수집」) · pfSense 2대(`job="pfsense-host"`, 아래 「pfSense 수집」) · 분류기(`job="classifier"`, Pod를 찾아 긁는다).
 룰: `base/mimir/rules/self.yml` 4개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown), Mimir ruler가 15초마다 평가.
 `base/mimir/rules/recovery.yml` 3개(MON-STD-25 · 28): `RecoveryHold` = 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화 · `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` = 펜싱 하트비트 멈춤 · 조회 실패(울렸을 때 볼 것은 아래 「알람이 울리면」). 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
-`base/mimir/rules/records.yml` 레코딩 룰 3개: 대시보드 타일(OOM kill · OTel 거절)용. `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
+`base/mimir/rules/records.yml` 레코딩 룰 7개: 대시보드용(OOM kill · OTel 거절 · dcgm 감속 시간 · ECC SBE · PCIe 재시도). `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
 `base/mimir/rules/infra.yml` 4개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `base/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 `base/mimir/rules/classifier.yml` 2개(MON-STD-27): 분류기가 없거나 안 긁힘 · `job.lifecycle`을 못 읽음. 단위 테스트는 `base/mimir/tests/classifier_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 
@@ -94,9 +94,11 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `RecoveryHeartbeatStale` (warning) | 학습 중인 작업의 rank 0 사이드카가 DynamoDB 펜싱 하트비트를 60초 넘게(그 상태 1분) 안 찍었다. 그동안 새 체크포인트가 승인되지 않아, 장애가 나면 옛 승인본부터 다시 한다 | 같은 작업에 Xid · Pod 종료 · 사이트 알람이 같이 왔는지(노드 · 사이트 장애) → 없으면 사이드카: `kube_pod_container_status_restarts_total{container="ckpt-sidecar"}`(liveness probe가 300초 멈춤에 재시작) · Loki `{k8s_container_name="ckpt-sidecar"}` → 데이터 담당(김현수). 자동 복구와는 연결돼 있지 않다(ADR-44) |
 | `RecoveryHeartbeatReadFailing` (warning) | 복구 컨트롤러 Pod 전부가 10분째 펜싱 테이블을 못 읽는다. 하트비트가 멈춰도 위 알람이 울리지 않는 상태 | `recovery_fencing_heartbeat_read_errors_total`이 30초마다 느는지 → 온프레 인터넷(「모니터링 스택」 ping · pfSense) → 멀쩡하면 IAM(IaC `recovery-data-access`의 펜싱 테이블 `dynamodb:Scan`) · 인증 사이드카 `aws-auth` 로그 → 컨트롤러 담당(한송이). 실패 이유는 컨트롤러 로그에 남지 않는다(11/20 기준) |
 
-## 대시보드 (Grafana 폴더 「인프라」)
+## 대시보드 (Grafana 폴더 「인프라」 · 「GPU」 · 「학습」)
 
-레포의 JSON이 원본이다. `base/grafana/dashboards/infra/*.json` → kustomize가 ConfigMap `grafana-dashboards-infra`로 만들고 → Grafana 차트(`values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`)가 디렉터리로 마운트한다. Grafana가 디렉터리를 주기적으로 다시 읽어 **재시작 없이 약 1분 안에 반영**된다(sidecar 안 씀).
+레포의 JSON이 원본이다. `base/grafana/dashboards/<폴더>/*.json` → kustomize가 폴더마다 ConfigMap `grafana-dashboards-<폴더>`(`infra` · `gpu` · `training`)로 만들고 → Grafana 차트(`values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`)가 디렉터리로 마운트한다. Grafana가 디렉터리를 주기적으로 다시 읽어 **재시작 없이 약 1분 안에 반영**된다(sidecar 안 씀).
+
+아래 표에서 `gpu`는 「GPU」 폴더, `training-jobs` · `kueue` · `failover`는 「학습」 폴더, 나머지는 「인프라」 폴더다.
 
 | uid | 제목 | 보는 것 | 변수 |
 |---|---|---|---|
@@ -109,9 +111,16 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `vm-hosts` | Kafka · DB VM | Kafka 3대 · DB VM의 자원 · PSI · 루트 디스크(80 · 90% 선) · 디스크 IO · eth0 | host |
 | `pfsense` | pfSense | 주 · 대기의 인터페이스 상태 · 트래픽(WAN · LAN · AWS VPN 터널) · 오류 · 드롭 · 게이트웨이/인터넷 ping · 상태 동기화(pfsync) · 자원 · 루트 디스크 | host |
 | `postgres` | PostgreSQL | DB 접속(pg_up) · 연결 수(상태 · 사용자별) · 잠금 · 트랜잭션 · 캐시 적중률 · gpuf_data 테이블 크기 · 삽입 속도 · 죽은 행 · WAL · 체크포인트 | - |
+| `gpu` | GPU | dcgm-exporter 지표를 노드 · GPU별로: 온도와 한계 3단(최대 동작 · 감속 · 차단) · 감속 사유 · 감속 시간 비율 · ECC · 페이지 폐기 · Xid(지표 + 커널 로그) · 사용률 · 메모리 · 전력 · 클럭 · PCIe 재시도 (MON-STD-01 ~ 05) | cluster · node |
+| `training-jobs` | 학습 작업 | trainer :8000 지표를 작업 · 세대 · 랭크별로: 단계 · 현재 step과 체크포인트 step · 스텝 시간(평균) · loss · 스트래글러 비율(1.5 · 2.0 선) · 랭크별 계산 · 통신 · 데이터 대기 (MON-STD-08) | cluster · job_id · generation |
+| `kueue` | Kueue | 관리 클러스터 + EKS의 큐: 대기 · 입장 Workload · 입장 못 한 사유 · GPU 쿼터 사용 · 입장 대기 · 실행 시간 · LocalQueue. 리더 Pod 지표만 읽는다 | cluster |
+| `failover` | 장애 복구 | 장애 1건마다 감지 · 분류 · 복구 시간(PostgreSQL `data.v_incidents`) · HOLD 목록(`data.events`의 `recovery.held`) · 분류기 처리 현황 · 펜싱 하트비트 (MON-STD-25 · 27 · 28) | - |
 
 - **화면에서 고친 것은 저장되지 않는다**(`allowUiUpdates: false`). 고치는 흐름: 화면에서 편집 → 「Export → JSON」 → 레포 파일 교체 → 커밋 → 적용
-- 새 대시보드는 `kustomization.yaml`의 `grafana-dashboards-infra` files에도 넣는다. lint가 JSON 문법 · `uid` · `title` · uid 중복을 본다
+- 새 대시보드는 `kustomization.yaml`에서 그 폴더 ConfigMap(`grafana-dashboards-<폴더>`)의 files에도 넣는다. lint가 JSON 문법 · `uid` · `title` · uid 중복을 본다
+- 새 폴더는 `values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`와 `kustomization.yaml`의 ConfigMap을 **같은 커밋**에 넣는다(없는 ConfigMap을 마운트하면 Grafana Pod가 뜨지 못한다). 폴더를 추가하면 Grafana Pod가 한 번 다시 뜬다
+- 레코딩 룰은 만든 뒤부터만 계산된다. 「GPU」의 감속 시간 비율 · ECC SBE 증가 · PCIe 재시도는 2026-11-20 저녁 이전 구간이 비어 있다
+- 「장애 복구」의 PostgreSQL 패널은 `grafana_ro` 계정으로 읽는다. HOLD 목록은 `data.events` 읽기 권한이 필요하다(없으면 permission denied)
 - uid를 바꾸거나 파일을 지우면 옛 대시보드가 Grafana에 남을 수 있다(11/11 `mon-self` → 분리 때). 남아 있으면 화면에서 지운다
 - 타일(폭 4칸) 제목은 한 줄로만 나오고 넘치면 "…"로 잘린다. 제목은 짧게, 자세한 뜻은 설명(ⓘ)에 둔다. 이름이 `_total`로 안 끝나는 카운터에 `increase()` · `rate()`를 쓰면 PromQL 안내 아이콘이 제목 칸을 차지하므로, 타일에서는 레코딩 룰(`base/mimir/rules/records.yml`)을 읽는다
 - 색: 정상 `#73BF69` · 경고 `#FF9830` · 위험 `#F2495C` · 좋고 나쁨이 없는 값 `#8AB8FF`. 점선 임계선은 MON-STD에 값이 있는 패널에만 긋는다
@@ -125,7 +134,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | 스크레이프 대상 | `base/prometheus-agent/prometheus.yml` | ConfigMap 이름이 바뀌어 Agent가 다시 뜸(WAL은 PVC에 남음) |
 | 알람 · 레코딩 룰 | `base/mimir/rules/*.yml` (+ `kustomization.yaml`의 files, `scripts/deploy-k8s.sh` lint의 파일 목록, 테스트는 `base/mimir/tests/`) | Mimir가 1분 안에 다시 읽음(재시작 없음) |
 | Loki 알람 룰 (LogQL) | `base/loki/rules/*.yml` (+ `kustomization.yaml`의 `loki-rules` files) | Loki ruler가 1분 안에 다시 읽음(재시작 없음). 확인 `:3100/loki/api/v1/rules` |
-| 대시보드 | `base/grafana/dashboards/infra/*.json` (+ `kustomization.yaml`의 files) | Grafana가 1분 안에 다시 읽음(재시작 없음) |
+| 대시보드 | `base/grafana/dashboards/<폴더>/*.json` (+ `kustomization.yaml`의 files) | Grafana가 1분 안에 다시 읽음(재시작 없음) |
 | Mimir 설정 | `base/mimir/mimir.yaml` | Mimir 재시작(복제 1이라 그동안 수신 중단, Agent WAL이 버팀) |
 | Alertmanager 라우팅 | `values/alertmanager.yaml`의 `config` | Pod 재시작 |
 | 데이터소스 | `values/grafana.yaml` | Grafana 재시작 |
