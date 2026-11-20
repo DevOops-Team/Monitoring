@@ -21,6 +21,11 @@ configMapGenerator:
     files: [mimir/rules/self.yml, mimir/rules/recovery.yml, mimir/rules/records.yml, mimir/rules/infra.yml, mimir/rules/failover.yml, mimir/rules/classifier.yml]
     options:
       disableNameSuffixHash: true
+  # Loki 룰도 같은 방식: values/loki.yaml이 /etc/loki/rules/fake/에 마운트하고 ruler가 1분마다 다시 읽는다
+  - name: loki-rules
+    files: [loki/rules/probe.yml]
+    options:
+      disableNameSuffixHash: true
   # 대시보드도 해시 없이: Grafana 차트(values/grafana.yaml의 dashboardsConfigMaps)가 이 이름으로 마운트하고,
   # Grafana가 디렉터리를 주기적으로 다시 읽으므로 재시작 없이 반영
   - name: grafana-dashboards-infra
