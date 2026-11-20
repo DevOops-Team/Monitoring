@@ -122,6 +122,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 |---|---|---|
 | 스크레이프 대상 | `base/prometheus-agent/prometheus.yml` | ConfigMap 이름이 바뀌어 Agent가 다시 뜸(WAL은 PVC에 남음) |
 | 알람 · 레코딩 룰 | `base/mimir/rules/*.yml` (+ `kustomization.yaml`의 files, `scripts/deploy-k8s.sh` lint의 파일 목록, 테스트는 `base/mimir/tests/`) | Mimir가 1분 안에 다시 읽음(재시작 없음) |
+| Loki 알람 룰 (LogQL) | `base/loki/rules/*.yml` (+ `kustomization.yaml`의 `loki-rules` files) | Loki ruler가 1분 안에 다시 읽음(재시작 없음). 확인 `:3100/loki/api/v1/rules` |
 | 대시보드 | `base/grafana/dashboards/infra/*.json` (+ `kustomization.yaml`의 files) | Grafana가 1분 안에 다시 읽음(재시작 없음) |
 | Mimir 설정 | `base/mimir/mimir.yaml` | Mimir 재시작(복제 1이라 그동안 수신 중단, Agent WAL이 버팀) |
 | Alertmanager 라우팅 | `values/alertmanager.yaml`의 `config` | Pod 재시작 |

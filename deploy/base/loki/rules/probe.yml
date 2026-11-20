@@ -1,0 +1,13 @@
+# Loki ruler 시험 룰(GPU-218). 룰 파일 → Loki ruler → Alertmanager 길이 뚫렸는지만 본다. 확인 뒤 지운다.
+# 늘 참인 식이라 계속 발화한다. 관리 클러스터 로그를 실제로 조회하므로 ruler의 저장소 조회까지 같이 확인된다.
+# 라벨 pipeline=failover · signal=probe → Alertmanager의 classifier-pending(받는 곳 없음)으로 간다. Slack · 분류기로는 안 간다
+groups:
+  - name: loki-ruler-probe
+    rules:
+      - alert: LokiRulerProbe
+        expr: sum(count_over_time({k8s_cluster_name="onprem-manager"}[5m])) > 0
+        labels:
+          pipeline: failover
+          signal: probe
+        annotations:
+          summary: Loki ruler 시험 알람 (GPU-218, 확인 뒤 삭제)
