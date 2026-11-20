@@ -38,18 +38,20 @@ groups:
       # 학습 중인 것만: 끝난 작업도 테이블에 남으므로(TTL 없음) trainer가 Running인 Pod의 job_id · 세대와 맞을 때만 울린다. 옛 세대 항목도 여기서 걸러진다
       # 60초 = 하트비트 주기 10초 × 6 (ADR-44 시작값). 정상도 하트비트 10초 + Scan 30초로 최대 약 40초까지 간다. for 1m = 사이드카가 일시 오류로 한두 번 건너뛰는 몫
       - alert: RecoveryHeartbeatStale
+        # 학습 Pod 쪽을 왼쪽(many)에 둔다: 같은 job · 세대가 두 클러스터에 동시에 떠 있어도 many-to-many 오류로
+        # 룰 전체가 평가 실패하지 않고 클러스터마다 하나씩 울린다. 값은 오른쪽 age (1 × age)
         expr: >
-          (min by (job_id, generation) (recovery_fencing_heartbeat_age_seconds) > 60)
-          * on (job_id, generation) group_left (cluster)
-            group by (job_id, generation, cluster) (
+          group by (job_id, generation, cluster) (
+            label_replace(
               label_replace(
-                label_replace(
-                    kube_pod_labels{namespace="training", label_devoops_job_id!=""}
-                  and on (cluster, namespace, pod)
-                    (kube_pod_container_status_running{container="trainer"} == 1),
-                  "job_id", "$1", "label_devoops_job_id", "(.+)"),
-                "generation", "$1", "label_devoops_generation", "(.+)")
-            )
+                  kube_pod_labels{namespace="training", label_devoops_job_id!=""}
+                and on (cluster, namespace, pod)
+                  (kube_pod_container_status_running{container="trainer"} == 1),
+                "job_id", "$1", "label_devoops_job_id", "(.+)"),
+              "generation", "$1", "label_devoops_generation", "(.+)")
+          )
+          * on (job_id, generation) group_left ()
+            (min by (job_id, generation) (recovery_fencing_heartbeat_age_seconds) > 60)
         for: 1m
         labels:
           severity: warning

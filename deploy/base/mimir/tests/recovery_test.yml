@@ -150,6 +150,33 @@ tests:
               summary: '펜싱 하트비트 멈춤: job job-a · 세대 1 (eks-a) — 3m 0s째 안 찍힘. 새 체크포인트가 승인되지 않고 있을 수 있다'
               standard: MON-STD-28
 
+  # 같은 job · 세대가 두 클러스터에 동시에 Running (드물지만) → 룰이 오류 없이 클러스터마다 울린다
+  - name: 같은 작업이 두 클러스터에 떠 있어도 평가가 깨지지 않는다
+    interval: 15s
+    input_series:
+      - series: 'recovery_fencing_heartbeat_age_seconds{cluster="onprem-manager", pod="rc-1", job_id="job-a", generation="1"}'
+        values: '0+15x40'
+      - series: 'kube_pod_labels{cluster="eks-a", namespace="training", pod="job-a-g0001-0", uid="u0", label_devoops_job_id="job-a", label_devoops_generation="1"}'
+        values: '1x40'
+      - series: 'kube_pod_container_status_running{cluster="eks-a", namespace="training", pod="job-a-g0001-0", uid="u0", container="trainer"}'
+        values: '1x40'
+      - series: 'kube_pod_labels{cluster="eks-b", namespace="training", pod="job-a-g0001-0", uid="u9", label_devoops_job_id="job-a", label_devoops_generation="1"}'
+        values: '1x40'
+      - series: 'kube_pod_container_status_running{cluster="eks-b", namespace="training", pod="job-a-g0001-0", uid="u9", container="trainer"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: RecoveryHeartbeatStale
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: eks-a, job_id: job-a, generation: "1"}
+            exp_annotations:
+              summary: '펜싱 하트비트 멈춤: job job-a · 세대 1 (eks-a) — 3m 0s째 안 찍힘. 새 체크포인트가 승인되지 않고 있을 수 있다'
+              standard: MON-STD-28
+          - exp_labels: {severity: warning, cluster: eks-b, job_id: job-a, generation: "1"}
+            exp_annotations:
+              summary: '펜싱 하트비트 멈춤: job job-a · 세대 1 (eks-b) — 3m 0s째 안 찍힘. 새 체크포인트가 승인되지 않고 있을 수 있다'
+              standard: MON-STD-28
+
   # 끝난 작업(trainer 종료 · Running 0)과 옛 세대(테이블은 세대 1, 떠 있는 Pod는 세대 2)는 테이블에 남아도 울리지 않는다
   - name: 학습 중이 아닌 항목의 오래된 하트비트는 무시한다
     interval: 15s
