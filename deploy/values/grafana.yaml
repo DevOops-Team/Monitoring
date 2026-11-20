@@ -57,8 +57,17 @@ dashboardProviders:
         allowUiUpdates: false
         options:
           path: /var/lib/grafana/dashboards/infra
+      - name: gpu
+        orgId: 1
+        folder: GPU
+        type: file
+        disableDeletion: false
+        allowUiUpdates: false
+        options:
+          path: /var/lib/grafana/dashboards/gpu
 dashboardsConfigMaps:
   infra: grafana-dashboards-infra
+  gpu: grafana-dashboards-gpu
 
 datasources:
   datasources.yaml:
