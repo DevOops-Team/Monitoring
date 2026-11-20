@@ -117,3 +117,116 @@ tests:
             exp_annotations:
               summary: '자동 복구 보류(HOLD): 전역(Watchdog) · 사유 watchdog_missing_and_no_gpu_fault — 사람 확인 필요'
               standard: MON-STD-25
+
+  # --- 펜싱 하트비트 (MON-STD-28) ---
+  # 컨트롤러 Pod 3개가 같은 값을 낸다. 학습 Pod 2개(rank 0 · 1)가 같은 작업 · 세대 라벨을 단다
+  # age '0+15x40' = 15초마다 15초씩 커진다 = 하트비트가 0초에 멈춤. 60초 초과는 1분 15초부터 → for 1m → 2분 15초에 울림
+  - name: 학습 중인 작업의 하트비트가 멈추면 울린다
+    interval: 15s
+    input_series:
+      - series: 'recovery_fencing_heartbeat_age_seconds{cluster="onprem-manager", pod="rc-1", job_id="job-a", generation="1"}'
+        values: '0+15x40'
+      - series: 'recovery_fencing_heartbeat_age_seconds{cluster="onprem-manager", pod="rc-2", job_id="job-a", generation="1"}'
+        values: '0+15x40'
+      - series: 'recovery_fencing_heartbeat_age_seconds{cluster="onprem-manager", pod="rc-3", job_id="job-a", generation="1"}'
+        values: '0+15x40'
+      - series: 'kube_pod_labels{cluster="eks-a", namespace="training", pod="job-a-g0001-0", uid="u0", label_devoops_job_id="job-a", label_devoops_generation="1"}'
+        values: '1x40'
+      - series: 'kube_pod_labels{cluster="eks-a", namespace="training", pod="job-a-g0001-1", uid="u1", label_devoops_job_id="job-a", label_devoops_generation="1"}'
+        values: '1x40'
+      - series: 'kube_pod_container_status_running{cluster="eks-a", namespace="training", pod="job-a-g0001-0", uid="u0", container="trainer"}'
+        values: '1x40'
+      - series: 'kube_pod_container_status_running{cluster="eks-a", namespace="training", pod="job-a-g0001-1", uid="u1", container="trainer"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: RecoveryHeartbeatStale
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: RecoveryHeartbeatStale
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: eks-a, job_id: job-a, generation: "1"}
+            exp_annotations:
+              summary: '펜싱 하트비트 멈춤: job job-a · 세대 1 (eks-a) — 3m 0s째 안 찍힘. 새 체크포인트가 승인되지 않고 있을 수 있다'
+              standard: MON-STD-28
+
+  # 끝난 작업(trainer 종료 · Running 0)과 옛 세대(테이블은 세대 1, 떠 있는 Pod는 세대 2)는 테이블에 남아도 울리지 않는다
+  - name: 학습 중이 아닌 항목의 오래된 하트비트는 무시한다
+    interval: 15s
+    input_series:
+      - series: 'recovery_fencing_heartbeat_age_seconds{cluster="onprem-manager", pod="rc-1", job_id="job-done", generation="1"}'
+        values: '600+15x40'
+      - series: 'kube_pod_labels{cluster="eks-a", namespace="training", pod="job-done-g0001-0", uid="u0", label_devoops_job_id="job-done", label_devoops_generation="1"}'
+        values: '1x40'
+      - series: 'kube_pod_container_status_running{cluster="eks-a", namespace="training", pod="job-done-g0001-0", uid="u0", container="trainer"}'
+        values: '0x40'
+      - series: 'recovery_fencing_heartbeat_age_seconds{cluster="onprem-manager", pod="rc-1", job_id="job-b", generation="1"}'
+        values: '600+15x40'
+      - series: 'kube_pod_labels{cluster="eks-b", namespace="training", pod="job-b-g0002-0", uid="u1", label_devoops_job_id="job-b", label_devoops_generation="2"}'
+        values: '1x40'
+      - series: 'kube_pod_container_status_running{cluster="eks-b", namespace="training", pod="job-b-g0002-0", uid="u1", container="trainer"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RecoveryHeartbeatStale
+        exp_alerts: []
+
+  # 컨트롤러 Pod 하나만 옛 값을 본다(나머지 둘은 정상 범위 최대 40초) → min으로 멈춤이 아니다
+  - name: 컨트롤러 하나만 오래된 값이면 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'recovery_fencing_heartbeat_age_seconds{cluster="onprem-manager", pod="rc-1", job_id="job-a", generation="1"}'
+        values: '0+15x40'
+      - series: 'recovery_fencing_heartbeat_age_seconds{cluster="onprem-manager", pod="rc-2", job_id="job-a", generation="1"}'
+        values: '40x40'
+      - series: 'recovery_fencing_heartbeat_age_seconds{cluster="onprem-manager", pod="rc-3", job_id="job-a", generation="1"}'
+        values: '40x40'
+      - series: 'kube_pod_labels{cluster="eks-a", namespace="training", pod="job-a-g0001-0", uid="u0", label_devoops_job_id="job-a", label_devoops_generation="1"}'
+        values: '1x40'
+      - series: 'kube_pod_container_status_running{cluster="eks-a", namespace="training", pod="job-a-g0001-0", uid="u0", container="trainer"}'
+        values: '1x40'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RecoveryHeartbeatStale
+        exp_alerts: []
+
+  # 조회 실패: 컨트롤러가 age를 안 낸다 → 멈춤 알람은 조용하고, 10분 뒤 조회 실패 알람이 울린다
+  - name: 컨트롤러 전부가 못 읽으면 10분 뒤 울린다
+    interval: 15s
+    input_series:
+      - series: 'recovery_fencing_heartbeat_scrape_success{cluster="onprem-manager", pod="rc-1"}'
+        values: '0x60'
+      - series: 'recovery_fencing_heartbeat_scrape_success{cluster="onprem-manager", pod="rc-2"}'
+        values: '0x60'
+      - series: 'recovery_fencing_heartbeat_scrape_success{cluster="onprem-manager", pod="rc-3"}'
+        values: '0x60'
+      - series: 'kube_pod_labels{cluster="eks-a", namespace="training", pod="job-a-g0001-0", uid="u0", label_devoops_job_id="job-a", label_devoops_generation="1"}'
+        values: '1x60'
+      - series: 'kube_pod_container_status_running{cluster="eks-a", namespace="training", pod="job-a-g0001-0", uid="u0", container="trainer"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 9m30s
+        alertname: RecoveryHeartbeatReadFailing
+        exp_alerts: []
+      - eval_time: 10m30s
+        alertname: RecoveryHeartbeatReadFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: onprem-manager}
+            exp_annotations:
+              summary: '복구 컨트롤러가 펜싱 하트비트를 10분째 못 읽는다 — 그동안 하트비트 멈춤 알람(RecoveryHeartbeatStale)이 꺼져 있다'
+              standard: MON-STD-28
+      - eval_time: 10m30s
+        alertname: RecoveryHeartbeatStale
+        exp_alerts: []
+
+  - name: 컨트롤러 하나라도 읽으면 조회 실패가 아니다
+    interval: 15s
+    input_series:
+      - series: 'recovery_fencing_heartbeat_scrape_success{cluster="onprem-manager", pod="rc-1"}'
+        values: '0x60'
+      - series: 'recovery_fencing_heartbeat_scrape_success{cluster="onprem-manager", pod="rc-2"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 12m
+        alertname: RecoveryHeartbeatReadFailing
+        exp_alerts: []
