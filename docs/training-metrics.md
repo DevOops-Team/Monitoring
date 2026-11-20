@@ -34,7 +34,7 @@ train.py(노찬경, GPU-96)가 `/metrics`로 내보내는 지표의 이름 · �
 | `rank` | `0`~`3` (node rank = Pod 번호) | `$JOB_COMPLETION_INDEX` |
 | `phase` | `warmup` (step ≤ `warmup_steps`) · `steady` (그 뒤) | config.json `warmup_steps` |
 
-- `phase`는 둘뿐이다. 장애 주입 구간(`injected`)은 학습 코드가 모르고, 모니터링이 Kafka `fault.injection` 사건 시각으로 걸러낸다. 기준선은 `phase="steady"`에서 주입 구간을 뺀 것 (monitoring-standard.md 2절)
+- `phase`는 둘뿐이다. 장애 주입 구간(`injected`)은 학습 코드가 모르고, 모니터링이 런북 「장애 주입」 시각 기록표(T0 주입 ~ 주입 해제 · `job.resumed` 중 늦은 쪽)로 걸러낸다. 기준선은 `phase="steady"`에서 주입 구간을 뺀 것 (monitoring-standard.md 2절)
 - 카디널리티: histogram 2개 × (job 1 × 세대 ≤ 5 × rank 4 × phase 2 × (버킷 15 + `_sum` · `_count`)) + gauge 5개 × 20 ≈ 1,460 시계열. 문제 없음
 
 ## 3. 히스토그램 버킷
