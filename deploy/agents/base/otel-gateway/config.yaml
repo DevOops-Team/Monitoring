@@ -42,6 +42,9 @@ processors:
           - delete_key(attributes, "_p") where attributes["_p"] != nil          # cri 부분 줄 표시(F/P). 멀티라인 파서가 이미 합쳤다
           - set(resource.attributes["k8s.node.name"], attributes["_HOSTNAME"]) where attributes["_TRANSPORT"] == "kernel"
           - set(resource.attributes["service.name"], "kernel") where attributes["_TRANSPORT"] == "kernel"
+          # 노드 서비스(etcd · kubelet · containerd). 유닛 이름은 _SYSTEMD_UNIT 구조화 메타데이터로 남는다
+          - set(resource.attributes["k8s.node.name"], attributes["_HOSTNAME"]) where attributes["_SYSTEMD_UNIT"] != nil and attributes["_TRANSPORT"] != "kernel"
+          - set(resource.attributes["service.name"], "journal") where attributes["_SYSTEMD_UNIT"] != nil and attributes["_TRANSPORT"] != "kernel"
   batch:
     timeout: 5s
     send_batch_size: 1024
