@@ -68,6 +68,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-08 | 학습 Job | 스트래글러: 랭크별 GPU 계산 시간 `train_rank_compute_seconds` ÷ 랭크 값들의 중앙값 (`quantile by (job_id, generation)`, `on(...) group_left`). 보조 = `train_data_wait_seconds` 같은 식(노드 쪽 원인). **스텝 시간은 FSDP 동기화로 랭크 간 같아 쓰지 않음** ([training-metrics.md 3-1절](training-metrics.md)) | | | | 정상 1.0 ± 측정 · 경고 1.5× 2분 · 위험 2.0×. 분자·분모는 같은 분위수(p50÷p50). A5 promtool 테스트: 정상 랭크 1.00 · 주입 랭크 3.08 | 실험 (클럭 제한 단계별 캘리브레이션) | `evacuate_preemptive` (스트래글러 격리). data_wait만 튀면 노드 문제 → 컨트롤러 힌트 | 가설 |
 | MON-STD-09 | 학습 Job | 체크포인트 저장 시간 · 마지막 저장 경과 (학습 Pod 계측) | | | | 경고 저장 주기 × 1.5 · 위험 × 3 | 기준선 (김현수 체크포인트 모듈) | 손실 스텝 상한 런북 | 가설 |
 | MON-STD-20 | 학습 Job | Pod 종료 코드 `kube_pod_container_status_last_terminated_reason` · `_exitcode`. **exit 75 = STOP(세대 불일치, 펜싱 정상 동작)** · exit 0 · 사용자 취소는 제외 (ADR-12) | | | | | 운영 경험 (kube-state-metrics 문서) | 분류기 입력 (`restart_in_place` vs `refuse` 구분) | 비움 |
+| MON-STD-28 | 학습 Job (ckpt-sidecar 펜싱 하트비트, ADR-44) | 경과 `recovery_fencing_heartbeat_age_seconds{job_id, generation}` · 조회 상태 `recovery_fencing_heartbeat_scrape_success` (복구 컨트롤러 :8080. Pod 3개가 각자 30초마다 `devoops-prod-fencing`을 Scan. 조회 실패 · 60초 넘은 스냅샷이면 success 0이고 age를 내지 않는다). 하트비트는 **rank 0 Pod의 사이드카만** 10초마다 쓴다 → rank 1 ~ 3 노드 장애는 이 지표로 못 본다(Pod 종료 · Xid 몫). **찍기와 읽기는 경로가 다르다**: 찍기 = EKS → DynamoDB Gateway 엔드포인트(AWS 안), 읽기 = 온프레 → pfSense WAN 인터넷 → 온프레 인터넷 장애는 「못 읽음」이지 「멈춤」이 아니다. 학습 중 판정 = trainer가 Running인 Pod의 `label_devoops_job_id` · `label_devoops_generation` (끝난 작업 · 옛 세대 항목은 테이블에 남아도 제외) | | | | 경고 경과 > 60초가 1분 (룰 `RecoveryHeartbeatStale`. 60초 = 하트비트 10초 × 6, 정상도 10초 + Scan 30초로 최대 약 40초) · 경고 컨트롤러 전부 조회 실패 10분 (룰 `RecoveryHeartbeatReadFailing`. 이 동안 멈춤 알람이 꺼져 있다) | ADR-44 (교체 예정: EKS 정상 구간 경과 실측 · 조회 실패 간격 `read_errors_total`) | 하트비트 멈춤 = 데이터 (김현수) · 조회 실패 = 컨트롤러 (한송이) 호출 런북. `gpu.fault`에는 연결하지 않는다 (ADR-44) | 가설 |
 
 ### 4.4 수집 파이프라인
 
@@ -135,6 +136,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-26 | `HostDiskWarning` · `HostDiskCritical` (`infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kafka · DB VM」 · 「pfSense」 타일 디스크 최대, 그래프 루트 디스크 사용률(80 · 90% 선) | 2026-11-18 |
 | MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | (HOLD 목록 패널은 v_incidents 대시보드 때) | |
 | MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/base/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | (패널 없음) | 2026-11-19 |
+| MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | (패널 없음) | 2026-11-20 |
 | 나머지 01 ~ 05 · 08 · 09 · 11 · 12 · 14 · 17 · 19 · 21 | | | | |
 | SLO-1 ~ 4 | | | | |
 
