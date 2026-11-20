@@ -28,7 +28,7 @@ ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/
 
 수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`) · Kafka · DB VM 4대(`job="vm-host"`) · kafka_exporter · postgres_exporter(아래 「Kafka · DB VM 수집」) · pfSense 2대(`job="pfsense-host"`, 아래 「pfSense 수집」) · 분류기(`job="classifier"`, Pod를 찾아 긁는다).
 룰: `base/mimir/rules/self.yml` 4개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown), Mimir ruler가 15초마다 평가.
-`base/mimir/rules/recovery.yml` 1개(`RecoveryHold`, MON-STD-25): 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화. 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
+`base/mimir/rules/recovery.yml` 3개(MON-STD-25 · 28): `RecoveryHold` = 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화 · `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` = 펜싱 하트비트 멈춤 · 조회 실패(울렸을 때 볼 것은 아래 「알람이 울리면」). 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
 `base/mimir/rules/records.yml` 레코딩 룰 3개: 대시보드 타일(OOM kill · OTel 거절)용. `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
 `base/mimir/rules/infra.yml` 4개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `base/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 `base/mimir/rules/classifier.yml` 2개(MON-STD-27): 분류기가 없거나 안 긁힘 · `job.lifecycle`을 못 읽음. 단위 테스트는 `base/mimir/tests/classifier_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
@@ -82,7 +82,7 @@ kubectl -n monitoring port-forward svc/prometheus-agent 9090   # Agent 대상 �
 ```
 Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`에 Watchdog. Grafana `http://172.30.0.35:3000` 로그인 후 데이터소스 Mimir · Loki · Tempo.
 
-## 알람이 울리면 (`infra.yml` 11/18 · `classifier.yml` 11/19)
+## 알람이 울리면 (`infra.yml` 11/18 · `classifier.yml` 11/19 · `recovery.yml` 하트비트 11/20)
 
 | 알람 | 뜻 | 먼저 볼 것 |
 |---|---|---|
@@ -91,6 +91,8 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `HostDiskWarning` · `HostDiskCritical` | Kafka 3대 · DB VM · pfSense 2대 중 하나의 루트 디스크가 80% · 90%를 5분째 넘었다 | 「Kafka · DB VM」 · 「pfSense」 루트 디스크 그래프로 어느 호스트인지 · 언제부터 늘었는지 → Kafka는 로그 보존, DB는 테이블 크기(「PostgreSQL」) → Kafka · DB VM은 데이터 담당, pfSense는 인프라 담당(박기현) |
 | `ClassifierDown` (critical) | 분류기 Pod가 없거나 `/metrics`가 3분째 안 긁힌다. 원인 알람이 떠도 `gpu.fault`가 나가지 않아 자동 복구가 시작되지 않는다 | `kubectl -n monitoring get deploy,pod -l app.kubernetes.io/name=classifier` → Pod가 없거나 못 뜨면 `describe pod`(이미지 pull · `ghcr-pull`) · `logs`(시작 때 Kafka에서 기억을 되살리지 못하면 포트를 열지 않는다 → 브로커 상태는 「Kafka 브로커」) · Argo CD `gpu-monitoring-classifier`. Pod가 멀쩡하면 Agent 쪽(`up{job="prometheus-agent", cluster="monitoring"}`) |
 | `ClassifierLifecycleUnhealthy` (critical) | 분류기가 `job.lifecycle`을 2분째 못 읽는다. 그동안 Pod 종료 신호는 전부 `hold`로 나가 사람이 봐야 한다(`RecoveryHold`가 따라 울릴 수 있다) | `kubectl -n monitoring logs deploy/classifier \| grep kafka.health_changed`의 `reason` → 브로커 문제면 「Kafka 브로커」에서 복구를 기다린다(돌아오면 알람이 꺼진다). 브로커가 멀쩡한데 안 꺼지면(메시지 반영 실패는 재시작 전까지 0으로 남는다) `kubectl -n monitoring rollout restart deploy/classifier` |
+| `RecoveryHeartbeatStale` (warning) | 학습 중인 작업의 rank 0 사이드카가 DynamoDB 펜싱 하트비트를 60초 넘게(그 상태 1분) 안 찍었다. 그동안 새 체크포인트가 승인되지 않아, 장애가 나면 옛 승인본부터 다시 한다 | 같은 작업에 Xid · Pod 종료 · 사이트 알람이 같이 왔는지(노드 · 사이트 장애) → 없으면 사이드카: `kube_pod_container_status_restarts_total{container="ckpt-sidecar"}`(liveness probe가 300초 멈춤에 재시작) · Loki `{k8s_container_name="ckpt-sidecar"}` → 데이터 담당(김현수). 자동 복구와는 연결돼 있지 않다(ADR-44) |
+| `RecoveryHeartbeatReadFailing` (warning) | 복구 컨트롤러 Pod 전부가 10분째 펜싱 테이블을 못 읽는다. 하트비트가 멈춰도 위 알람이 울리지 않는 상태 | `recovery_fencing_heartbeat_read_errors_total`이 30초마다 느는지 → 온프레 인터넷(「모니터링 스택」 ping · pfSense) → 멀쩡하면 IAM(IaC `recovery-data-access`의 펜싱 테이블 `dynamodb:Scan`) · 인증 사이드카 `aws-auth` 로그 → 컨트롤러 담당(한송이). 실패 이유는 컨트롤러 로그에 남지 않는다(11/20 기준) |
 
 ## 대시보드 (Grafana 폴더 「인프라」)
 
