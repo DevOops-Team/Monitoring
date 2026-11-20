@@ -12,3 +12,13 @@ groups:
         expr: rate(otelcol_receiver_refused_log_records{job="otel-gateway"}[5m])
       - record: instance:otelcol_receiver_refused_spans:rate5m
         expr: rate(otelcol_receiver_refused_spans{job="otel-gateway"}[5m])
+      # 「GPU」 대시보드. dcgm 카운터는 이름이 _total로 안 끝난다. 그 GPU를 쓰는 Pod(exported_pod)가 바뀌면
+      # 시계열이 갈라지므로 GPU 단위로 묶는다. VIOLATION은 ns 누적 → 초당 증가 ÷ 1e9 = 감속돼 있던 시간 비율
+      - record: gpu:dcgm_power_violation:ratio_rate5m
+        expr: max by (cluster, node, gpu) (rate(DCGM_FI_DEV_POWER_VIOLATION[5m])) / 1e9
+      - record: gpu:dcgm_thermal_violation:ratio_rate5m
+        expr: max by (cluster, node, gpu) (rate(DCGM_FI_DEV_THERMAL_VIOLATION[5m])) / 1e9
+      - record: gpu:dcgm_ecc_sbe:increase1h
+        expr: max by (cluster, node, gpu) (increase(DCGM_FI_DEV_ECC_SBE_AGG_TOTAL[1h]))
+      - record: gpu:dcgm_pcie_replay:increase1h
+        expr: max by (cluster, node, gpu) (increase(DCGM_FI_DEV_PCIE_REPLAY_COUNTER[1h]))
