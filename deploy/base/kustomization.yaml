@@ -56,5 +56,6 @@ configMapGenerator:
     files:
       - grafana/dashboards/training/training-jobs.json
       - grafana/dashboards/training/kueue.json
+      - grafana/dashboards/training/failover.json
     options:
       disableNameSuffixHash: true
