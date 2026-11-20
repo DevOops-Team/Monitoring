@@ -519,15 +519,18 @@ kubectl -n monitoring delete pod "$DCGM"     # DaemonSet이 새로 띄운다 →
 ### 시각 기록표
 
 주입마다 한 줄. 시각은 KST, 원 시각을 남기고 차이는 나중에 계산한다(정의가 바뀌어도 다시 계산할 수 있게).
+주입 시각을 기계가 남기는 곳은 없다(Kafka `fault.injection` 토픽은 11/20 삭제, ADR-33 사람이 CLI로 주입). T0은 주입 명령 바로 앞에 `date '+%H:%M:%S'`를 같이 쳐서 그 출력을 적는다.
 
-| 주입 | 작업 · 세대 · 노드 | T0 주입 | T1 원본 신호(`dedup_key` epoch) | T2 알람 발화(Alertmanager) | T3 발행(Loki `event.published`) | T4 `recovery.decided` | T5 `job.resumed` | 결과 · 메모 |
-|---|---|---|---|---|---|---|---|---|
-| ① kill -9 | | | | | | | | |
-| ② Xid 79 | | | | | | | | |
-| ② Xid 48 | | | | | | | | |
-| ③ dcgmi Xid | | | | | | | | |
+| 주입 | 작업 · 세대 · 노드 | T0 주입 | 주입 해제 | T1 원본 신호(`dedup_key` epoch) | T2 알람 발화(Alertmanager) | T3 발행(Loki `event.published`) | T4 `recovery.decided` | T5 `job.resumed` | 결과 · 메모 |
+|---|---|---|---|---|---|---|---|---|---|
+| ① kill -9 | | | | | | | | | |
+| ② Xid 79 | | | | | | | | | |
+| ② Xid 48 | | | | | | | | | |
+| ③ dcgmi Xid | | | | | | | | | |
 
 감지 = T3 − T0, 분류 = T3 − T1, 복구 = T5 − T3. 끝나면 `docs/measurements/2026-11-20-…md`로 옮긴다.
+「주입 해제」는 클럭 제한(`nvidia-smi -lgc`) · stress-ng · tc netem처럼 걸어 두는 주입을 푼 시각이다. 한 번에 끝나는 주입(kill -9 · Xid)은 비워 둔다.
+**기준선에서 빼는 구간 = T0 ~ (주입 해제와 T5 중 늦은 쪽)** (monitoring-standard.md 2절).
 
 ### 끝난 뒤 (EKS를 내리기 전에)
 
