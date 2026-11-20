@@ -35,18 +35,20 @@ train.py(노찬경, GPU-96)가 `/metrics`로 내보내는 지표의 이름 · �
 | `phase` | `warmup` (step ≤ `warmup_steps`) · `steady` (그 뒤) | config.json `warmup_steps` |
 
 - `phase`는 둘뿐이다. 장애 주입 구간(`injected`)은 학습 코드가 모르고, 모니터링이 런북 「장애 주입」 시각 기록표(T0 주입 ~ 주입 해제 · `job.resumed` 중 늦은 쪽)로 걸러낸다. 기준선은 `phase="steady"`에서 주입 구간을 뺀 것 (monitoring-standard.md 2절)
-- 카디널리티: histogram 2개 × (job 1 × 세대 ≤ 5 × rank 4 × phase 2 × (버킷 15 + `_sum` · `_count`)) + gauge 5개 × 20 ≈ 1,460 시계열. 문제 없음
+- 카디널리티: (job 1 × 세대 ≤ 5 × rank 4 × phase 2) × (step 버킷 15 + 대기 버킷 12 + histogram 2개의 `_sum` · `_count` 4) + gauge 5개 × 20 ≈ 1,340 시계열. 문제 없음
 
 ## 3. 히스토그램 버킷
 
 ```
-buckets=(0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 15, 20, 30, 60)   # 초. +Inf는 자동
+train_step_seconds       buckets=(0.25, 0.5, 0.75, 1, 1.5, 2, 3, 5, 7.5, 10, 15, 20, 30, 60)   # 초. +Inf는 자동
+train_data_wait_seconds  buckets=(0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10)
 ```
 
-- 정본 = `Data/trainer/devoops_ckpt.py`의 `STEP_BUCKETS` (Data v1.5.0, trainer 이미지 1.5.0, 2026-11-20 배포). 바꿀 때는 이 문서와 같은 날 바꾼다 (histogram 버킷 변경은 비가산이라 바꾼 시점 전후를 섞어 쓰지 않는다)
+- 정본 = `Data/trainer/devoops_ckpt.py`의 `STEP_BUCKETS`(Data v1.5.0, trainer 이미지 1.5.0, 2026-11-20 배포) · `WAIT_BUCKETS`(Data #51 → main #52, 2026-11-20 14:20 머지, trainer 이미지 배포 전). 바꿀 때는 이 문서와 같은 날 바꾼다 (histogram 버킷 변경은 비가산이라 바꾼 시점 전후를 섞어 쓰지 않는다)
 - 왜 이 값인가: 2026-11-19 첫 수집(SmolLM2-135M · T4 · 2랭크)에서 step 평균 1.34초라, 옛 버킷(0.1 · 0.3 · 1 · 3 · 10 · 30)으로는 샘플이 전부 (1, 3] 한 칸에 들어가 분포가 보이지 않았다. 1~3초 사이를 0.5초 간격으로 나누고, 큰 모델(Qwen2.5, 마이크로 step 7.5~23초 추정)까지 60초로 덮는다. 김현수와 합의 (Data #46, GPU-96)
 - 왜 histogram인가: 분포(p50 · p99)를 봐야 한다. gauge 하나면 느린 step 몇 개가 평균에 묻힌다
-- `train_data_wait_seconds`도 같은 버킷을 쓴다(따로 안 둠). **한계**: 11/19 실측 데이터 대기는 약 0.2ms라 샘플이 전부 첫 칸(≤ 0.25)에 들어간다. 그러면 모든 랭크의 p50이 같은 값(보간값 0.125)으로 나와 5절 「스트래글러 (노드)」 비율은 대기가 0.25초를 넘기 전까지 늘 1.0이다 = 노드 쪽 지연은 0.25초 이상일 때만 보인다
+- `train_data_wait_seconds`는 버킷을 따로 둔다(ms ~ 10초). 처음엔 step 버킷을 같이 썼으나, 11/20 실측 대기 평균 약 0.25ms라 샘플이 전부 첫 칸(≤ 0.25초)에 들어가 대기가 0.2초로 늘어도(step 1.3초면 약 15% 느려짐) 보이지 않았다(김현수 합의, Data #51, GPU-96)
+- 그래도 정상 대기(ms 미만)는 전부 첫 칸(≤ 0.005)에 들어간다. 정상일 때 비율이 1.0인 것은 맞는 값이지만, 값이 작은 랭크끼리는 보간 탓에 비율이 과장된다 → 5절 「스트래글러 (노드)」는 비율과 함께 **그 랭크 p50 > 0.1초**(step의 약 8%)일 때만 판정한다
 - `histogram_quantile`은 버킷 안에서 선형 보간한다. 샘플이 전부 (0.3, 1] 버킷이면 p50은 실제 값과 무관하게 0.65로 나온다 (A5 promtool 테스트). 비율로 쓰면 상쇄되지만 절대값으로 쓸 땐 버킷 경계가 곧 해상도 → 기준선 측정 뒤 버킷 조정이 중요한 이유
 
 ## 3-1. 랭크별 계산 시간: 왜 스텝 시간으로는 안 되고, 어떻게 재나
@@ -122,7 +124,7 @@ prometheus.io/path: "/metrics"
 | 용도 | 식 (초안) | 표준 |
 |---|---|---|
 | 스트래글러 (GPU) | `train_rank_compute_seconds / on(job_id, generation) group_left quantile by (job_id, generation) (0.5, train_rank_compute_seconds) > 1.5` for 2m. 기준값은 **랭크 값들의 중앙값**(합친 분포의 p50 아님. 느린 랭크가 기준을 끌어올려 정상 랭크가 1.0 아래로 밀림, A5 테스트 0.85) | MON-STD-08 |
-| 스트래글러 (노드) | 같은 구조로 `histogram_quantile(0.5, sum by (job_id, generation, rank, le) (rate(train_data_wait_seconds_bucket{phase="steady"}[5m])))` ÷ 랭크 중앙값 > 1.5 for 2m. 튀면 GPU가 아니라 노드(로더 · 디스크 · CPU) 문제 | MON-STD-08 보조 |
+| 스트래글러 (노드) | 같은 구조로 `histogram_quantile(0.5, sum by (job_id, generation, rank, le) (rate(train_data_wait_seconds_bucket{phase="steady"}[5m])))` ÷ 랭크 중앙값 > 1.5 이고 그 랭크 p50 > 0.1초 for 2m(3절: 정상 대기는 ms 미만이라 비율만 보면 과장). 튀면 GPU가 아니라 노드(로더 · 디스크 · CPU) 문제 | MON-STD-08 보조 |
 | Job 저하 | `histogram_quantile(0.5, sum by (job_id, generation, le) (rate(train_step_seconds_bucket{phase="steady"}[5m])))`가 기준선 × 1.5 초과. 누가 느린지는 위 둘로 | MON-STD-08 전제 |
 | 학습 정체 | `train_stage{stage="train"}==1 and increase(train_current_step[5m])==0` | MON-STD-20 보조, 분류기 `hold`/`restart_in_place` 입력 |
 | 재개 확인 (ETTR) | 새 `generation` 라벨로 `train_current_step`이 처음 증가한 시각 = `job.resumed`와 대조 | SLO-1 recover_s |
