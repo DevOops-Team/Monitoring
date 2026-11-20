@@ -265,7 +265,7 @@
     {
       "type": "stat",
       "title": "디스크 최대",
-      "description": "MON-STD-22 · 07. 가장 찬 루트 디스크. 경고 80% · 위험 90%",
+      "description": "MON-STD-22 · 07. 가장 찬 디스크(루트 + EKS GPU 노드 로컬 NVMe). 경고 80% · 위험 90%",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -277,7 +277,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "max(1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"})"
+          "expr": "max(1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=~\"/|/var/lib/kubelet\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=~\"/|/var/lib/kubelet\"})"
         }
       ],
       "fieldConfig": {
@@ -546,6 +546,16 @@
           "expr": "max by (cluster, node, node_role) (1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"})",
           "instant": true,
           "format": "table"
+        },
+        {
+          "refId": "G",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "max by (cluster, node, node_role) (1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/var/lib/kubelet\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/var/lib/kubelet\"})",
+          "instant": true,
+          "format": "table"
         }
       ],
       "transformations": [
@@ -566,7 +576,8 @@
               "Value #C": "CPU 코어",
               "Value #D": "메모리",
               "Value #E": "메모리 사용",
-              "Value #F": "루트 디스크"
+              "Value #F": "루트 디스크",
+              "Value #G": "NVMe 디스크"
             },
             "indexByName": {
               "cluster": 0,
@@ -577,7 +588,8 @@
               "Value #C": 5,
               "Value #D": 6,
               "Value #E": 7,
-              "Value #F": 8
+              "Value #F": 8,
+              "Value #G": 9
             }
           }
         }
@@ -617,7 +629,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "메모리 사용|루트 디스크"
+              "options": "메모리 사용|루트 디스크|NVMe 디스크"
             },
             "properties": [
               {
@@ -799,8 +811,8 @@
     },
     {
       "type": "timeseries",
-      "title": "루트 디스크 사용률",
-      "description": "MON-STD-22 · 07. 모니터링 노드는 Mimir · Loki · Tempo PVC(local-path)가 이 디스크에 있다. 경고 80% · 위험 90%",
+      "title": "디스크 사용률",
+      "description": "MON-STD-22 · 07. 모니터링 노드는 Mimir · Loki · Tempo PVC(local-path)가 루트 디스크에 있다. EKS GPU 노드는 로컬 NVMe(/var/lib/kubelet)에 체크포인트 · 데이터(emptyDir) · 이미지 · Pod 로그가 쌓인다. 경고 80% · 위험 90%",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -812,8 +824,8 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=\"/\"}",
-          "legendFormat": "{{node_role}} {{node}}"
+          "expr": "1 - node_filesystem_avail_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=~\"/|/var/lib/kubelet\"} / node_filesystem_size_bytes{job=\"node-exporter\", cluster=~\"$cluster\", node=~\"$node\", mountpoint=~\"/|/var/lib/kubelet\"}",
+          "legendFormat": "{{node_role}} {{node}} {{mountpoint}}"
         }
       ],
       "fieldConfig": {
