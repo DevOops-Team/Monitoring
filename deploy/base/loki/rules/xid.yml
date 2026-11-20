@@ -1,0 +1,3 @@
+# 커널 로그 Xid 룰 자리(GPU-218). EKS 장애 주입에서 `NVRM: Xid` 원문을 확보한 뒤 채운다.
+# 비워 두는 이유: loki-rules ConfigMap을 Loki Pod가 마운트하므로 파일이 하나도 없으면 ConfigMap을 지울 수 없다
+groups: []
