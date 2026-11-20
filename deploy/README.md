@@ -295,7 +295,7 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_
 모니터링 클러스터에는 수집 층 중 **Fluent Bit만** 올린다. 지표 쪽(Agent · kube-state-metrics · node-exporter)은 저장 층(`deploy/base` · `values/`)에 이미 있다.
 
 - OTel 게이트웨이를 두지 않고 Loki OTLP(`172.30.0.35:3100/otlp`)로 직접 보낸다: 트레이스를 내는 앱이 없고 Loki가 같은 클러스터라 버퍼 이득이 작다. 그래서 설정 파일을 따로 둔다(`overlays/monitoring/fluent-bit.yaml`, 입력 · 필터는 base와 같고 출력만 다름)
-- 라벨은 `k8s_cluster_name="monitoring"` · `service_name`(`pod` | `kernel`) 둘뿐이다. Fluent Bit은 리소스 속성에 고정 값만 넣을 수 있어서, 네임스페이스 · Pod · 컨테이너 이름은 structured metadata(`kubernetes_namespace_name` · `kubernetes_pod_name` · `kubernetes_container_name` · `kubernetes_host`)로 들어간다 → **관리 클러스터와 조회 방법이 다르다**
+- 라벨은 `k8s_cluster_name="monitoring"` · `service_name`(`pod` | `kernel` | `journal`) 둘뿐이다. Fluent Bit은 리소스 속성에 고정 값만 넣을 수 있어서, 네임스페이스 · Pod · 컨테이너 이름은 structured metadata(`kubernetes_namespace_name` · `kubernetes_pod_name` · `kubernetes_container_name` · `kubernetes_host`)로 들어간다 → **관리 클러스터와 조회 방법이 다르다**
 - 적용은 ArgoCD(Gitops 레포 Application `gpu-monitoring-logs`, 자동 sync · prune/selfHeal 끔). `deploy-k8s.sh`는 lint(`--dry-run` · overlay 렌더)만 하고 적용하지 않는다
 - kind 노드는 journald가 `/run/log/journal`에 있고 커널 메시지가 없다 → kind에서 볼 때는 렌더 결과의 `path`를 바꾸고 `systemd_filter`를 떼야 저널 출력 경로를 확인할 수 있다
 
@@ -303,8 +303,11 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_
 ```bash
 curl -sG "http://$V:3100/loki/api/v1/query_range" --data-urlencode 'query={k8s_cluster_name="monitoring", service_name="pod"} | kubernetes_namespace_name="monitoring" | kubernetes_container_name="loki"' --data-urlencode limit=5
 curl -sG "http://$V:3100/loki/api/v1/query" --data-urlencode 'query=sum by (_HOSTNAME) (count_over_time({k8s_cluster_name="monitoring", service_name="kernel"}[1h]))'   # 노드 3대
+curl -sG "http://$V:3100/loki/api/v1/query" --data-urlencode 'query=sum by (_HOSTNAME, _SYSTEMD_UNIT) (count_over_time({k8s_cluster_name="monitoring", service_name="journal"}[1h]))'   # 노드 3대 × etcd · kubelet · containerd
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{cluster="monitoring", job="fluent-bit"}'                                                    # 3개 1
 ```
+
+노드 서비스 로그(11/20 추가, GPU-139): etcd(Kubespray가 Pod가 아니라 systemd로 띄움) · kubelet · containerd는 `/var/log/containers`에 없어 Pod 로그로는 안 잡힌다. 세 클러스터 모두 저널에서 이 셋만 골라 `service_name="journal"`로 보낸다(Proxmox 호스트와 같은 값, 유닛은 `_SYSTEMD_UNIT`). EKS는 etcd가 AWS 관리라 kubelet · containerd만. 실행 명령줄(`_CMDLINE` · `_EXE`)은 보내지 않는다. 관리 클러스터 · EKS 조회는 `{k8s_cluster_name="onprem-manager", service_name="journal"} | _SYSTEMD_UNIT="etcd.service"`
 
 겪은 것 (11/10, kind):
 
