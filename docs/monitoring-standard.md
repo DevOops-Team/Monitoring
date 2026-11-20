@@ -134,10 +134,16 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-23 | `CollectorLagHigh` (`infra.yml`, 테스트 `tests/infra_test.yml`). 브로커 다운 룰은 미구현 | `deploy/README.md` 「알람이 울리면」 | 「Kafka 브로커」 전체 · 「수집기 lag」 행(1000 선) | 2026-11-18 |
 | MON-STD-24 | | | 「Proxmox 호스트」 전체 (온도는 5분 평균, 80 · 90°C · NVMe 70°C 선) | 2026-11-13 |
 | MON-STD-26 | `HostDiskWarning` · `HostDiskCritical` (`infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kafka · DB VM」 · 「pfSense」 타일 디스크 최대, 그래프 루트 디스크 사용률(80 · 90% 선) | 2026-11-18 |
-| MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | (HOLD 목록 패널은 v_incidents 대시보드 때) | |
-| MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/base/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | (패널 없음) | 2026-11-19 |
-| MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | (패널 없음) | 2026-11-20 |
-| 나머지 01 ~ 05 · 08 · 09 · 11 · 12 · 14 · 17 · 19 · 21 | | | | |
+| MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | 「장애 복구」 타일 HOLD 누적, HOLD 목록(PostgreSQL `recovery.held`, `grafana_ro`에 `data.events` 권한이 생기면 보임) · HOLD 누적 (지표) | 2026-11-20 |
+| MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/base/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 분류기, 그래프 받은 알람 · 발행한 사건 · 버린 것 · 상태 | 2026-11-20 |
+| MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 하트비트 경과(60초 선) · 하트비트 조회 | 2026-11-20 |
+| MON-STD-01 | | | 「GPU」 타일 온도 여유, 그래프 GPU 온도(한계 3단 점선) | 2026-11-20 |
+| MON-STD-02 | | | 「GPU」 타일 감속 GPU, 그래프 감속 사유 · 감속 시간 비율 · SM 클럭 | 2026-11-20 |
+| MON-STD-03 | | | 「GPU」 타일 ECC DBE · 폐기 대기, 그래프 ECC SBE 증가 · 페이지 폐기 | 2026-11-20 |
+| MON-STD-04 | (Loki 룰 본문 미구현, GPU-218) · 보조 `FailoverXidDcgm` (`deploy/base/mimir/rules/failover.yml`) | | 「GPU」 타일 Xid GPU, 그래프 Xid · 커널 Xid 로그 (Xid가 난 적이 없어 비어 있음) | 2026-11-20 |
+| MON-STD-05 | | | 「GPU」 GPU 사용률 · GPU 메모리 | 2026-11-20 |
+| MON-STD-08 | | | 「학습 작업」 타일 스트래글러 · 데이터 대기, 그래프 스트래글러 비율(1.5 · 2.0 선) · 랭크 계산 · 통신 · 데이터 대기(0.1초 선) | 2026-11-20 |
+| 나머지 09 · 11 · 12 · 14 · 17 · 19 · 21 | | | | |
 | SLO-1 ~ 4 | | | | |
 
 ## 6. 채우는 순서와 변경 규칙
