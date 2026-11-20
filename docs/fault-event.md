@@ -127,7 +127,7 @@ RelocationRequest `action`은 `restartInPlace` · `moveToSpare` · `evacuateClus
 | 한송이 필드 | v1 필드 | 비고 |
 |---|---|---|
 | `incident_id` | `dedup_key` | 같은 사건 묶음 키. 개별 판정은 `event_id`(= trace ID). 재판정(`fault.reclassified`)은 `event_id`가 바뀌고 `dedup_key`는 같다 |
-| `job_id` · `generation` · `node` · `gpu_uuid` | 같은 이름 | `job_id` null이면 수집기가 `fault.injection`으로 보완 (김현수) |
+| `job_id` · `generation` · `node` · `gpu_uuid` | 같은 이름 | |
 | `evidence` | `raw` + `correlated` + `category` + `confidence` + `source` | 한 필드로 합치지 않는다 |
 | `action` | `suggested_action` | 추천. 결정은 컨트롤러 |
 | 룰 · 임계값 버전 | **v1: Kafka 메시지 헤더 `rule_version`** | 본문 필드가 없다. 분류기가 헤더에 룰 파일 git SHA(짧은 7자)를 넣고, 컨트롤러가 읽어 판단 기록에 남긴다 (한송이 동의 11/05). 본문 필드 `rule_version` 추가는 김현수와 DB 저장 형식까지 합의한 뒤 v1.1 |
