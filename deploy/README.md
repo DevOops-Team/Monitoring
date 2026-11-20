@@ -325,7 +325,8 @@ EKS는 비용 때문에 켰다 끈다. 그래서 **클러스터 이름을 파일
 |---|---|---|
 | Agent · KSM · OTel 게이트웨이 | CPU 노드 (`workload=system`, t3.large 1대) | GPU 노드는 스팟이라 회수되면 수집이 같이 죽는다. 버퍼는 hostPath |
 | Fluent Bit · node-exporter | 전 노드 | 어떤 taint든 통과 |
-| dcgm-exporter 4.8.4 | GPU 노드 (`devoops/gpu=true`) | 수집 5초. Agent의 `annotated-pods` 잡이 긁는다(`job="annotated-pods"`). 메모리는 T4에서 약 435MiB를 쓴다(한도 1Gi, 256Mi에서는 OOMKilled 반복) |
+| dcgm-exporter 4.8.4 | GPU 노드 (`devoops/gpu=true`) | 수집 5초. Agent의 `annotated-pods` 잡이 긁는다(`job="annotated-pods"`). 메모리는 내장 엔진일 때 T4에서 약 435MiB(한도 1Gi, 256Mi에서는 OOMKilled 반복) |
+| ↳ 사이드카 `nv-hostengine` (11/20~) | dcgm-exporter Pod 안 | DCGM 엔진(`ghcr.io/devoops-team/dcgm-hostengine`). exporter는 `-r localhost:5555`로 여기에 붙는다. `dcgmi`로 Xid를 주입하려고 뺐다(아래 「장애 주입」 ③). 이미지가 비공개라 `monitoring/ghcr-pull`이 필요하다(IaC가 EKS를 만들 때 넣는다) |
 | 학습 Pod의 trainer 지표 (`train_*`, :8000) | 학습 Pod (`training` 네임스페이스) | 같은 `annotated-pods` 잡. 어노테이션은 Backend가 JobSet Pod 템플릿에 붙인다(Backend v1.7.0부터). 우리 쪽 설정은 없다 |
 
 **올라가는 길**
@@ -348,7 +349,7 @@ pfSense의 IPsec 인바운드(EKS 172.28.0.0/16 → `172.30.0.35` 9009 · 3100 �
 | 1 | ArgoCD 앱 | 관리 클러스터 `kubectl -n argocd get application \| grep eks-monitoring` | 클러스터마다 하나, Synced · Healthy |
 | 2 | 수집 대상 | `count by (cluster, job) (up{cluster=~"eks-.*"} == 1)` | `prometheus-agent` 1 · `kube-state-metrics` 1 · `otel-gateway` 1 · `fluent-bit` 6 · `node-exporter` 6 · `kubelet` 6 · `cadvisor` 6 |
 | 3 | 이름 주입 | `count(up{cluster="unset"})` | 0 |
-| 4 | dcgm-exporter | `count by (cluster) (DCGM_FI_DEV_GPU_TEMP)` | 클러스터마다 5 |
+| 4 | dcgm-exporter | `count by (cluster) (DCGM_FI_DEV_GPU_TEMP)` | 클러스터마다 5. 사이드카는 GPU를 못 받아도 「GPU 0개」로 뜨므로 Pod Running이 아니라 이 개수로 본다. 0이면: `kubectl -n monitoring get pods -l app.kubernetes.io/name=dcgm-exporter`(2/2인지) · `ImagePullBackOff`면 `kubectl -n monitoring get secret ghcr-pull` · `logs <Pod> -c nv-hostengine` · `logs <Pod> -c dcgm-exporter`. 못 고치면 사이드카 PR(#172)을 되돌린다 |
 | 5 | dcgm 라벨 이름 | `DCGM_FI_DEV_GPU_TEMP{cluster="eks-a"}`의 라벨 | `node` · `UUID`가 있다. 다르면 `classifier/classifier/enrich.py`의 `GPU_METRIC` 조회를 고친다(커널 로그 경로와 DCGM 경로의 중복 제거가 여기에 달렸다) |
 | 6 | 노드 라벨 | `kube_node_labels{cluster="eks-a"}` | `label_topology_kubernetes_io_zone` · `label_node_kubernetes_io_instance_type` |
 | 7 | 커널 로그 | Loki `{k8s_cluster_name="eks-a", service_name="kernel"}` | GPU 노드에서 줄이 온다. 안 오면 AL2023 NVIDIA AMI의 journald 위치(`/var/log/journal`)를 본다 |
@@ -375,8 +376,8 @@ cd classifier && MIMIR_URL=http://172.30.0.35:9009 .venv/bin/uvicorn classifier.
 
 ## 장애 주입 (11/20, GPU-92)
 
-주입은 두 가지다. ① trainer 강제 종료(진짜 신호, 룰부터 전부 실제 경로) ② 한송이 시나리오 Xid 79 → 48(분류기에 시험 알람을 직접 넣음, 룰은 건너뜀).
-`dcgmi`로 GPU에 Xid를 넣는 것은 이번엔 안 한다: dcgm-exporter가 내장 엔진이라 넣어도 지표에 안 나온다(사이드카는 테스트 뒤 따로).
+주입은 세 가지다. ① trainer 강제 종료(학습 Pod 장애, 룰부터 전부 실제 경로) ② 한송이 시나리오 Xid 79 → 48(분류기에 시험 알람을 직접 넣음, 룰은 건너뜀) ③ `dcgmi`로 DCGM 엔진에 Xid를 넣음(GPU 고장, 룰부터 실제 경로).
+③은 dcgm-exporter 사이드카가 GPU를 잡았을 때만 한다(「EKS가 뜬 날 확인 순서」 4번). 순서는 ① → ② → ③.
 
 **복구 컨트롤러가 실행 모드다.** 주입하면 실제로 복구(새 세대 제출 · 노드 격리)가 일어난다. 주입마다 한송이에게 먼저 알리고 순서를 맞춘다. 격리 해제는 한송이가 한다.
 
@@ -472,6 +473,44 @@ curl -s -X POST localhost:18080/alerts -H 'Content-Type: application/json' -d "{
 - 79의 복구가 끝나면 한송이가 새 세대 · 새 노드 · 시각을 준다 → 그 노드로 48
 - 시험 이벤트는 실제 `gpu.fault`에 남는다. 구분은 `raw.log_line`의 `TEST NODE-00x`
 
+### ③ `dcgmi`로 Xid 주입 (GPU 고장, 룰부터 실제 경로)
+
+dcgm-exporter Pod의 사이드카 엔진 캐시에 가짜 Xid를 써 넣는다. 드라이버 · GPU는 건드리지 않고 커널 로그에도 안 남는다(커널 로그 경로 룰 GPU-218은 이걸로 시험 못 함).
+exporter는 진짜인 줄 알고 `DCGM_FI_DEV_XID_ERRORS`로 내보내고 → `FailoverXidDcgm` → 분류기 → **실제 복구(노드 격리 · 이전)**까지 간다. 한송이와 순서를 맞춘다. ②의 79를 이것으로 대신할지도 그때 정한다.
+
+```bash
+# 대상: 학습 Pod가 도는 GPU 노드의 dcgm-exporter Pod
+kubectl -n training get pods -o wide -L devoops/job-id,devoops/generation
+kubectl -n monitoring get pods -o wide -l app.kubernetes.io/name=dcgm-exporter
+DCGM=<그 노드의 dcgm-exporter Pod>
+
+# GPU ID 확인 (g4dn.xlarge는 GPU 1장 → 0)
+kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- dcgmi discovery -l
+
+# 주입 (필드 230 = Xid)
+date '+%T'; kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- dcgmi test --inject --gpuid 0 -f 230 -v 79
+
+# 엔진 캐시에 들어갔는지
+kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- dcgmi test --introspect --gpuid 0 -f 230
+```
+
+볼 것
+
+| # | 무엇 | 어디서 | 기대 |
+|---|---|---|---|
+| 1 | 지표 | `DCGM_FI_DEV_XID_ERRORS{cluster="eks-a", node="<노드>"}` | 20초 안에 79 (exporter 5초 · scrape 15초) |
+| 2 | 원인 알람 | Alertmanager | `FailoverXidDcgm`, `xid="79"` · `source="dcgm"` · `gpu_uuid`, 수신자 `classifier`. 1분만 울리고 꺼진다 |
+| 3 | 발행 | Loki `event.published` | `category` `hw` · `action` `isolate_migrate` · `job_id` 채워짐(48이면 `reset_then_migrate`) |
+| 4 | 묶기 | `classifier_alerts_total{outcome="absorbed"}` | 복구로 지워지는 같은 세대 학습 Pod의 종료가 따로 `restart_in_place`로 나가지 않는다 |
+| 5 | 복구 | ①의 7번과 같다 | 새 세대가 다른 노드에서 이어서 학습. 원래 노드는 격리(해제는 한송이) |
+
+**끝나면 반드시 주입값을 지운다.** 값은 엔진이 재시작될 때까지 캐시에 남는다. 남겨 두면 그 GPU에서 나중에 진짜 Xid 79가 나도 값이 그대로라 알람이 안 울린다.
+
+```bash
+kubectl -n monitoring delete pod "$DCGM"     # DaemonSet이 새로 띄운다 → 엔진 캐시가 비워진다
+# 확인: 그 노드의 DCGM_FI_DEV_XID_ERRORS가 사라진다(Xid가 없으면 시계열이 없다) · DCGM_FI_DEV_GPU_TEMP는 다시 나온다
+```
+
 ### HOLD가 나면
 
 `RecoveryHold` 알람이 Slack `#alerts-gpu`에 와야 한다(Slack 화면은 사용자가 확인). `recovery_hold_total{job_id, reason}`가 늘었는지 같이 적는다.
@@ -485,12 +524,14 @@ curl -s -X POST localhost:18080/alerts -H 'Content-Type: application/json' -d "{
 | ① kill -9 | | | | | | | | |
 | ② Xid 79 | | | | | | | | |
 | ② Xid 48 | | | | | | | | |
+| ③ dcgmi Xid | | | | | | | | |
 
 감지 = T3 − T0, 분류 = T3 − T1, 복구 = T5 − T3. 끝나면 `docs/measurements/2026-11-20-…md`로 옮긴다.
 
 ### 끝난 뒤 (EKS를 내리기 전에)
 
-- dcgm-exporter 메모리 최대값: `max by (cluster) (max_over_time(container_memory_working_set_bytes{container="dcgm-exporter"}[6h]))` → 한도 조정(768Mi · 512Mi 안)의 근거
+- dcgm-exporter · 엔진 메모리 최대값: `max by (cluster, container) (max_over_time(container_memory_working_set_bytes{container=~"dcgm-exporter|nv-hostengine"}[6h]))` → 두 컨테이너 한도 조정의 근거(내장일 때 합계 약 435MiB)
+- 주입한 dcgm-exporter Pod를 지웠는지(③)
 - `POWER_VIOLATION` 원인: 학습 중 노드와 유휴(spare) 노드의 `rate(DCGM_FI_DEV_POWER_VIOLATION[10m])` 비교(11/19 측정 노트 3절)
 - 내릴 때 `FailoverSiteDown`이 약 8분 뜨는 것은 정상(위)
 
