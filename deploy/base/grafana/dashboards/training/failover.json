@@ -614,7 +614,7 @@
     {
       "type": "table",
       "title": "HOLD 목록",
-      "description": "복구 컨트롤러가 낸 recovery.held 사건(Kafka recovery.action → 수집기 → data.events). 알람은 발생만 알리므로 무엇이 왜 멈췄는지는 여기서 본다. permission denied가 나오면 grafana_ro 계정에 data.events 읽기 권한이 아직 없는 것",
+      "description": "복구 컨트롤러가 낸 recovery.held 사건(Kafka recovery.action → 수집기 → data.events → 뷰 data.v_recovery_held). 알람은 발생만 알리므로 무엇이 왜 멈췄는지는 여기서 본다",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "postgres"
@@ -626,7 +626,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "postgres"
           },
-          "rawSql": "SELECT occurred_at, job_id, generation, cluster, node, payload->>'reason' AS reason, payload->>'stage' AS stage, payload->>'state' AS state FROM data.events WHERE type = 'recovery.held' AND $__timeFilter(occurred_at) ORDER BY occurred_at DESC LIMIT 200",
+          "rawSql": "SELECT occurred_at, job_id, generation, cluster, node, payload->>'reason' AS reason, payload->>'stage' AS stage, payload->>'state' AS state FROM data.v_recovery_held WHERE $__timeFilter(occurred_at) ORDER BY occurred_at DESC LIMIT 200",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"
