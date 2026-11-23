@@ -358,7 +358,7 @@
     {
       "type": "stat",
       "title": "분류기",
-      "description": "살아 있는 분류기 Pod 수. 0이면 장애 신호가 gpu.fault로 나가지 않는다(MON-STD-27)",
+      "description": "살아 있는 분류기 Pod 수. 2가 정상(대장 1 + 대기 1), 1이면 넘겨받을 대기가 없다. 0이면 장애 신호가 gpu.fault로 나가지 않는다(MON-STD-27)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -388,8 +388,12 @@
                 "value": null
               },
               {
-                "color": "#73BF69",
+                "color": "#FF9830",
                 "value": 1
+              },
+              {
+                "color": "#73BF69",
+                "value": 2
               }
             ]
           },
@@ -1032,7 +1036,7 @@
     {
       "type": "timeseries",
       "title": "상태",
-      "description": "job.lifecycle 구독 정상 여부(1 = 정상, 0이면 의도된 종료를 못 걸러 냄)와 종료 원인을 기다리는 Pod 수(30초 대기)",
+      "description": "대장 분류기의 job.lifecycle 구독 정상 여부(1 = 정상, 0이면 의도된 종료를 못 걸러 냄. 대기 쪽은 읽지 않아 뺀다), 대장 수(1이 정상, 0인 구간 = 대장이 바뀌는 중), 종료 원인을 기다리는 Pod 수(30초 대기)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1044,8 +1048,17 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "min(classifier_lifecycle_healthy{job=\"classifier\"})",
+          "expr": "min(classifier_lifecycle_healthy{job=\"classifier\"} and on (pod) classifier_leader{job=\"classifier\"} == 1)",
           "legendFormat": "lifecycle 정상"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(classifier_leader{job=\"classifier\"} == 1) or vector(0)",
+          "legendFormat": "대장 수"
         },
         {
           "refId": "B",
