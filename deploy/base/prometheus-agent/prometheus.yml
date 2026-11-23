@@ -4,6 +4,10 @@ global:
   scrape_interval: 15s      # dcgm-exporter 내부 수집 5s + scrape 15s 전제 (fault-event ±45s 창)
   external_labels:
     site: onprem            # cluster 라벨은 클러스터 안 대상에만 아래 relabel로 붙인다(LAN 서버엔 없음)
+    # Agent 2개가 같은 것을 보내므로 Mimir가 한쪽만 받게 하는 라벨 (mimir.yaml의 ha_cluster_label · ha_replica_label).
+    # agent_group은 저장되고 __replica__는 저장 전에 지워진다. 값은 StatefulSet이 넣는 Pod 이름
+    agent_group: monitoring
+    __replica__: ${POD_NAME}
 
 remote_write:
   - url: http://mimir.monitoring.svc.cluster.local:9009/api/v1/push
@@ -13,10 +17,17 @@ remote_write:
       retry_on_http_429: true
 
 scrape_configs:
+  # Agent 자신. localhost로 긁으면 뽑힌 쪽 것만 남으므로, 두 Agent가 서로를 포함해 Pod마다 긁는다
   - job_name: prometheus-agent
-    static_configs:
-      - targets: ["localhost:9090"]
-        labels: {cluster: monitoring}
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpointslice_port_name]
+        regex: prometheus-agent;http
+        action: keep
+      - {target_label: cluster, replacement: monitoring}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
 
   # --- 이 클러스터 자신 ---
   # kubelet: 노드마다 하나. 인증은 ServiceAccount 토큰.
