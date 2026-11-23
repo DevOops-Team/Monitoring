@@ -94,7 +94,7 @@
     {
       "type": "stat",
       "title": "감지 평균",
-      "description": "장애 시작 → gpu.fault 발행까지(detect_s) 평균. 장애 시작 = 주입 기록(data.injections)이 있으면 주입한 시각, 없으면 고장의 흔적이 처음 생긴 시각(컨테이너 종료 시각 · Xid가 처음 수집된 시각). ADR-15",
+      "description": "장애 시작 → 분류기의 첫 알림(gpu.fault의 fault.detected 또는 fault.held)까지(detect_s) 평균. 장애 시작 = 주입 기록(data.injections)이 있으면 주입한 시각, 없으면 고장의 흔적이 처음 생긴 시각(컨테이너 종료 시각 · Xid가 처음 수집된 시각). 알람이 분류기에 도착한 시각은 사건에 없어 따로 재지 못한다. ADR-15",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "postgres"
@@ -160,7 +160,7 @@
     {
       "type": "stat",
       "title": "분류 평균",
-      "description": "장애 시작 → 분류기 판정까지(classify_s) 평균. 분류기는 판정이 끝난 뒤 사건 한 건으로 알리므로 지금은 감지와 같은 값이다. 분류기 안에서 걸린 시간을 따로 보려면 알람을 받은 시각이 사건에 있어야 한다(예정)",
+      "description": "장애 시작 → 분류기가 원인을 확정해 알린 때(fault.detected 또는 fault.reclassified)까지(classify_s) 평균. 분류기가 처음부터 원인을 알면 사건 한 건으로 끝나 감지와 분류가 같은 값이고, 보류(fault.held)했다가 나중에 원인을 확정(fault.reclassified)한 경우에만 달라진다",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "postgres"
@@ -226,7 +226,7 @@
     {
       "type": "stat",
       "title": "복구 평균",
-      "description": "분류기 판정(gpu.fault 발행) → 학습 재개(job.resumed)까지(recover_s) 평균. 재개되지 않은 장애는 평균에서 빠진다",
+      "description": "분류기의 원인 확정 → 학습 재개(job.resumed)까지(recover_s) 평균. 재개되지 않은 장애는 평균에서 빠진다",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "postgres"
@@ -437,7 +437,7 @@
     {
       "type": "table",
       "title": "장애 목록",
-      "description": "장애 1건 = 한 줄. 장애 시작 = 주입 기록(data.injections)이 있으면 주입한 시각, 없으면 고장의 흔적이 처음 생긴 시각(컨테이너 종료 시각 · Xid가 처음 수집된 시각). 출처 칸이 어느 쪽인지 알려 준다: 주입 기록 = 사람이 고장 낸 시각을 넣음(실험) · 자동(신호) = 기록이 없어 흔적 시각을 시작으로 봄(실제 장애는 항상 이쪽) · 옛 데이터 = fault.injected 사건. 감지 = 시작 → gpu.fault 발행. 분류 = 시작 → 판정(지금은 감지와 같은 값). 복구 = 판정 → 학습 재개. 신호 → 발행 = 흔적이 생긴 시각 → 발행(수집 · 룰 평가 · 분류기 대기를 합친, 우리 시스템이 쓴 시간). 감지에서 이 값을 빼면 고장이 나고 흔적이 생기기까지의 시간이다",
+      "description": "장애 1건 = 한 줄. 장애 시작 = 주입 기록(data.injections)이 있으면 주입한 시각, 없으면 고장의 흔적이 처음 생긴 시각(컨테이너 종료 시각 · Xid가 처음 수집된 시각). 출처 칸이 어느 쪽인지 알려 준다: 주입 기록 = 사람이 고장 낸 시각을 넣음(실험) · 자동(신호) = 기록이 없어 흔적 시각을 시작으로 봄(실제 장애는 항상 이쪽) · 옛 데이터 = fault.injected 사건. 감지 = 시작 → 분류기의 첫 알림(gpu.fault). 분류 = 시작 → 분류기가 원인을 확정해 알린 때. 분류기가 처음부터 원인을 알면 사건 한 건으로 끝나 감지와 분류가 같은 값이고, 보류(fault.held)했다가 나중에 원인을 확정(fault.reclassified)한 경우에만 달라진다. 복구 = 원인 확정 → 학습 재개. 신호→첫 알림 = 흔적이 생긴 시각 → 분류기의 첫 알림(수집 · 룰 평가 · 분류기 대기를 합친, 우리 시스템이 쓴 시간). 감지에서 이 값을 빼면 고장이 나고 흔적이 생기기까지의 시간이다",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "postgres"
@@ -467,10 +467,10 @@
               "start_source": "출처",
               "node": "노드",
               "job_id": "작업",
-              "detect_s": "감지 (시작→발행)",
-              "classify_s": "분류 (시작→판정)",
-              "recover_s": "복구 (판정→재개)",
-              "signal_lag_s": "신호→발행",
+              "detect_s": "감지 (시작→첫 알림)",
+              "classify_s": "분류 (시작→원인 확정)",
+              "recover_s": "복구 (원인 확정→재개)",
+              "signal_lag_s": "신호→첫 알림",
               "resumed_at": "재개 시각"
             },
             "indexByName": {
@@ -558,7 +558,7 @@
     {
       "type": "timeseries",
       "title": "감지 · 분류 · 복구 시간",
-      "description": "장애 1건 = 점 하나(시작 시각 위치). 감지 = 시작 → 발행, 분류 = 시작 → 판정(지금은 감지와 같음), 복구 = 판정 → 재개. 목표와 비교는 SLO-1 측정 때",
+      "description": "장애 1건 = 점 하나(시작 시각 위치). 감지 = 시작 → 분류기 첫 알림, 분류 = 시작 → 원인 확정, 복구 = 원인 확정 → 재개. 분류기가 처음부터 원인을 알면 사건 한 건으로 끝나 감지와 분류가 같은 값이고, 보류(fault.held)했다가 나중에 원인을 확정(fault.reclassified)한 경우에만 달라진다. 목표와 비교는 SLO-1 측정 때",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "postgres"
