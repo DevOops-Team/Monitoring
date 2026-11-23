@@ -114,7 +114,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "suffix:초",
           "color": {
             "mode": "thresholds"
           },
@@ -180,7 +180,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "suffix:초",
           "color": {
             "mode": "thresholds"
           },
@@ -246,7 +246,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "suffix:초",
           "color": {
             "mode": "thresholds"
           },
@@ -503,7 +503,7 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "s"
+                "value": "suffix:초"
               },
               {
                 "id": "decimals",
@@ -548,7 +548,7 @@
       ],
       "fieldConfig": {
         "defaults": {
-          "unit": "s",
+          "unit": "suffix:초",
           "color": {
             "mode": "palette-classic"
           },
@@ -571,7 +571,8 @@
               }
             ]
           },
-          "min": 0
+          "min": 0,
+          "decimals": 1
         },
         "overrides": []
       },
