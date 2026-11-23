@@ -6,17 +6,21 @@
   MIMIR_URL        예 http://mimir:9009. 없으면 수집 경로를 확인할 수 없어 전부 hold로 낸다
   RULE_VERSION     rules.yaml의 git SHA 앞 7자 (이미지 빌드 때 넣음). Kafka 헤더로 나간다
   LEASE_NAME       대장 선출에 쓸 Lease 이름. 있으면 Lease를 잡은 Pod만 알람을 처리한다(7절). 없으면 혼자 도는 것으로 본다
+  POD_IP           LEASE_NAME과 같이 쓴다. 대기 쪽이 받은 알람을 넘겨줄 대장 주소로 Lease에 적힌다
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
+import urllib.error
+import urllib.request
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable
 
-from fastapi import Body, FastAPI, HTTPException, Response
+from fastapi import Body, FastAPI, HTTPException, Request, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
 
 from . import dedup, intended
@@ -80,6 +84,24 @@ def _die(reason: str) -> None:
     os._exit(1)
 
 
+PORT = 8080
+FORWARDED = "x-classifier-forwarded"    # 대기 쪽이 넘겨준 요청. 받은 쪽이 대장이 아니어도 다시 넘기지 않는다
+FORWARD_TIMEOUT = 15.0                  # 대장이 Kafka 전달 확인을 기다리는 시간(10초)보다 길게
+
+
+def forward(address: str, body: dict[str, Any]) -> Response:
+    """받은 웹훅을 대장에게 그대로 보내고 대장의 응답을 돌려준다. 대장에 못 닿으면 503 → Alertmanager가 다시 보낸다."""
+    req = urllib.request.Request(f"http://{address}/alerts", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", FORWARDED: "1"})
+    try:
+        with urllib.request.urlopen(req, timeout=FORWARD_TIMEOUT) as r:
+            return Response(r.read(), status_code=r.status, media_type="application/json")
+    except urllib.error.HTTPError as e:
+        return Response(e.read(), status_code=e.code, media_type="application/json")
+    except OSError as e:
+        raise HTTPException(status_code=503, detail=f"대장({address})에 닿지 못함: {e!r}") from e
+
+
 def create_app(pipeline: p.Pipeline | None = None, lease_api=None) -> FastAPI:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     restore: Callable[[], None] = lambda: None
@@ -104,7 +126,8 @@ def create_app(pipeline: p.Pipeline | None = None, lease_api=None) -> FastAPI:
         lease_api = LeaseApi(lease, os.environ["KUBERNETES_SERVICE_HOST"], os.environ["KUBERNETES_SERVICE_PORT"])
     if lease_api is not None:
         # 갱신하지 못한 대장은 처리를 멈춰야 한다. 기억도 버려야 하므로(그 사이 새 대장이 낸 것을 모른다) 프로세스를 끝낸다
-        elector = Elector(lease_api, os.environ.get("HOSTNAME", "local"), lead, lambda: _die("lease lost"))
+        elector = Elector(lease_api, os.environ.get("HOSTNAME", "local"), f"{os.environ.get('POD_IP', '127.0.0.1')}:{PORT}",
+                          lead, lambda: _die("lease lost"))
     else:
         restore()                   # 혼자 돈다. 복원이 끝나야 포트를 연다. 실패하면 예외로 시작을 멈춘다
         active.set()
@@ -122,19 +145,25 @@ def create_app(pipeline: p.Pipeline | None = None, lease_api=None) -> FastAPI:
                     p.logger.exception("flush failed")
 
         threading.Thread(target=tick, name="flush", daemon=True).start()
-        if elector:
-            threading.Thread(target=elector.run, args=(stop,), name="lease", daemon=True).start()
+        lease_thread = threading.Thread(target=elector.run, args=(stop,), name="lease", daemon=True) if elector else None
+        if lease_thread:
+            lease_thread.start()
         yield
         stop.set()
+        if lease_thread:
+            lease_thread.join(10.0)     # 대장이면 Lease를 비우고 끝난다
 
     app = FastAPI(title="classifier", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
     # def(동기)라서 스레드 풀에서 돈다. Kafka 전달 확인을 기다려도 다른 요청을 막지 않는다
     @app.post("/alerts")
-    def alerts(body: dict[str, Any] = Body(...)) -> dict[str, int]:
+    def alerts(request: Request, body: dict[str, Any] = Body(...)):
         """Alertmanager 웹훅. 전달 실패가 하나라도 있으면 503 → Alertmanager가 묶음을 다시 보낸다(이미 낸 것은 중복 제거로 걸러짐)."""
-        if not active.is_set():     # 대기 쪽. Service에서 빠져 있어 보통은 오지 않는다(직접 찌른 경우)
-            raise HTTPException(status_code=503, detail="대장이 아니다")
+        if not active.is_set():     # 대기 쪽이거나 대장이 된 직후 복원 중. Service는 두 Pod에 번갈아 보낸다
+            leader = elector.leader_address if elector else None
+            if leader is None or FORWARDED in request.headers:
+                raise HTTPException(status_code=503, detail="처리할 대장이 없다")
+            return forward(leader, body)
         items = body.get("alerts")
         if not isinstance(items, list):
             raise HTTPException(status_code=400, detail="alerts 배열이 없다")
@@ -150,13 +179,6 @@ def create_app(pipeline: p.Pipeline | None = None, lease_api=None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
-
-    @app.get("/readyz")
-    def readyz() -> dict[str, str]:
-        """알람을 처리하는 Pod만 200. 대기 쪽은 503이라 Service에서 빠지고 웹훅은 늘 대장에게 간다."""
-        if not active.is_set():
-            raise HTTPException(status_code=503, detail="standby")
-        return {"status": "leader"}
 
     @app.get("/metrics")
     def metrics() -> Response:

@@ -114,7 +114,6 @@ def test_healthz_and_metrics(env):
     assert "classifier_lifecycle_healthy 0.0" in text       # 읽는 쪽을 붙이지 않은 상태
     assert "classifier_pending_pod_exits 0.0" in text
     assert "classifier_leader 1.0" in text                  # 선출 없이 혼자 도는 상태
-    assert client.get("/readyz").status_code == 200
 
 
 def test_default_context_holds_everything(monkeypatch, capsys):
@@ -170,8 +169,11 @@ class HeldLease:
     """다른 Pod가 잡고 계속 갱신하는 Lease."""
     name = "classifier"
 
+    def __init__(self, address="10.0.0.9:8080"):
+        self.annotations = {"devoops/leader-address": address} if address else {}
+
     def get(self):
-        return {"metadata": {"resourceVersion": "1"},
+        return {"metadata": {"resourceVersion": "1", "annotations": self.annotations},
                 "spec": {"holderIdentity": "other", "renewTime": ts(0), "leaseDurationSeconds": 15}}
 
 
@@ -187,25 +189,93 @@ class FreeLease:
     replace = create
 
 
-def test_standby_is_not_ready_and_refuses_alerts(env):
-    _, fake = env
+def lease_app(fake, lease_api):
     pipeline = Pipeline(Rules.load(), Publisher(fake, "abc1234"), lambda s: Context(az="a", collector_healthy=True))
-    with TestClient(create_app(pipeline, lease_api=HeldLease())) as client:
-        assert client.get("/healthz").status_code == 200      # 살아 있음 (재시작 대상 아님)
-        assert client.get("/readyz").status_code == 503       # Service에서 빠짐
-        assert post(client, alert(ts(30))).status_code == 503
+    return TestClient(create_app(pipeline, lease_api=lease_api))
+
+
+def wait_for(condition, seconds=3.0):
+    import time
+    deadline = time.monotonic() + seconds
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert condition()
+
+
+def test_standby_forwards_to_leader(env, monkeypatch):
+    """대기 쪽은 스스로 처리하지 않고 대장에게 넘겨 대장의 응답을 그대로 돌려준다."""
+    from fastapi import Response
+    from classifier import app as app_module
+    _, fake = env
+    seen = []
+
+    def fake_forward(address, body):
+        seen.append((address, len(body["alerts"])))
+        return Response('{"published": 1}', media_type="application/json")
+
+    monkeypatch.setattr(app_module, "forward", fake_forward)
+    with lease_app(fake, HeldLease()) as client:
+        wait_for(lambda: post(client, alert(ts(30))).status_code == 200)
+        assert post(client, alert(ts(30))).json() == {"published": 1}
+        assert client.get("/healthz").status_code == 200
         assert "classifier_leader 0.0" in client.get("/metrics").text
+    assert seen[-1] == ("10.0.0.9:8080", 1) and fake.sent == []
+
+
+def test_standby_without_leader_address_is_503(env):
+    _, fake = env
+    with lease_app(fake, HeldLease(address=None)) as client:
+        assert post(client, alert(ts(30))).status_code == 503
     assert fake.sent == []
 
 
-def test_leader_becomes_ready_after_acquiring(env):
-    import time
+def test_forwarded_request_is_not_forwarded_again(env, monkeypatch):
+    """넘겨받은 쪽이 대장이 아니면(방금 바뀜) 다시 넘기지 않고 503 → Alertmanager가 다시 보낸다."""
+    from classifier import app as app_module
     _, fake = env
-    pipeline = Pipeline(Rules.load(), Publisher(fake, "abc1234"), lambda s: Context(az="a", collector_healthy=True))
-    with TestClient(create_app(pipeline, lease_api=FreeLease())) as client:
-        deadline = time.monotonic() + 3
-        while client.get("/readyz").status_code != 200 and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert client.get("/readyz").json() == {"status": "leader"}
+    monkeypatch.setattr(app_module, "forward", lambda *a: pytest.fail("다시 넘김"))
+    with lease_app(fake, HeldLease()) as client:
+        r = client.post("/alerts", json={"alerts": [alert(ts(30))]}, headers={app_module.FORWARDED: "1"})
+        assert r.status_code == 503
+
+
+def test_leader_handles_after_acquiring(env):
+    _, fake = env
+    api = FreeLease()
+    with lease_app(fake, api) as client:
+        wait_for(lambda: "classifier_leader 1.0" in client.get("/metrics").text)
         assert post(client, alert(ts(30))).json() == {"published": 1}
-        assert "classifier_leader 1.0" in client.get("/metrics").text
+        assert api.lease["spec"]["holderIdentity"] != ""
+    assert api.lease["spec"]["holderIdentity"] == ""        # 정상 종료 때 Lease를 비운다
+
+
+def test_forward_relays_leader_response():
+    """forward(): 대장의 상태 코드 · 본문을 그대로, 못 닿으면 503."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from fastapi import HTTPException
+    from classifier.app import FORWARDED, forward
+
+    class Leader(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            code = 503 if body["alerts"] == ["fail"] else 200
+            assert self.headers[FORWARDED] == "1" and self.path == "/alerts"
+            self.send_response(code)
+            self.end_headers()
+            self.wfile.write(b'{"published": 1}' if code == 200 else b'{"detail": {"publish_failed": 1}}')
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Leader)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f"127.0.0.1:{server.server_port}"
+    ok, failed = forward(address, {"alerts": ["x"]}), forward(address, {"alerts": ["fail"]})
+    assert (ok.status_code, json.loads(ok.body)) == (200, {"published": 1})
+    assert (failed.status_code, json.loads(failed.body)) == (503, {"detail": {"publish_failed": 1}})
+    server.shutdown()
+    server.server_close()
+    with pytest.raises(HTTPException) as e:
+        forward(address, {"alerts": ["x"]})
+    assert e.value.status_code == 503
