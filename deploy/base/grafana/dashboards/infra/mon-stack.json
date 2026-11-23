@@ -904,7 +904,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(cortex_ingester_active_series)",
+          "expr": "max(cortex_ingester_active_series)",
           "legendFormat": "시계열"
         }
       ],
@@ -1068,7 +1068,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum by (state) (alertmanager_alerts)",
+          "expr": "max by (state) (alertmanager_alerts)",
           "legendFormat": "{{state}}"
         }
       ],
