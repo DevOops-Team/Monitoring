@@ -394,7 +394,7 @@ cd classifier && MIMIR_URL=http://172.30.0.35:9009 .venv/bin/uvicorn classifier.
 주입은 세 가지다. ① trainer 강제 종료(학습 Pod 장애, 룰부터 전부 실제 경로) ② 한송이 시나리오 Xid 79 → 48(분류기에 시험 알람을 직접 넣음, 룰은 건너뜀) ③ `dcgmi`로 DCGM 엔진에 Xid를 넣음(GPU 고장, 룰부터 실제 경로).
 ③은 dcgm-exporter 사이드카가 GPU를 잡았을 때만 한다(「EKS가 뜬 날 확인 순서」 4번). 순서는 ① → ② → ③.
 
-**복구 컨트롤러가 실행 모드다.** 주입하면 실제로 복구(새 세대 제출 · 노드 격리)가 일어난다. 주입마다 한송이에게 먼저 알리고 순서를 맞춘다. 격리 해제는 한송이가 한다.
+**주입 전에 복구 컨트롤러의 모드를 확인한다**(Gitops `onprem/controllers/recovery-controller/overlays/onprem/config.json`의 `mode` · `execution_enabled`). 실행 모드면 주입할 때 실제로 복구(새 세대 제출 · 노드 격리)가 일어나므로 주입마다 한송이에게 먼저 알리고 순서를 맞춘다. 격리 해제는 한송이가 한다. observe면 `gpu.fault` 발행까지만 보이고 아래 표의 복구 줄(T4 · T5)은 나오지 않는다(11/23이 그랬다).
 
 **준비** (위 「EKS가 뜬 날 확인 순서」 1 ~ 10이 끝난 뒤)
 
@@ -542,15 +542,17 @@ kubectl -n monitoring delete pod "$DCGM"     # DaemonSet이 새로 띄운다 →
 | ② Xid 48 | | | | | | | | | |
 | ③ dcgmi Xid | | | | | | | | | |
 
-감지 = T3 − T0, 분류 = T3 − T1, 복구 = T5 − T3. 끝나면 `docs/measurements/2026-11-20-…md`로 옮긴다.
+감지 = T3 − T0, 분류 = T3 − T1, 복구 = T5 − T3. 끝나면 `docs/measurements/`로 옮긴다.
+
+**11/23 결과**(① 두 번 · ③ 한 번, observe): ① 88.9초 → 평가 지연을 15초로 줄인 뒤 33.8초, ③ 36.9초. 다른 랭크는 Job이 삭제해 `gpu.fault`는 한 건만 나가고, 죽은 Pod는 약 37초 뒤 지워지며, 워커를 죽여도 Xid 45는 나지 않았다. 값과 타임라인은 `docs/measurements/2026-11-23-fault-injection.md`.
 「주입 해제」는 클럭 제한(`nvidia-smi -lgc`) · stress-ng · tc netem처럼 걸어 두는 주입을 푼 시각이다. 한 번에 끝나는 주입(kill -9 · Xid)은 비워 둔다.
 **기준선에서 빼는 구간 = T0 ~ (주입 해제와 T5 중 늦은 쪽)** (monitoring-standard.md 2절).
 
 ### 끝난 뒤 (EKS를 내리기 전에)
 
-- dcgm-exporter · 엔진 메모리 최대값: `max by (cluster, container) (max_over_time(container_memory_working_set_bytes{container=~"dcgm-exporter|nv-hostengine"}[6h]))` → 두 컨테이너 한도 조정의 근거(내장일 때 합계 약 435MiB)
+- dcgm-exporter · 엔진 메모리 최대값: `max by (cluster, container) (max_over_time(container_memory_working_set_bytes{container=~"dcgm-exporter|nv-hostengine"}[6h]))` → 두 컨테이너 한도 조정의 근거(내장일 때 합계 약 435MiB, 사이드카로 나눈 뒤 11/23 실측 exporter 99MiB · 엔진 40MiB)
 - 주입한 dcgm-exporter Pod를 지웠는지(③)
-- `POWER_VIOLATION` 원인: 학습 중 노드와 유휴(spare) 노드의 `rate(DCGM_FI_DEV_POWER_VIOLATION[10m])` 비교(11/19 측정 노트 3절)
+- `POWER_VIOLATION` 원인: 학습 중 노드와 유휴(spare) 노드의 `rate(DCGM_FI_DEV_POWER_VIOLATION[10m])` 비교(11/19 측정 노트 3절) → 11/23 확인: 유휴에도 초당 약 0.8초씩 오른다. T4에서는 전력 제한 신호로 못 쓴다
 - 내릴 때 `FailoverSiteDown`이 약 8분 뜨는 것은 정상(위)
 
 ## 다음
