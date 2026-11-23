@@ -4,13 +4,15 @@ rule_files:
 evaluation_interval: 15s
 
 tests:
-  # 1) 5분에 Pod가 사라져 up 시계열이 끊긴다 → 3분 지나야 울리고, 새 Pod가 긁히면 꺼진다
+  # 1) 5분에 Pod가 둘 다 사라져 시계열이 끊긴다 → 3분 지나야 울리고, 새 Pod가 대장이 되면 꺼진다
   - name: 분류기 Pod가 3분 넘게 없으면 울린다
     interval: 15s
     input_series:
-      - series: 'up{job="classifier", cluster="monitoring", pod="classifier-a"}'
+      - series: 'classifier_leader{job="classifier", cluster="monitoring", pod="classifier-a"}'
         values: '1x20 stale _x19'
-      - series: 'up{job="classifier", cluster="monitoring", pod="classifier-b"}'
+      - series: 'classifier_leader{job="classifier", cluster="monitoring", pod="classifier-b"}'
+        values: '0x20 stale _x19'
+      - series: 'classifier_leader{job="classifier", cluster="monitoring", pod="classifier-c"}'
         values: '_x40 1x20'
     alert_rule_test:
       - eval_time: 7m
@@ -21,18 +23,20 @@ tests:
         exp_alerts:
           - exp_labels: {severity: critical, job: classifier, cluster: monitoring}
             exp_annotations:
-              summary: '분류기가 없거나 지표가 안 긁힌다 — gpu.fault가 나가지 않아 자동 복구가 시작되지 않는다'
+              summary: '알람을 처리하는 분류기(대장)가 없거나 지표가 안 긁힌다 — gpu.fault가 나가지 않아 자동 복구가 시작되지 않는다'
               standard: MON-STD-27
       - eval_time: 11m
         alertname: ClassifierDown
         exp_alerts: []
 
-  # 2) Pod는 있는데 긁기가 실패한다(up == 0) → 같은 알람. 1분짜리 끊김(버전 올리기)은 안 울린다
-  - name: 분류기 지표가 3분 넘게 안 긁히면 울린다
+  # 2) 둘 다 떠 있는데 대장이 없다(값이 전부 0) → 같은 알람. 1분짜리 공백(대장이 바뀌는 중)은 안 울린다
+  - name: 둘 다 떠 있어도 대장이 3분 넘게 없으면 울린다
     interval: 15s
     input_series:
-      - series: 'up{job="classifier", cluster="monitoring", pod="classifier-a"}'
-        values: '1x8 0x4 1x8 0x20'
+      - series: 'classifier_leader{job="classifier", cluster="monitoring", pod="classifier-a"}'
+        values: '1x8 0x4 0x8 0x20'
+      - series: 'classifier_leader{job="classifier", cluster="monitoring", pod="classifier-b"}'
+        values: '0x8 0x4 1x8 0x20'
     alert_rule_test:
       - eval_time: 3m
         alertname: ClassifierDown
@@ -45,7 +49,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: critical, job: classifier, cluster: monitoring}
             exp_annotations:
-              summary: '분류기가 없거나 지표가 안 긁힌다 — gpu.fault가 나가지 않아 자동 복구가 시작되지 않는다'
+              summary: '알람을 처리하는 분류기(대장)가 없거나 지표가 안 긁힌다 — gpu.fault가 나가지 않아 자동 복구가 시작되지 않는다'
               standard: MON-STD-27
 
   # 3) job.lifecycle 읽기가 1분 끊겼다 돌아오면 안 울린다. 2분 넘게 0이면 울리고, 1로 돌아오면 꺼진다
@@ -54,6 +58,13 @@ tests:
     input_series:
       - series: 'classifier_lifecycle_healthy{job="classifier", cluster="monitoring", pod="classifier-a"}'
         values: '1x8 0x4 1x8 0x20 1x20'
+      - series: 'classifier_leader{job="classifier", cluster="monitoring", pod="classifier-a"}'
+        values: '1x64'
+      # 대기 쪽은 늘 0이지만 대장이 아니라 울리지 않는다
+      - series: 'classifier_lifecycle_healthy{job="classifier", cluster="monitoring", pod="classifier-b"}'
+        values: '0x64'
+      - series: 'classifier_leader{job="classifier", cluster="monitoring", pod="classifier-b"}'
+        values: '0x64'
     alert_rule_test:
       - eval_time: 3m
         alertname: ClassifierLifecycleUnhealthy

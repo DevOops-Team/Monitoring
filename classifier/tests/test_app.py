@@ -114,7 +114,6 @@ def test_healthz_and_metrics(env):
     assert "classifier_lifecycle_healthy 0.0" in text       # 읽는 쪽을 붙이지 않은 상태
     assert "classifier_pending_pod_exits 0.0" in text
     assert "classifier_leader 1.0" in text                  # 선출 없이 혼자 도는 상태
-    assert client.get("/readyz").status_code == 200
 
 
 def test_default_context_holds_everything(monkeypatch, capsys):
@@ -170,8 +169,11 @@ class HeldLease:
     """다른 Pod가 잡고 계속 갱신하는 Lease."""
     name = "classifier"
 
+    def __init__(self, address="10.0.0.9:8080"):
+        self.annotations = {"devoops/leader-address": address} if address else {}
+
     def get(self):
-        return {"metadata": {"resourceVersion": "1"},
+        return {"metadata": {"resourceVersion": "1", "annotations": self.annotations},
                 "spec": {"holderIdentity": "other", "renewTime": ts(0), "leaseDurationSeconds": 15}}
 
 
@@ -187,25 +189,139 @@ class FreeLease:
     replace = create
 
 
-def test_standby_is_not_ready_and_refuses_alerts(env):
-    _, fake = env
+def lease_app(fake, lease_api):
     pipeline = Pipeline(Rules.load(), Publisher(fake, "abc1234"), lambda s: Context(az="a", collector_healthy=True))
-    with TestClient(create_app(pipeline, lease_api=HeldLease())) as client:
-        assert client.get("/healthz").status_code == 200      # 살아 있음 (재시작 대상 아님)
-        assert client.get("/readyz").status_code == 503       # Service에서 빠짐
-        assert post(client, alert(ts(30))).status_code == 503
+    return TestClient(create_app(pipeline, lease_api=lease_api))
+
+
+def wait_for(condition, seconds=3.0):
+    import time
+    deadline = time.monotonic() + seconds
+    while not condition() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert condition()
+
+
+def test_standby_forwards_to_leader(env, monkeypatch):
+    """대기 쪽은 스스로 처리하지 않고 대장에게 넘겨 대장의 응답을 그대로 돌려준다."""
+    from fastapi import Response
+    from classifier import app as app_module
+    _, fake = env
+    seen = []
+
+    def fake_forward(address, body):
+        seen.append((address, len(body["alerts"])))
+        return Response('{"published": 1}', media_type="application/json")
+
+    monkeypatch.setattr(app_module, "forward", fake_forward)
+    with lease_app(fake, HeldLease()) as client:
+        wait_for(lambda: post(client, alert(ts(30))).status_code == 200)
+        assert post(client, alert(ts(30))).json() == {"published": 1}
+        assert client.get("/healthz").status_code == 200
         assert "classifier_leader 0.0" in client.get("/metrics").text
+    assert seen[-1] == ("10.0.0.9:8080", 1) and fake.sent == []
+
+
+def test_standby_without_leader_address_is_503(env):
+    _, fake = env
+    with lease_app(fake, HeldLease(address=None)) as client:
+        assert post(client, alert(ts(30))).status_code == 503
     assert fake.sent == []
 
 
-def test_leader_becomes_ready_after_acquiring(env):
-    import time
+def test_forwarded_request_is_not_forwarded_again(env, monkeypatch):
+    """넘겨받은 쪽이 대장이 아니면(방금 바뀜) 다시 넘기지 않고 503 → Alertmanager가 다시 보낸다."""
+    from classifier import app as app_module
     _, fake = env
-    pipeline = Pipeline(Rules.load(), Publisher(fake, "abc1234"), lambda s: Context(az="a", collector_healthy=True))
-    with TestClient(create_app(pipeline, lease_api=FreeLease())) as client:
-        deadline = time.monotonic() + 3
-        while client.get("/readyz").status_code != 200 and time.monotonic() < deadline:
-            time.sleep(0.05)
-        assert client.get("/readyz").json() == {"status": "leader"}
+    monkeypatch.setattr(app_module, "forward", lambda *a: pytest.fail("다시 넘김"))
+    with lease_app(fake, HeldLease()) as client:
+        r = client.post("/alerts", json={"alerts": [alert(ts(30))]}, headers={app_module.FORWARDED: "1"})
+        assert r.status_code == 503
+
+
+def test_leader_handles_after_acquiring(env):
+    _, fake = env
+    api = FreeLease()
+    with lease_app(fake, api) as client:
+        wait_for(lambda: "classifier_leader 1.0" in client.get("/metrics").text)
         assert post(client, alert(ts(30))).json() == {"published": 1}
-        assert "classifier_leader 1.0" in client.get("/metrics").text
+        assert api.lease["spec"]["holderIdentity"] != ""
+    assert api.lease["spec"]["holderIdentity"] == ""        # 정상 종료 때 Lease를 비운다
+
+
+def test_forward_relays_leader_response(monkeypatch):
+    """forward(): 대장의 상태 코드 · 본문을 그대로, 못 닿으면 503."""
+    import threading
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from fastapi import HTTPException
+    from classifier.app import FORWARDED, forward
+
+    followed = []
+
+    class Leader(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if body["alerts"] == ["redirect"]:
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/elsewhere")
+                self.end_headers()
+                return
+            code = 503 if body["alerts"] == ["fail"] else 200
+            assert self.headers[FORWARDED] == "1" and self.path == "/alerts"
+            self.send_response(code)
+            self.end_headers()
+            self.wfile.write(b'{"published": 1}' if code == 200 else b'{"detail": {"publish_failed": 1}}')
+
+        def do_GET(self):
+            followed.append(self.path)
+            self.send_response(200)
+            self.end_headers()
+
+        def log_message(self, *args):
+            pass
+
+    server = HTTPServer(("127.0.0.1", 0), Leader)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    address = f"127.0.0.1:{server.server_port}"
+    # 주소 검증은 Pod IP와 우리 포트만 통과시킨다. 여기서는 로컬 서버로 보내려고 검증을 건너뛴다
+    monkeypatch.setattr("classifier.app.leader_url", lambda a: f"http://{a}/alerts")
+    ok, failed = forward(address, {"alerts": ["x"]}), forward(address, {"alerts": ["fail"]})
+    assert (ok.status_code, json.loads(ok.body)) == (200, {"published": 1})
+    assert (failed.status_code, json.loads(failed.body)) == (503, {"detail": {"publish_failed": 1}})
+    redirected = forward(address, {"alerts": ["redirect"]})      # 따라가지 않고 대장의 응답 코드를 그대로 돌려준다
+    assert redirected.status_code == 302 and followed == []
+    server.shutdown()
+    server.server_close()
+    with pytest.raises(HTTPException) as e:
+        forward(address, {"alerts": ["x"]})
+    assert (e.value.status_code, e.value.detail) == (503, "대장에 닿지 못함")     # 주소 · 예외 내용을 싣지 않는다
+
+
+@pytest.mark.parametrize("address,url", [
+    ("10.244.1.9:8080", "http://10.244.1.9:8080/alerts"),
+    ("fd00::9:8080", "http://[fd00::9]:8080/alerts"),
+    ("10.244.1.9:9093", None),                  # 우리 포트가 아니다
+    ("example.com:8080", None),                 # IP가 아니다
+    ("10.244.1.9:8080/x?", None),
+    ("user@10.244.1.9:8080", None),
+    ("10.244.1.9", None),
+    ("127.0.0.1:8080", None),                   # Pod IP일 수 없는 주소
+    ("169.254.169.254:8080", None),
+    ("0.0.0.0:8080", None),
+    ("224.0.0.1:8080", None),
+    ("", None),
+])
+def test_leader_url_accepts_only_ip_and_our_port(address, url):
+    from classifier.app import leader_url
+    assert leader_url(address) == url
+
+
+def test_forward_refuses_bad_address(monkeypatch):
+    """Lease에 엉뚱한 값이 적혀 있으면 어디로도 보내지 않는다."""
+    import urllib.request
+    from fastapi import HTTPException
+    from classifier.app import forward
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: pytest.fail("요청을 보냄"))
+    with pytest.raises(HTTPException) as e:
+        forward("169.254.169.254:80", {"alerts": []})
+    assert e.value.status_code == 503

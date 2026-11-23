@@ -37,16 +37,19 @@ mimir_count() { curl -s -G "$MIMIR/prometheus/api/v1/query" --data-urlencode "qu
 # 웹훅 1건을 보내고 응답이 기대와 같은지 본다. 인자: 설명, 기대 응답, 라벨 JSON, 신호가 난 지 몇 초 전
 send() {
   local got
-  got=$(curl -s -X POST "localhost:$PORT/alerts" -H 'Content-Type: application/json' \
-    -d "{\"alerts\":[{\"status\":\"firing\",\"labels\":$3,\"annotations\":{\"event_ts\":\"$(ago "$4")\"}}]}")
+  got=$(curl -s -X POST "localhost:$PORT/alerts" -H 'Content-Type: application/json' -d "$(alert_body "$3" "$4")")
   [[ "$got" == "$2" ]] && echo "   ok   $1 → $got" || fail "$1: 기대 $2, 실제 $got"
 }
+alert_body() { echo "{\"alerts\":[{\"status\":\"firing\",\"labels\":$1,\"annotations\":{\"event_ts\":\"$(ago "$2")\"}}]}"; }
+leader() { $K get lease classifier -o jsonpath='{.spec.holderIdentity}'; }
+is_leader() { kubectl get --raw "/api/v1/namespaces/monitoring/pods/$1:8080/proxy/metrics" 2>/dev/null | grep -q '^classifier_leader 1.0'; }
 xid_labels() { echo "{\"alertname\":\"GpuXid\",\"pipeline\":\"failover\",\"signal\":\"xid\",\"source\":\"dmesg\",\"cluster\":\"$CLUSTER\",\"node\":\"$NODE\",\"gpu_uuid\":\"$GPU\",\"xid\":\"79\"}"; }
 pod_labels() { echo "{\"alertname\":\"TrainerExited\",\"pipeline\":\"failover\",\"signal\":\"pod_exit\",\"cluster\":\"$CLUSTER\",\"node\":\"$2\",\"pod\":\"$1\",\"reason\":\"Error\"}"; }
 
+# 인자가 없으면 Service로, 있으면 그 Pod 하나로 붙는다(예: forward pod/이름)
 forward() {
   if [[ -n "${PF:-}" ]]; then kill "$PF" 2>/dev/null || true; wait "$PF" 2>/dev/null || true; fi
-  $K port-forward svc/classifier "$PORT:8080" > "$WORK/port-forward.log" 2>&1 & PF=$!
+  $K port-forward "${1:-svc/classifier}" "$PORT:8080" > "$WORK/port-forward.log" 2>&1 & PF=$!
   for _ in $(seq 1 40); do curl -s -o /dev/null "localhost:$PORT/healthz" && return; sleep 0.5; done
   fail "port-forward"
 }
@@ -89,9 +92,10 @@ for spec in "e2e00001:3:$NODE" "e2e00002:1:$OTHER_NODE" "e2e00003:2:$OTHER_NODE"
     --labels="devoops/job-id=$job,devoops/generation=$gen" --overrides="{\"spec\":{\"nodeName\":\"$node\"}}" \
     --dry-run=client -o yaml -- sleep 86400 | kubectl apply -f - > /dev/null
 done
-echo "   Mimir에 라벨과 수집 경로 지표가 보일 때까지 기다린다 (최대 3분)"
-for _ in $(seq 1 36); do
-  labels=$(mimir_count "count(kube_pod_labels{cluster=\"$CLUSTER\",label_devoops_job_id=~\"e2e0000[123]\"})")
+echo "   Mimir에 라벨과 수집 경로 지표가 보일 때까지 기다린다 (최대 4분)"
+# 라벨은 1분 전에도 있었어야 한다: 아래에서 「40초 전에 난 신호」를 보내고, 분류기는 그 시각의 라벨로 작업을 찾는다
+for _ in $(seq 1 48); do
+  labels=$(mimir_count "count(kube_pod_labels{cluster=\"$CLUSTER\",label_devoops_job_id=~\"e2e0000[123]\"} offset 1m)")
   ups=$(mimir_count "count(up{cluster=\"$CLUSTER\",job=~\"prometheus-agent|otel-gateway\"} == 1 or up{cluster=\"$CLUSTER\",job=\"fluent-bit\",node=\"$NODE\"} == 1)")
   [[ "$labels" == 3 && "$ups" == 3 ]] && break
   sleep 5
@@ -115,19 +119,45 @@ $K rollout status deploy/classifier --timeout=180s > /dev/null
 forward
 send "재시작 뒤 같은 알람" '{"duplicate":1}' "$(xid_labels)" 20
 
-step "3. 의도된 종료: job.fenced 뒤의 Pod 종료는 버린다"
+step "3. 대장이 멈추면 대기 쪽이 넘겨받고, 같은 사건을 또 내지 않는다"
+old=$(leader)
+new=$($K get pods -l app.kubernetes.io/name=classifier -o name | grep -v "$old" | head -1); new=${new#pod/}
+[[ -n "$old" && -n "$new" ]] || fail "대장 · 대기를 찾지 못함"
+forward "pod/$new"
+send "대기 쪽으로 보낸 알람(대장에게 넘겨줌)" '{"duplicate":1}' "$(xid_labels)" 20
+# 프로세스를 얼린다 = 노드가 멈춘 것과 같다. 정상 종료가 아니라 Lease를 비우지 못하므로 대기 쪽은 만료(15초)를 기다린다
+old_node=$($K get pod "$old" -o jsonpath='{.spec.nodeName}')
+docker exec "$old_node" pkill -STOP -f 'uvicorn classifier.app'
+start=$SECONDS
+for _ in $(seq 1 60); do is_leader "$new" && break; sleep 1; done
+is_leader "$new" || fail "60초 안에 넘겨받지 못함"
+echo "   ok   넘겨받음 $old → $new ($((SECONDS - start))초)"
+send "넘겨받은 뒤 같은 알람" '{"duplicate":1}' "$(xid_labels)" 20
+# 깨어난 옛 대장은 Lease가 남의 것이 된 것을 보고 스스로 끝나 대기 쪽으로 다시 뜬다
+docker exec "$old_node" pkill -CONT -f 'uvicorn classifier.app'
+for _ in $(seq 1 30); do
+  [[ "$($K get pod "$old" -o jsonpath='{.status.containerStatuses[0].restartCount}')" -ge 1 ]] && break; sleep 1
+done
+[[ "$($K get pod "$old" -o jsonpath='{.status.containerStatuses[0].restartCount}')" -ge 1 ]] || fail "옛 대장이 내려놓지 않음"
+$K wait --for=condition=ready "pod/$old" --timeout=60s > /dev/null
+is_leader "$old" && fail "옛 대장이 다시 뜬 뒤에도 대장이라고 한다"
+[[ "$(leader)" == "$new" ]] || fail "Lease 주인이 $new 가 아니다: $(leader)"
+echo "   ok   옛 대장은 재시작해 대기가 됨"
+forward
+
+step "4. 의도된 종료: job.fenced 뒤의 Pod 종료는 버린다"
 echo "{\"event_id\":\"job-e2e00002-g0001-fenced\",\"schema_version\":1,\"type\":\"job.fenced\",\"occurred_at\":\"$(ago 50)\",\"source\":\"job-watcher\",\"job_id\":\"e2e00002\",\"generation\":1,\"payload\":{}}" \
   | $K exec -i deploy/kafka -- /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server localhost:9092 --topic job.lifecycle
 sleep 3
 send "fenced된 세대의 Pod 종료" '{"intended":1}' "$(pod_labels "$(pod_name e2e00002 1)" "$OTHER_NODE")" 40
 
-step "4. 기록이 없는 Pod 종료는 장애로 낸다"
+step "5. 기록이 없는 Pod 종료는 장애로 낸다"
 send "Pod 종료(종료 코드 137)" '{"published":1}' "$(pod_labels "$(pod_name e2e00003 2)" "$OTHER_NODE")" 40
 
-step "5. 원인 사건(1번의 Xid)을 낸 세대의 Pod 종료는 따로 내지 않는다"
+step "6. 원인 사건(1번의 Xid)을 낸 세대의 Pod 종료는 따로 내지 않는다"
 send "Xid가 난 작업의 Pod 종료" '{"absorbed":1}' "$(pod_labels "$(pod_name e2e00001 3)" "$NODE")" 40
 
-step "6. Kafka gpu.fault에 쌓인 이번 실행분이 v1 스키마를 통과하는가"
+step "7. Kafka gpu.fault에 쌓인 이번 실행분이 v1 스키마를 통과하는가"
 after=$(offset)
 [[ $((after - before)) == 2 ]] || fail "이번 실행에서 낸 메시지 $((after - before))건 (기대 2건)"
 $K exec deploy/kafka -- /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic gpu.fault \
@@ -153,9 +183,10 @@ assert got == {"e2e00001": ("fault.detected", "hw", "isolate_migrate", 3, True),
                "e2e00003": ("fault.detected", "app", "restart_in_place", 2, True)}, got
 PY
 
-step "7. 지표"
-curl -s "localhost:$PORT/metrics" | grep -E '^classifier_(lifecycle_healthy|alerts_total)' | sed 's/^/   /'
-curl -s "localhost:$PORT/metrics" | grep -q '^classifier_lifecycle_healthy 1.0' || fail "classifier_lifecycle_healthy가 1이 아니다"
+step "8. 지표 (대장 Pod. 대기 쪽은 job.lifecycle을 읽지 않아 classifier_lifecycle_healthy가 0이다)"
+kubectl get --raw "/api/v1/namespaces/monitoring/pods/$(leader):8080/proxy/metrics" > "$WORK/metrics.txt"
+grep -E '^classifier_(leader|lifecycle_healthy|alerts_total)' "$WORK/metrics.txt" | sed 's/^/   /'
+grep -q '^classifier_lifecycle_healthy 1.0' "$WORK/metrics.txt" || fail "classifier_lifecycle_healthy가 1이 아니다"
 
 echo
 echo "통과. 클러스터는 남겨 둔다 → 지우기: scripts/classifier-e2e-kind.sh --delete"

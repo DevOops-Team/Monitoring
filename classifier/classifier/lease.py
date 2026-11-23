@@ -5,6 +5,8 @@
 - 대기 쪽은 Lease 내용이 LEASE_SECONDS 동안 그대로면 주인이 죽은 것으로 보고 가져온다
 - RENEW_DEADLINE < LEASE_SECONDS라서 옛 대장이 먼저 멈추고 그 뒤에 새 대장이 생긴다
 - 만료는 Lease에 적힌 시각이 아니라 「내가 그 내용을 처음 본 뒤 흐른 시간」으로 잰다(노드 시계가 달라도 됨)
+- 대장은 Lease 어노테이션에 자기 주소를 적는다. 대기 쪽이 받은 알람을 대장에게 넘겨주는 데 쓴다
+- 정상 종료(버전 올리기)하는 대장은 Lease를 비워 대기 쪽이 만료를 기다리지 않고 바로 가져가게 한다
 
 Lease는 매니페스트로 만들지 않는다. Argo CD가 Lease를 관리 대상에서 빼므로 여기서 직접 만든다(Role에 create 필요).
 """
@@ -25,6 +27,8 @@ LEASE_SECONDS = 15
 RENEW_DEADLINE = 10.0
 RETRY_SECONDS = 2.0
 HTTP_TIMEOUT = 3.0      # 조회 + 쓰기 두 번을 해도 RENEW_DEADLINE 안에 한 번은 다시 해 볼 수 있게
+
+ADDRESS_ANNOTATION = "devoops/leader-address"
 
 SERVICE_ACCOUNT = "/var/run/secrets/kubernetes.io/serviceaccount"
 
@@ -76,10 +80,12 @@ class LeaseApi:
 
 
 class Elector:
-    def __init__(self, api, identity: str, on_lead: Callable[[], None], on_lost: Callable[[], None],
+    def __init__(self, api, identity: str, address: str, on_lead: Callable[[], None], on_lost: Callable[[], None],
                  monotonic: Callable[[], float] = time.monotonic):
         self.api = api
         self.identity = identity
+        self.address = address      # 내가 대장일 때 Lease에 적을 내 주소 (IP:포트)
+        self.leader_address: str | None = None      # 남이 대장일 때 그쪽 주소. 모르면 None
         self.on_lead = on_lead      # 대장이 됐을 때 한 번. 오래 걸려도 갱신이 멈추지 않게 따로 띄운 스레드에서 부른다
         self.on_lost = on_lost      # 대장인데 RENEW_DEADLINE 동안 갱신하지 못했을 때
         self.monotonic = monotonic
@@ -92,6 +98,21 @@ class Elector:
         self.tick()
         while not stop.wait(RETRY_SECONDS):
             self.tick()
+        self._release()
+
+    def _release(self) -> None:
+        """내가 대장이면 Lease를 비운다. 실패해도 된다(만료를 기다리면 됨)."""
+        if not self.leading:
+            return
+        try:
+            lease = self.api.get()
+            if lease and (lease.get("spec") or {}).get("holderIdentity") == self.identity:
+                body = self._body(lease)
+                body["spec"]["holderIdentity"] = ""
+                self.api.replace(body)
+                log("lease.released", identity=self.identity)
+        except Exception as e:
+            log("lease.error", reason=repr(e))
 
     def tick(self) -> None:
         """한 번 시도하고 그 결과로 대장 여부를 바꾼다."""
@@ -127,15 +148,17 @@ class Elector:
             if seen != self._seen:
                 self._seen, self._seen_at = seen, self.monotonic()
             if holder and self.monotonic() - self._seen_at < spec.get("leaseDurationSeconds", LEASE_SECONDS):
+                self.leader_address = (lease["metadata"].get("annotations") or {}).get(ADDRESS_ANNOTATION)
                 return False
         self.api.replace(self._body(lease))
+        self.leader_address = None
         return True
 
     def _body(self, current: dict[str, Any] | None) -> dict[str, Any]:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
         old = (current or {}).get("spec") or {}
         mine = old.get("holderIdentity") == self.identity
-        meta = {"name": self.api.name}
+        meta = {"name": self.api.name, "annotations": {ADDRESS_ANNOTATION: self.address}}
         if current:     # 읽은 뒤 남이 고쳤으면 409로 지게 한다
             meta["resourceVersion"] = current["metadata"]["resourceVersion"]
         return {
