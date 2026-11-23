@@ -233,7 +233,8 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
   | kubectl --kubeconfig <모니터링 클러스터 admin.conf> -n monitoring apply -f -
   ```
 - **알람이 들어오는 길**: Alertmanager 라우트 `pipeline=failover` + `signal=~"xid|pod_exit"` → 웹훅 `http://classifier.monitoring.svc:8080/alerts`. 사이트 알람은 아직 보내지 않는다(`values/alertmanager.yaml` 주석)
-- **확인**: `kubectl -n monitoring get deploy classifier`(1/1) · `kubectl -n monitoring logs deploy/classifier` · 아래 지표
+- **확인**: `kubectl -n monitoring get deploy classifier`(2/2) · `kubectl -n monitoring get lease classifier`(`HOLDER` = 지금 대장) · `kubectl -n monitoring logs <대장 Pod>` · 아래 지표
+- **2개 중 하나만 처리한다**(대장, `docs/classifier.md` 7.1절). 대기 쪽은 받은 웹훅을 대장에게 넘기므로 `svc/classifier`로 보내면 어느 Pod에 닿든 대장이 처리한다. 로그 `event.published`는 대장에만 남는다
 - **끄기**: 웹훅만 끊으려면 `values/alertmanager.yaml`의 수신자 `classifier`에서 `webhook_configs`를 지운다. 분류기는 떠 있어도 알람이 안 오면 아무것도 내지 않는다
 
 | 무엇 | 어디 |
@@ -241,13 +242,13 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
 | 코드 · 판정 표 | `classifier/classifier/` (`rules.yaml`이 표) |
 | 단위 테스트 | `cd classifier && .venv/bin/python -m pytest` (처음엔 `python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`) |
 | 이미지 | `classifier/Dockerfile`, 빌드 컨텍스트는 레포 루트 |
-| 매니페스트 | `deploy/classifier/base` (복제본 1 · Recreate · ClusterIP), `overlays/kind` (임시 Kafka 포함) |
+| 매니페스트 | `deploy/classifier/base` (복제본 2 · 노드마다 하나 · 하나씩 교체 · Lease용 ServiceAccount와 Role · ClusterIP), `overlays/kind` (임시 Kafka 포함) |
 | 종단 검증 | `scripts/classifier-e2e-kind.sh` |
 
 **종단 검증이 하는 일** (약 5분, 끝나면 `--delete`로 클러스터 삭제):
 
 1. 워커 2대짜리 kind에 수집 층 · 분류기 · 임시 Kafka를 올리고, 작업 라벨이 붙은 가짜 Pod 3개를 띄운다
-2. 웹훅을 보내 응답을 확인한다: Xid 79 → 1건 발행 / 재전송 → 중복 / 분류기 재시작 뒤 재전송 → 중복 / `job.fenced` 뒤 Pod 종료 → 버림 / 기록 없는 Pod 종료 → 1건 발행 / Xid가 난 작업의 Pod 종료 → 버림
+2. 웹훅을 보내 응답을 확인한다: Xid 79 → 1건 발행 / 재전송 → 중복 / 분류기 재시작 뒤 재전송 → 중복 / 대기 쪽으로 보냄 → 대장이 처리 / 대장을 얼림 → 대기 쪽이 넘겨받고(초 측정) 재전송 → 중복 / `job.fenced` 뒤 Pod 종료 → 버림 / 기록 없는 Pod 종료 → 1건 발행 / Xid가 난 작업의 Pod 종료 → 버림
 3. kind의 `gpu.fault`에서 메시지를 읽어 v1 스키마 · 봉투 · `rule_version` 헤더를 확인한다
 
 알아 둘 것:
@@ -257,7 +258,7 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
 - kind 노드에는 `/var/log/journal`이 없어 Fluent Bit가 뜨지 못한다. 스크립트가 노드에 디렉터리를 만든다(`--agents-kind`만 따로 쓸 때도 같은 문제가 난다)
 - `kind load docker-image`가 Docker의 containerd 이미지 저장소에서 실패해(`content digest ... not found`) 이미지를 파일로 저장해 넣는다
 
-분류기 자체를 볼 지표(`/metrics`): `classifier_alerts_total{outcome}` · `classifier_events_published_total` · `classifier_lifecycle_healthy`(0이면 Pod 종료 신호가 전부 `hold`로 나간다) · `classifier_pending_pod_exits`. 모니터링 클러스터 Agent가 긁어(`job="classifier"`) Mimir에서 조회한다. 이상 알람은 위 「알람이 울리면」.
+분류기 자체를 볼 지표(`/metrics`): `classifier_alerts_total{outcome}` · `classifier_events_published_total` · `classifier_lifecycle_healthy`(0이면 Pod 종료 신호가 전부 `hold`로 나간다) · `classifier_pending_pod_exits` · `classifier_leader`(1 = 대장. 대기 쪽은 0이고 `classifier_lifecycle_healthy`도 0이다). 모니터링 클러스터 Agent가 긁어(`job="classifier"`) Mimir에서 조회한다. 이상 알람은 위 「알람이 울리면」.
 
 ## 수집 층 (`deploy/agents/`) — 관리 클러스터 · EKS · 모니터링 클러스터(Fluent Bit만)에 올리는 것
 
