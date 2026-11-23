@@ -256,14 +256,26 @@ def test_forward_relays_leader_response(monkeypatch):
     from fastapi import HTTPException
     from classifier.app import FORWARDED, forward
 
+    followed = []
+
     class Leader(BaseHTTPRequestHandler):
         def do_POST(self):
             body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if body["alerts"] == ["redirect"]:
+                self.send_response(302)
+                self.send_header("Location", f"http://127.0.0.1:{self.server.server_port}/elsewhere")
+                self.end_headers()
+                return
             code = 503 if body["alerts"] == ["fail"] else 200
             assert self.headers[FORWARDED] == "1" and self.path == "/alerts"
             self.send_response(code)
             self.end_headers()
             self.wfile.write(b'{"published": 1}' if code == 200 else b'{"detail": {"publish_failed": 1}}')
+
+        def do_GET(self):
+            followed.append(self.path)
+            self.send_response(200)
+            self.end_headers()
 
         def log_message(self, *args):
             pass
@@ -271,10 +283,13 @@ def test_forward_relays_leader_response(monkeypatch):
     server = HTTPServer(("127.0.0.1", 0), Leader)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     address = f"127.0.0.1:{server.server_port}"
-    monkeypatch.setattr("classifier.app.PORT", server.server_port)     # 검증은 「우리 포트」만 통과시킨다
+    # 주소 검증은 Pod IP와 우리 포트만 통과시킨다. 여기서는 로컬 서버로 보내려고 검증을 건너뛴다
+    monkeypatch.setattr("classifier.app.leader_url", lambda a: f"http://{a}/alerts")
     ok, failed = forward(address, {"alerts": ["x"]}), forward(address, {"alerts": ["fail"]})
     assert (ok.status_code, json.loads(ok.body)) == (200, {"published": 1})
     assert (failed.status_code, json.loads(failed.body)) == (503, {"detail": {"publish_failed": 1}})
+    redirected = forward(address, {"alerts": ["redirect"]})      # 따라가지 않고 대장의 응답 코드를 그대로 돌려준다
+    assert redirected.status_code == 302 and followed == []
     server.shutdown()
     server.server_close()
     with pytest.raises(HTTPException) as e:
@@ -290,6 +305,10 @@ def test_forward_relays_leader_response(monkeypatch):
     ("10.244.1.9:8080/x?", None),
     ("user@10.244.1.9:8080", None),
     ("10.244.1.9", None),
+    ("127.0.0.1:8080", None),                   # Pod IP일 수 없는 주소
+    ("169.254.169.254:8080", None),
+    ("0.0.0.0:8080", None),
+    ("224.0.0.1:8080", None),
     ("", None),
 ])
 def test_leader_url_accepts_only_ip_and_our_port(address, url):

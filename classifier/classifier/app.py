@@ -98,9 +98,19 @@ def leader_url(address: str) -> str | None:
         ip = ipaddress.ip_address(host)
     except ValueError:
         return None
-    if port != str(PORT):
+    if port != str(PORT) or ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast:
         return None
     return f"http://[{ip}]:{PORT}/alerts" if ip.version == 6 else f"http://{ip}:{PORT}/alerts"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """리다이렉트를 따라가지 않는다. 검증한 주소가 아닌 곳으로 요청이 넘어가지 않게."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_opener = urllib.request.build_opener(_NoRedirect)
 
 
 def forward(address: str, body: dict[str, Any]) -> Response:
@@ -112,7 +122,7 @@ def forward(address: str, body: dict[str, Any]) -> Response:
     req = urllib.request.Request(url, data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json", FORWARDED: "1"})
     try:
-        with urllib.request.urlopen(req, timeout=FORWARD_TIMEOUT) as r:
+        with _opener.open(req, timeout=FORWARD_TIMEOUT) as r:
             return Response(r.read(MAX_RESPONSE), status_code=r.status, media_type="application/json")
     except urllib.error.HTTPError as e:
         return Response(e.read(MAX_RESPONSE), status_code=e.code, media_type="application/json")
