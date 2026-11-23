@@ -89,8 +89,8 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `PostgresDown` (critical) | postgres_exporter가 DB(172.30.0.50)에 2분째 접속하지 못한다. 수집기가 이벤트를 DB에 못 쓰고 Grafana의 DB 패널이 빈다 | 「Kafka · DB VM」에서 db VM이 살아 있는지 → 살아 있으면 PostgreSQL 프로세스 · 접속 수(「PostgreSQL」 연결 사용) → 데이터 담당(김현수). exporter 자체가 죽은 것이면 이 알람이 아니라 `MonitoringTargetDown`이 온다 |
 | `CollectorLagHigh` (warning) | 수집기(`data-collector`)가 안 읽은 메시지가 토픽 하나에 1000건 넘게 10분째 쌓여 있다. DB 반영이 늦는다. 1000은 임시값 | 「Kafka 브로커」 수집기 lag 행: 소비 속도가 0이면 수집기가 멈춘 것(관리 클러스터 `data-system/collector` Pod · 로그), 0이 아니면 유입이 몰린 것 → 데이터 담당 |
 | `HostDiskWarning` · `HostDiskCritical` | Kafka 3대 · DB VM · pfSense 2대 중 하나의 루트 디스크가 80% · 90%를 5분째 넘었다 | 「Kafka · DB VM」 · 「pfSense」 루트 디스크 그래프로 어느 호스트인지 · 언제부터 늘었는지 → Kafka는 로그 보존, DB는 테이블 크기(「PostgreSQL」) → Kafka · DB VM은 데이터 담당, pfSense는 인프라 담당(박기현) |
-| `ClassifierDown` (critical) | 분류기 Pod가 없거나 `/metrics`가 3분째 안 긁힌다. 원인 알람이 떠도 `gpu.fault`가 나가지 않아 자동 복구가 시작되지 않는다 | `kubectl -n monitoring get deploy,pod -l app.kubernetes.io/name=classifier` → Pod가 없거나 못 뜨면 `describe pod`(이미지 pull · `ghcr-pull`) · `logs`(시작 때 Kafka에서 기억을 되살리지 못하면 포트를 열지 않는다 → 브로커 상태는 「Kafka 브로커」) · Argo CD `gpu-monitoring-classifier`. Pod가 멀쩡하면 Agent 쪽(`up{job="prometheus-agent", cluster="monitoring"}`) |
-| `ClassifierLifecycleUnhealthy` (critical) | 분류기가 `job.lifecycle`을 2분째 못 읽는다. 그동안 Pod 종료 신호는 전부 `hold`로 나가 사람이 봐야 한다(`RecoveryHold`가 따라 울릴 수 있다) | `kubectl -n monitoring logs deploy/classifier \| grep kafka.health_changed`의 `reason` → 브로커 문제면 「Kafka 브로커」에서 복구를 기다린다(돌아오면 알람이 꺼진다). 브로커가 멀쩡한데 안 꺼지면(메시지 반영 실패는 재시작 전까지 0으로 남는다) `kubectl -n monitoring rollout restart deploy/classifier` |
+| `ClassifierDown` (critical) | 알람을 처리하는 분류기(대장, `classifier_leader == 1`)가 3분째 없다: Pod가 없거나, `/metrics`가 안 긁히거나, 둘 다 떠 있는데 아무도 Lease를 못 잡았다. 원인 알람이 떠도 `gpu.fault`가 나가지 않아 자동 복구가 시작되지 않는다 | `kubectl -n monitoring get deploy,pod -l app.kubernetes.io/name=classifier` → Pod가 없거나 못 뜨면 `describe pod`(이미지 pull · `ghcr-pull`) · `logs`(`lease.error`가 이어지면 API 서버 접근 · Role `classifier`, 대장이 된 뒤 Kafka에서 기억을 되살리지 못하면 스스로 끝나 재시작을 반복한다 → 브로커 상태는 「Kafka 브로커」) · `kubectl -n monitoring get lease classifier`(지금 대장) · Argo CD `gpu-monitoring-classifier`. Pod가 멀쩡하면 Agent 쪽(`up{job="prometheus-agent", cluster="monitoring"}`) |
+| `ClassifierLifecycleUnhealthy` (critical) | 대장 분류기가 `job.lifecycle`을 2분째 못 읽는다(대기 쪽은 원래 읽지 않는다). 그동안 Pod 종료 신호는 전부 `hold`로 나가 사람이 봐야 한다(`RecoveryHold`가 따라 울릴 수 있다) | 알람의 `pod` 라벨이 대장이다. `kubectl -n monitoring logs <그 Pod> \| grep kafka.health_changed`의 `reason` → 브로커 문제면 「Kafka 브로커」에서 복구를 기다린다(돌아오면 알람이 꺼진다). 브로커가 멀쩡한데 안 꺼지면(메시지 반영 실패는 재시작 전까지 0으로 남는다) `kubectl -n monitoring rollout restart deploy/classifier` |
 | `RecoveryHeartbeatStale` (warning) | 학습 중인 작업의 rank 0 사이드카가 DynamoDB 펜싱 하트비트를 60초 넘게(그 상태 1분) 안 찍었다. 그동안 새 체크포인트가 승인되지 않아, 장애가 나면 옛 승인본부터 다시 한다 | 같은 작업에 Xid · Pod 종료 · 사이트 알람이 같이 왔는지(노드 · 사이트 장애) → 없으면 사이드카: `kube_pod_container_status_restarts_total{container="ckpt-sidecar"}`(liveness probe가 300초 멈춤에 재시작) · Loki `{k8s_container_name="ckpt-sidecar"}` → 데이터 담당(김현수). 자동 복구와는 연결돼 있지 않다(ADR-44) |
 | `RecoveryHeartbeatReadFailing` (warning) | 복구 컨트롤러 Pod 전부가 10분째 펜싱 테이블을 못 읽는다. 하트비트가 멈춰도 위 알람이 울리지 않는 상태 | `recovery_fencing_heartbeat_read_errors_total`이 30초마다 느는지 → 온프레 인터넷(「모니터링 스택」 ping · pfSense) → 멀쩡하면 IAM(IaC `recovery-data-access`의 펜싱 테이블 `dynamodb:Scan`) · 인증 사이드카 `aws-auth` 로그 → 컨트롤러 담당(한송이). 실패 이유는 컨트롤러 로그에 남지 않는다(11/20 기준) |
 
@@ -233,7 +233,8 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
   | kubectl --kubeconfig <모니터링 클러스터 admin.conf> -n monitoring apply -f -
   ```
 - **알람이 들어오는 길**: Alertmanager 라우트 `pipeline=failover` + `signal=~"xid|pod_exit"` → 웹훅 `http://classifier.monitoring.svc:8080/alerts`. 사이트 알람은 아직 보내지 않는다(`values/alertmanager.yaml` 주석)
-- **확인**: `kubectl -n monitoring get deploy classifier`(1/1) · `kubectl -n monitoring logs deploy/classifier` · 아래 지표
+- **확인**: `kubectl -n monitoring get deploy classifier`(2/2) · `kubectl -n monitoring get lease classifier`(`HOLDER` = 지금 대장) · `kubectl -n monitoring logs <대장 Pod>` · 아래 지표
+- **2개 중 하나만 처리한다**(대장, `docs/classifier.md` 7.1절). 대기 쪽은 받은 웹훅을 대장에게 넘기므로 `svc/classifier`로 보내면 어느 Pod에 닿든 대장이 처리한다. 로그 `event.published`는 대장에만 남는다
 - **끄기**: 웹훅만 끊으려면 `values/alertmanager.yaml`의 수신자 `classifier`에서 `webhook_configs`를 지운다. 분류기는 떠 있어도 알람이 안 오면 아무것도 내지 않는다
 
 | 무엇 | 어디 |
@@ -241,13 +242,13 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
 | 코드 · 판정 표 | `classifier/classifier/` (`rules.yaml`이 표) |
 | 단위 테스트 | `cd classifier && .venv/bin/python -m pytest` (처음엔 `python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`) |
 | 이미지 | `classifier/Dockerfile`, 빌드 컨텍스트는 레포 루트 |
-| 매니페스트 | `deploy/classifier/base` (복제본 1 · Recreate · ClusterIP), `overlays/kind` (임시 Kafka 포함) |
+| 매니페스트 | `deploy/classifier/base` (복제본 2 · 노드마다 하나 · 하나씩 교체 · Lease용 ServiceAccount와 Role · ClusterIP), `overlays/kind` (임시 Kafka 포함) |
 | 종단 검증 | `scripts/classifier-e2e-kind.sh` |
 
 **종단 검증이 하는 일** (약 5분, 끝나면 `--delete`로 클러스터 삭제):
 
 1. 워커 2대짜리 kind에 수집 층 · 분류기 · 임시 Kafka를 올리고, 작업 라벨이 붙은 가짜 Pod 3개를 띄운다
-2. 웹훅을 보내 응답을 확인한다: Xid 79 → 1건 발행 / 재전송 → 중복 / 분류기 재시작 뒤 재전송 → 중복 / `job.fenced` 뒤 Pod 종료 → 버림 / 기록 없는 Pod 종료 → 1건 발행 / Xid가 난 작업의 Pod 종료 → 버림
+2. 웹훅을 보내 응답을 확인한다: Xid 79 → 1건 발행 / 재전송 → 중복 / 분류기 재시작 뒤 재전송 → 중복 / 대기 쪽으로 보냄 → 대장이 처리 / 대장을 얼림 → 대기 쪽이 넘겨받고(초 측정) 재전송 → 중복 / `job.fenced` 뒤 Pod 종료 → 버림 / 기록 없는 Pod 종료 → 1건 발행 / Xid가 난 작업의 Pod 종료 → 버림
 3. kind의 `gpu.fault`에서 메시지를 읽어 v1 스키마 · 봉투 · `rule_version` 헤더를 확인한다
 
 알아 둘 것:
@@ -257,7 +258,7 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
 - kind 노드에는 `/var/log/journal`이 없어 Fluent Bit가 뜨지 못한다. 스크립트가 노드에 디렉터리를 만든다(`--agents-kind`만 따로 쓸 때도 같은 문제가 난다)
 - `kind load docker-image`가 Docker의 containerd 이미지 저장소에서 실패해(`content digest ... not found`) 이미지를 파일로 저장해 넣는다
 
-분류기 자체를 볼 지표(`/metrics`): `classifier_alerts_total{outcome}` · `classifier_events_published_total` · `classifier_lifecycle_healthy`(0이면 Pod 종료 신호가 전부 `hold`로 나간다) · `classifier_pending_pod_exits`. 모니터링 클러스터 Agent가 긁어(`job="classifier"`) Mimir에서 조회한다. 이상 알람은 위 「알람이 울리면」.
+분류기 자체를 볼 지표(`/metrics`): `classifier_alerts_total{outcome}` · `classifier_events_published_total` · `classifier_lifecycle_healthy`(0이면 Pod 종료 신호가 전부 `hold`로 나간다) · `classifier_pending_pod_exits` · `classifier_leader`(1 = 대장. 대기 쪽은 0이고 `classifier_lifecycle_healthy`도 0이다). 모니터링 클러스터 Agent가 긁어(`job="classifier"`) Mimir에서 조회한다. 이상 알람은 위 「알람이 울리면」.
 
 ## 수집 층 (`deploy/agents/`) — 관리 클러스터 · EKS · 모니터링 클러스터(Fluent Bit만)에 올리는 것
 

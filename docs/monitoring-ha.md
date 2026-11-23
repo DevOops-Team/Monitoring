@@ -66,7 +66,9 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 - 대상: 모니터링 클러스터 Agent(StatefulSet) · 관리 클러스터 Agent. EKS는 1 그대로(라벨이 없으면 HA tracker가 그냥 받는다)
 
 ### 3.5 분류기 ×2 (active-standby)
-- 둘 다 떠 있고 **쿠버네티스 Lease를 잡은 대장만** 알람을 처리한다. 대기 쪽은 readiness를 실패시켜 Service에서 빠진다 → Alertmanager 웹훅은 늘 대장에게 간다
+- **구현함(11/23). 정본은 `docs/classifier.md` 7.1절**
+- 둘 다 떠 있고 **쿠버네티스 Lease를 잡은 대장만** 알람을 처리한다. 대기 쪽도 Ready이고, 받은 웹훅을 대장에게 넘겨준다
+  - 원안은 「대기 쪽은 readiness를 실패시켜 Service에서 뺀다」였다. Ready가 아닌 Pod가 늘 있으면 Deployment 교체가 멈추고 Argo CD가 비정상으로 봐서 바꿨다
 - 대장이 죽으면 Lease 만료(약 15초) 뒤 대기 쪽이 대장이 된다. 넘겨받을 때 지금 시작 절차와 같이 `gpu.fault` 1시간 · `job.lifecycle` 24시간을 다시 읽어 중복 기억을 복원한다
 - 넘겨받는 동안 들어온 알람은 Alertmanager가 재시도한다. 옛 대장이 들고 있던 「Pod 종료 대기(30초)」 신호는 사라진다 → 같은 알람이 `repeat_interval`(1분)로 다시 오므로 그때 처리
 - 바꿀 것: `classifier/`(Lease · readiness), `deploy/classifier/base`(replicas 2 · anti-affinity · Lease RBAC), 테스트 + kind 종단 검증에 「대장 죽임 → 넘겨받음 → 같은 알람 1건만」 장면
@@ -92,7 +94,7 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 | 2 | Mimir ×3 | ring 페이지 ACTIVE 3 · 한 Pod를 지워도 쓰기 · 조회 · 룰 평가 계속 · Agent 쪽 429/5xx 없음 |
 | 3 | Loki ×3 + ruler 분담 | 링 3 · 로그 유입 계속 · 룰 그룹이 한 곳에서만 평가됨(알람 1건) · 한 Pod를 지워도 유입 계속 |
 | 4 | Agent ×2 + HA tracker | `cortex_ha_tracker_elected_replica_changes_total` · 중복 샘플 거름(`cortex_distributor_deduped_samples_total`) · 한 Agent를 지우면 30초 안에 다른 쪽 선출 |
-| 5 | 분류기 ×2 | 대장 1 · 대기 1(Ready 0) · 대장 지우면 넘겨받음 · 같은 알람 `gpu.fault` 1건 |
+| 5 | 분류기 ×2 | Pod 2개 Ready · `classifier_leader`가 1인 Pod 하나 · 대장 지우면 넘겨받음 · 같은 알람 `gpu.fault` 1건 |
 | 6 | Tempo 분산형 | 트레이스 수신 · 조회 · 한 live-store를 지워도 최근 트레이스 조회 |
 
 마지막에: ADR-18 적용 현황 · 아키텍처 그림 「지금 어디까지 왔나」 표 · 런북 · `docs/monitoring-cluster.md` 첫 줄 갱신, 노드 한 대 재부팅 시험(4절 방식)으로 전체 확인.

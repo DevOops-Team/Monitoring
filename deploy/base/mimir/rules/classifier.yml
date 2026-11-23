@@ -3,11 +3,11 @@
 groups:
   - name: classifier
     rules:
-      # up == 0이 아니라 absent(... == 1)로 본다: Agent가 Pod를 찾아 긁으므로 Pod가 아예 없으면 up 시계열도 없어
-      # MonitoringTargetDown(up == 0)이 울리지 않는다. 이 식은 「Pod 없음」과 「긁기 실패」를 둘 다 잡는다.
-      # 3분은 버전을 올릴 때(Recreate + Kafka에서 기억 복원)와 Agent 재시작 구간에 울리지 않게 둔 여유다
+      # 분류기는 2개가 뜨고 Lease를 잡은 대장 하나만 처리한다(docs/classifier.md 7절). 「처리 중」이라고 말하는 Pod가 하나도 없으면 운다.
+      # absent(... == 1)라서 「Pod 없음」 · 「긁기 실패」(시계열이 없다)와 「둘 다 떠 있는데 대장이 없음」(값이 전부 0)을 다 잡는다.
+      # 3분은 대장이 바뀔 때(Lease 만료 15초 + Kafka에서 기억 복원)와 Agent 재시작 구간에 울리지 않게 둔 여유다
       - alert: ClassifierDown
-        expr: absent(up{job="classifier", cluster="monitoring"} == 1)
+        expr: absent(classifier_leader{job="classifier", cluster="monitoring"} == 1)
         for: 3m
         labels:
           severity: critical
@@ -15,12 +15,13 @@ groups:
           job: classifier
           cluster: monitoring
         annotations:
-          summary: '분류기가 없거나 지표가 안 긁힌다 — gpu.fault가 나가지 않아 자동 복구가 시작되지 않는다'
+          summary: '알람을 처리하는 분류기(대장)가 없거나 지표가 안 긁힌다 — gpu.fault가 나가지 않아 자동 복구가 시작되지 않는다'
           standard: MON-STD-27
 
-      # 0인 동안 Pod 종료 신호는 전부 hold로 나간다. 메시지 반영 실패로 0이 된 경우는 재시작 전까지 돌아오지 않는다
+      # 0인 동안 Pod 종료 신호는 전부 hold로 나간다. 메시지 반영 실패로 0이 된 경우는 재시작 전까지 돌아오지 않는다.
+      # 대장만 본다: 대기 쪽은 job.lifecycle을 읽지 않아 늘 0이다
       - alert: ClassifierLifecycleUnhealthy
-        expr: classifier_lifecycle_healthy{job="classifier"} == 0
+        expr: classifier_lifecycle_healthy{job="classifier"} == 0 and on (pod) classifier_leader{job="classifier"} == 1
         for: 2m
         labels:
           severity: critical

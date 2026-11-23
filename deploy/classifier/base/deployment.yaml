@@ -1,4 +1,36 @@
 # 분류기 (docs/classifier.md). Alertmanager 웹훅 → 판정 → Kafka gpu.fault
+# 2개가 뜨고 Lease를 잡은 대장 하나만 처리한다. 대기 쪽은 받은 웹훅을 대장에게 넘겨준다 (7절, docs/monitoring-ha.md 3.5)
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: classifier
+---
+# Lease는 Argo CD가 관리 대상에서 빼므로 매니페스트에 두지 않고 분류기가 직접 만든다 → create 필요(create는 이름으로 좁힐 수 없다)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: classifier
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [create]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    resourceNames: [classifier]
+    verbs: [get, update]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: classifier
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: classifier
+subjects:
+  - kind: ServiceAccount
+    name: classifier
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,8 +38,9 @@ metadata:
   labels:
     app.kubernetes.io/name: classifier
 spec:
-  replicas: 1                     # 2개면 웹훅이 번갈아 들어가 중복 제거가 깨진다 (docs/classifier.md 7절)
-  strategy: {type: Recreate}      # 같은 이유로 새 Pod와 옛 Pod가 동시에 받지 않게 한다
+  replicas: 2                     # 대장 1 + 대기 1. 둘 다 Ready이고 처리는 대장만 한다
+  strategy:                       # 하나씩 바꾼다. 노드마다 하나라 여분 Pod를 띄울 자리(세 번째 노드)를 기대하지 않는다
+    rollingUpdate: {maxSurge: 0, maxUnavailable: 1}
   selector:
     matchLabels:
       app.kubernetes.io/name: classifier
@@ -16,7 +49,14 @@ spec:
       labels:
         app.kubernetes.io/name: classifier
     spec:
-      automountServiceAccountToken: false     # 쿠버네티스 API를 부르지 않는다
+      serviceAccountName: classifier          # Lease 읽기 · 쓰기에만 쓴다
+      affinity:
+        podAntiAffinity:                      # 두 Pod를 서로 다른 노드에
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: classifier
       securityContext:
         runAsUser: 1000
         runAsNonRoot: true
@@ -30,9 +70,12 @@ spec:
             - {name: KAFKA_BOOTSTRAP, value: "172.30.0.40:9092,172.30.0.41:9092,172.30.0.42:9092"}
             - {name: REQUIRE_KAFKA, value: "true"}     # 브로커 주소가 빠지면 표준 출력으로만 내는 로컬 모드가 된다. 그 상태로는 뜨지 않게
             - {name: MIMIR_URL, value: "http://mimir.monitoring.svc:9009"}
+            - {name: LEASE_NAME, value: classifier}    # 이 이름의 Lease를 잡은 Pod가 대장
+            - name: POD_IP                             # 대장이 Lease에 적는 자기 주소. 대기 쪽이 여기로 넘겨준다
+              valueFrom: {fieldRef: {fieldPath: status.podIP}}
           ports:
             - {name: http, containerPort: 8080}
-          # 시작할 때 Kafka에서 기억을 되살린 뒤에야 포트를 연다. 그동안은 준비 안 됨
+          # 포트는 바로 연다. 기억 복원은 대장이 된 뒤에 하고, 그 전의 웹훅에는 503을 준다(Alertmanager가 다시 보냄)
           startupProbe:
             httpGet: {path: /healthz, port: http}
             periodSeconds: 2

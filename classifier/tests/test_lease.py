@@ -33,7 +33,7 @@ class FakeApi:
 
     def _store(self, body):
         self.version += 1
-        self.lease = {"metadata": {"name": self.name, "resourceVersion": str(self.version)}, "spec": dict(body["spec"])}
+        self.lease = {"metadata": {**body["metadata"], "resourceVersion": str(self.version)}, "spec": dict(body["spec"])}
 
 
 class Clock:
@@ -48,7 +48,7 @@ class Node:
     """선출에 참여하는 Pod 하나. on_lead는 다른 스레드에서 불리므로 Event로 기다린다."""
     def __init__(self, api, clock, name):
         self.led, self.lost = threading.Event(), []
-        self.elector = Elector(api, name, self.led.set, lambda: self.lost.append(True), monotonic=clock)
+        self.elector = Elector(api, name, f"{name}:8080", self.led.set, lambda: self.lost.append(True), monotonic=clock)
 
     def tick(self):
         self.elector.tick()
@@ -120,3 +120,31 @@ def test_restarted_leader_keeps_its_lease(env):
     again = Node(api, clock, "a")
     assert again.tick() and again.led.wait(1)
     assert api.lease["spec"]["leaseTransitions"] == 0
+
+
+def test_standby_learns_leader_address(env):
+    _, clock, a, b = env
+    a.tick(), b.tick()
+    assert (a.elector.leader_address, b.elector.leader_address) == (None, "a:8080")
+    clock.t += lease.LEASE_SECONDS
+    b.tick(), a.tick()                  # 넘겨받으면 주소도 바뀐다
+    assert (a.elector.leader_address, b.elector.leader_address) == ("b:8080", None)
+
+
+def test_leader_releases_on_shutdown(env):
+    """정상 종료하는 대장은 Lease를 비운다 → 대기 쪽이 만료를 기다리지 않고 바로 잡는다."""
+    api, _, a, b = env
+    stop = threading.Event()
+    stop.set()
+    a.elector.run(stop)                 # 한 번 잡고, 멈추라는 신호에 바로 비우고 끝난다
+    assert api.lease["spec"]["holderIdentity"] == ""
+    assert b.tick() and b.led.wait(1)
+
+
+def test_standby_does_not_release(env):
+    api, _, a, b = env
+    a.tick()
+    stop = threading.Event()
+    stop.set()
+    b.elector.run(stop)
+    assert api.lease["spec"]["holderIdentity"] == "a"
