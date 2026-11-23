@@ -452,7 +452,7 @@ kubectl -n training exec "$POD" -c trainer -- sh -c 'for p in /proc/[0-9]*; do p
 date '+%T'; kubectl -n training exec "$POD" -c trainer -- sh -c 'kill -9 <워커 PID>'
 ```
 
-볼 것 (위에서부터 순서대로 나와야 한다. 수집 15초 · 룰 평가 15초 · 분류기 대기 30초라 **주입 뒤 2분 안에 `gpu.fault`**)
+볼 것 (위에서부터 순서대로 나와야 한다. 수집 15초 · 룰 평가 15초 + 평가 지연 15초(`mimir.yaml`의 `ruler_evaluation_delay_duration`, 11/23까지는 기본값 1분이라 실측 89초) · 분류기 대기 30초라 **주입 뒤 1분 안에 `gpu.fault`**)
 
 | # | 무엇 | 어디서 | 기대 |
 |---|---|---|---|
