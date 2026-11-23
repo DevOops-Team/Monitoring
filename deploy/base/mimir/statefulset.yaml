@@ -6,7 +6,7 @@ metadata:
     app.kubernetes.io/name: mimir
 spec:
   serviceName: mimir-headless
-  replicas: 1                        # 3노드 확장 때 3 (mimir.yaml의 replication_factor와 함께)
+  replicas: 3                        # mimir.yaml의 replication_factor와 같게. 줄일 때는 절차가 있다 (docs/monitoring-ha.md 3.2)
   podManagementPolicy: Parallel
   selector:
     matchLabels:
@@ -16,6 +16,14 @@ spec:
       labels:
         app.kubernetes.io/name: mimir
     spec:
+      # 노드마다 하나: 한 노드가 죽어도 2개가 남아야 쓰기가 성공한다
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: mimir
       securityContext:
         fsGroup: 10001               # mimir 이미지의 실행 계정. PVC를 쓸 수 있게
         runAsUser: 10001
@@ -58,7 +66,7 @@ spec:
             periodSeconds: 10
           resources:
             requests: {cpu: 200m, memory: 1Gi}
-            limits: {memory: 2Gi}
+            limits: {memory: 3Gi}
           volumeMounts:
             - {name: config, mountPath: /etc/mimir/mimir.yaml, subPath: mimir.yaml}
             - {name: rules, mountPath: /etc/mimir/rules/anonymous}   # 테넌트 anonymous의 룰 디렉터리
@@ -79,3 +87,14 @@ spec:
         resources:
           requests:
             storage: 10Gi
+---
+# 노드 정비(drain) 때 한 번에 하나만 내려가게 한다
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: mimir
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: mimir
