@@ -1,0 +1,102 @@
+# 관리 클러스터의 Prometheus Agent 2개. base의 Deployment 대신 쓴다(Pod 내용은 base와 같고 env · 배치만 다르다).
+# 2개가 같은 대상을 긁어 둘 다 Mimir로 보내고, Mimir(HA tracker)가 한쪽 것만 저장한다. 뽑힌 쪽이 죽으면 30초 뒤 다른 쪽으로 넘어간다.
+# StatefulSet인 이유: Pod 이름(prometheus-agent-0 · -1)이 재시작해도 그대로라 Mimir가 같은 Agent로 알아보고 바로 이어 받는다.
+# Deployment면 이름이 매번 바뀌어 재시작 · 설정 변경마다 30초를 더 기다린다(kind 실측 36~53초). 모니터링 클러스터 Agent와 같은 방식
+# WAL은 base와 같이 hostPath(관리 클러스터엔 StorageClass가 없다). 재시작한 Agent는 그 전에 못 보낸 분량을 보내지 않으므로
+# (kind 확인) 다른 노드로 옮겨 가도 잃는 것이 달라지지 않는다
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: prometheus-agent
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/name: prometheus-agent
+spec:
+  serviceName: prometheus-agent
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: prometheus-agent
+    spec:
+      serviceAccountName: prometheus-agent
+      nodeSelector: {platform-worker: "true"}
+      affinity:
+        podAntiAffinity:               # 두 Agent를 서로 다른 노드에. WAL이 노드 디스크(hostPath)라 한 노드에 둘이면 깨진다
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: prometheus-agent
+      securityContext:
+        runAsUser: 65534          # prom/prometheus 이미지의 nobody
+        runAsGroup: 65534
+        runAsNonRoot: true
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # hostPath 디렉터리는 kubelet이 root 0755로 만들어 nobody가 못 쓴다. 한 번 소유자만 바꾼다
+        - name: init-wal-dir
+          image: prom/prometheus:v3.15.1
+          command: [sh, -c, "chown 65534:65534 /prometheus"]
+          securityContext:
+            runAsUser: 0
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            capabilities: {drop: [ALL], add: [CHOWN]}
+          volumeMounts:
+            - {name: wal, mountPath: /prometheus}
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.15.1
+          args:
+            - --agent
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.agent.path=/prometheus
+          env:
+            # prometheus.yml의 external_labels가 읽는 값
+            - {name: CLUSTER_NAME, value: onprem-manager}   # 노드 라벨 platform-cluster와 같은 값
+            - {name: SITE, value: onprem}
+            - {name: AGENT_GROUP, value: onprem-manager}    # agent_group: Mimir가 Agent 묶음을 구분
+            - name: POD_NAME                                # __replica__: 묶음 안의 어느 Agent인지. 이름이 고정이라 재시작해도 같다
+              valueFrom:
+                fieldRef: {fieldPath: metadata.name}
+          ports:
+            - {name: http, containerPort: 9090}
+          livenessProbe:
+            httpGet: {path: /-/healthy, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /-/ready, port: http}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 768Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          volumeMounts:
+            - {name: config, mountPath: /etc/prometheus, readOnly: true}
+            - {name: wal, mountPath: /prometheus}
+      volumes:
+        - name: config
+          configMap: {name: prometheus-agent-config}
+        - name: wal
+          hostPath:
+            path: /var/lib/monitoring-agents/prometheus-agent
+            type: DirectoryOrCreate
+---
+# 노드 drain 때 Agent 둘이 한꺼번에 내려가지 않게 한다
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: prometheus-agent
+  namespace: monitoring
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: prometheus-agent
