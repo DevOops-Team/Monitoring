@@ -700,7 +700,7 @@
             "uid": "prometheus"
           },
           "expr": "prometheus_tsdb_wal_storage_size_bytes{job=\"prometheus-agent\", cluster=~\"$cluster\"}",
-          "legendFormat": "{{cluster}}"
+          "legendFormat": "{{cluster}} {{pod}}"
         }
       ],
       "fieldConfig": {
