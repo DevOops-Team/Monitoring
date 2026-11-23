@@ -10,6 +10,7 @@
 """
 from __future__ import annotations
 
+import ipaddress
 import json
 import logging
 import os
@@ -87,19 +88,37 @@ def _die(reason: str) -> None:
 PORT = 8080
 FORWARDED = "x-classifier-forwarded"    # 대기 쪽이 넘겨준 요청. 받은 쪽이 대장이 아니어도 다시 넘기지 않는다
 FORWARD_TIMEOUT = 15.0                  # 대장이 Kafka 전달 확인을 기다리는 시간(10초)보다 길게
+MAX_RESPONSE = 64 * 1024                # 대장의 응답은 처리 결과별 개수라 작다. 그보다 큰 것은 읽지 않는다
+
+
+def leader_url(address: str) -> str | None:
+    """Lease에 적힌 값이 「IP:우리 포트」일 때만 주소로 쓴다. 누가 Lease에 다른 값을 적어도 그리로 보내지 않는다."""
+    host, _, port = address.rpartition(":")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    if port != str(PORT):
+        return None
+    return f"http://[{ip}]:{PORT}/alerts" if ip.version == 6 else f"http://{ip}:{PORT}/alerts"
 
 
 def forward(address: str, body: dict[str, Any]) -> Response:
     """받은 웹훅을 대장에게 그대로 보내고 대장의 응답을 돌려준다. 대장에 못 닿으면 503 → Alertmanager가 다시 보낸다."""
-    req = urllib.request.Request(f"http://{address}/alerts", data=json.dumps(body).encode(),
+    url = leader_url(address)
+    if url is None:
+        p.log("forward.bad_address", address=address)
+        raise HTTPException(status_code=503, detail="대장 주소를 알 수 없다")
+    req = urllib.request.Request(url, data=json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json", FORWARDED: "1"})
     try:
         with urllib.request.urlopen(req, timeout=FORWARD_TIMEOUT) as r:
-            return Response(r.read(), status_code=r.status, media_type="application/json")
+            return Response(r.read(MAX_RESPONSE), status_code=r.status, media_type="application/json")
     except urllib.error.HTTPError as e:
-        return Response(e.read(), status_code=e.code, media_type="application/json")
-    except OSError as e:
-        raise HTTPException(status_code=503, detail=f"대장({address})에 닿지 못함: {e!r}") from e
+        return Response(e.read(MAX_RESPONSE), status_code=e.code, media_type="application/json")
+    except OSError as e:        # 주소 · 원인은 로그에만 남긴다
+        p.log("forward.failed", address=address, reason=repr(e))
+        raise HTTPException(status_code=503, detail="대장에 닿지 못함") from e
 
 
 def create_app(pipeline: p.Pipeline | None = None, lease_api=None) -> FastAPI:

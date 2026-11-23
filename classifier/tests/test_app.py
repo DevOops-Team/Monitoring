@@ -249,7 +249,7 @@ def test_leader_handles_after_acquiring(env):
     assert api.lease["spec"]["holderIdentity"] == ""        # 정상 종료 때 Lease를 비운다
 
 
-def test_forward_relays_leader_response():
+def test_forward_relays_leader_response(monkeypatch):
     """forward(): 대장의 상태 코드 · 본문을 그대로, 못 닿으면 503."""
     import threading
     from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -271,6 +271,7 @@ def test_forward_relays_leader_response():
     server = HTTPServer(("127.0.0.1", 0), Leader)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     address = f"127.0.0.1:{server.server_port}"
+    monkeypatch.setattr("classifier.app.PORT", server.server_port)     # 검증은 「우리 포트」만 통과시킨다
     ok, failed = forward(address, {"alerts": ["x"]}), forward(address, {"alerts": ["fail"]})
     assert (ok.status_code, json.loads(ok.body)) == (200, {"published": 1})
     assert (failed.status_code, json.loads(failed.body)) == (503, {"detail": {"publish_failed": 1}})
@@ -278,4 +279,30 @@ def test_forward_relays_leader_response():
     server.server_close()
     with pytest.raises(HTTPException) as e:
         forward(address, {"alerts": ["x"]})
+    assert (e.value.status_code, e.value.detail) == (503, "대장에 닿지 못함")     # 주소 · 예외 내용을 싣지 않는다
+
+
+@pytest.mark.parametrize("address,url", [
+    ("10.244.1.9:8080", "http://10.244.1.9:8080/alerts"),
+    ("fd00::9:8080", "http://[fd00::9]:8080/alerts"),
+    ("10.244.1.9:9093", None),                  # 우리 포트가 아니다
+    ("example.com:8080", None),                 # IP가 아니다
+    ("10.244.1.9:8080/x?", None),
+    ("user@10.244.1.9:8080", None),
+    ("10.244.1.9", None),
+    ("", None),
+])
+def test_leader_url_accepts_only_ip_and_our_port(address, url):
+    from classifier.app import leader_url
+    assert leader_url(address) == url
+
+
+def test_forward_refuses_bad_address(monkeypatch):
+    """Lease에 엉뚱한 값이 적혀 있으면 어디로도 보내지 않는다."""
+    import urllib.request
+    from fastapi import HTTPException
+    from classifier.app import forward
+    monkeypatch.setattr(urllib.request, "urlopen", lambda *a, **k: pytest.fail("요청을 보냄"))
+    with pytest.raises(HTTPException) as e:
+        forward("169.254.169.254:80", {"alerts": []})
     assert e.value.status_code == 503
