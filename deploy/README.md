@@ -114,13 +114,13 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `gpu` | GPU | dcgm-exporter 지표를 노드 · GPU별로: 온도와 한계 3단(최대 동작 · 감속 · 차단) · 감속 사유 · 감속 시간 비율 · ECC · 페이지 폐기 · Xid(지표 + 커널 로그) · 사용률 · 메모리 · 전력 · 클럭 · PCIe 재시도 (MON-STD-01 ~ 05) | cluster · node |
 | `training-jobs` | 학습 작업 | trainer :8000 지표를 작업 · 세대 · 랭크별로: 단계 · 현재 step과 체크포인트 step · 스텝 시간(평균) · loss · 스트래글러 비율(1.5 · 2.0 선) · 랭크별 계산 · 통신 · 데이터 대기 (MON-STD-08) | cluster · job_id · generation |
 | `kueue` | Kueue | 관리 클러스터 + EKS의 큐: 대기 · 입장 Workload · 입장 못 한 사유 · GPU 쿼터 사용 · 입장 대기 · 실행 시간 · LocalQueue. 리더 Pod 지표만 읽는다 | cluster |
-| `failover` | 장애 복구 | 장애 1건마다 감지 · 분류 · 복구 시간(PostgreSQL `data.v_incidents`) · HOLD 목록(`data.events`의 `recovery.held`) · 분류기 처리 현황 · 펜싱 하트비트 (MON-STD-25 · 27 · 28) | - |
+| `failover` | 장애 복구 | 장애 1건마다 감지 · 분류 · 복구 시간(PostgreSQL `data.v_incidents`) · HOLD 목록(`data.v_recovery_held`) · 분류기 처리 현황 · 펜싱 하트비트 (MON-STD-25 · 27 · 28) | - |
 
 - **화면에서 고친 것은 저장되지 않는다**(`allowUiUpdates: false`). 고치는 흐름: 화면에서 편집 → 「Export → JSON」 → 레포 파일 교체 → 커밋 → 적용
 - 새 대시보드는 `kustomization.yaml`에서 그 폴더 ConfigMap(`grafana-dashboards-<폴더>`)의 files에도 넣는다. lint가 JSON 문법 · `uid` · `title` · uid 중복을 본다
 - 새 폴더는 `values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`와 `kustomization.yaml`의 ConfigMap을 **같은 커밋**에 넣는다(없는 ConfigMap을 마운트하면 Grafana Pod가 뜨지 못한다). 폴더를 추가하면 Grafana Pod가 한 번 다시 뜬다
 - 레코딩 룰은 만든 뒤부터만 계산된다. 「GPU」의 감속 시간 비율 · ECC SBE 증가 · PCIe 재시도는 2026-11-20 저녁 이전 구간이 비어 있다
-- 「장애 복구」의 PostgreSQL 패널은 `grafana_ro` 계정으로 읽는다. HOLD 목록은 `data.events` 읽기 권한이 필요하다(없으면 permission denied)
+- 「장애 복구」의 PostgreSQL 패널은 `grafana_ro` 계정으로 읽는다. HOLD 목록은 `recovery.held` 사건만 보이는 뷰 `data.v_recovery_held`를 읽는다(Data `db/008_recovery_held_view.sql`, GPU-252)
 - uid를 바꾸거나 파일을 지우면 옛 대시보드가 Grafana에 남을 수 있다(11/11 `mon-self` → 분리 때). 남아 있으면 화면에서 지운다
 - 타일(폭 4칸) 제목은 한 줄로만 나오고 넘치면 "…"로 잘린다. 제목은 짧게, 자세한 뜻은 설명(ⓘ)에 둔다. 이름이 `_total`로 안 끝나는 카운터에 `increase()` · `rate()`를 쓰면 PromQL 안내 아이콘이 제목 칸을 차지하므로, 타일에서는 레코딩 룰(`base/mimir/rules/records.yml`)을 읽는다
 - 색: 정상 `#73BF69` · 경고 `#FF9830` · 위험 `#F2495C` · 좋고 나쁨이 없는 값 `#8AB8FF`. 점선 임계선은 MON-STD에 값이 있는 패널에만 긋는다

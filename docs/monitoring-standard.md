@@ -134,7 +134,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-23 | `CollectorLagHigh` (`infra.yml`, 테스트 `tests/infra_test.yml`). 브로커 다운 룰은 미구현 | `deploy/README.md` 「알람이 울리면」 | 「Kafka 브로커」 전체 · 「수집기 lag」 행(1000 선) | 2026-11-18 |
 | MON-STD-24 | | | 「Proxmox 호스트」 전체 (온도는 5분 평균, 80 · 90°C · NVMe 70°C 선) | 2026-11-13 |
 | MON-STD-26 | `HostDiskWarning` · `HostDiskCritical` (`infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kafka · DB VM」 · 「pfSense」 타일 디스크 최대, 그래프 루트 디스크 사용률(80 · 90% 선) | 2026-11-18 |
-| MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | 「장애 복구」 타일 HOLD 누적, HOLD 목록(PostgreSQL `recovery.held`, `grafana_ro`에 `data.events` 권한이 생기면 보임) · HOLD 누적 (지표) | 2026-11-20 |
+| MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | 「장애 복구」 타일 HOLD 누적, HOLD 목록(PostgreSQL 뷰 `data.v_recovery_held`) · HOLD 누적 (지표) | 2026-11-20 |
 | MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/base/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 분류기, 그래프 받은 알람 · 발행한 사건 · 버린 것 · 상태 | 2026-11-20 |
 | MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 하트비트 경과(60초 선) · 하트비트 조회 | 2026-11-20 |
 | MON-STD-01 | | | 「GPU」 타일 온도 여유, 그래프 GPU 온도(한계 3단 점선) | 2026-11-20 |
