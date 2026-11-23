@@ -74,15 +74,29 @@ scrape_configs:
         action: keep
       - {target_label: cluster, replacement: monitoring}
 
+  # Mimir · Alertmanager · Loki는 여러 개라 Service 주소 하나가 아니라 Pod마다 긁는다.
+  # Service로 긁으면 긁을 때마다 다른 Pod의 값이 섞여 카운터가 틀리고, Pod 하나가 죽어도 up이 1로 보인다
   - job_name: mimir
-    static_configs:
-      - targets: ["mimir.monitoring.svc.cluster.local:9009"]
-        labels: {cluster: monitoring}
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpointslice_port_name]
+        regex: mimir;http
+        action: keep
+      - {target_label: cluster, replacement: monitoring}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
 
   - job_name: alertmanager
-    static_configs:
-      - targets: ["alertmanager.monitoring.svc.cluster.local:9093"]
-        labels: {cluster: monitoring}
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpointslice_port_name]
+        regex: alertmanager;http
+        action: keep
+      - {target_label: cluster, replacement: monitoring}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
 
   - job_name: grafana
     static_configs:
@@ -90,9 +104,15 @@ scrape_configs:
         labels: {cluster: monitoring}
 
   - job_name: loki
-    static_configs:
-      - targets: ["loki.monitoring.svc.cluster.local:3100"]
-        labels: {cluster: monitoring}
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpointslice_port_name]
+        regex: loki;http-metrics
+        action: keep
+      - {target_label: cluster, replacement: monitoring}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
 
   - job_name: tempo
     static_configs:
