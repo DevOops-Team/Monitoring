@@ -5,6 +5,7 @@
   REQUIRE_KAFKA    true면 KAFKA_BOOTSTRAP 없이 시작하지 않는다. 배포 매니페스트는 항상 true
   MIMIR_URL        예 http://mimir:9009. 없으면 수집 경로를 확인할 수 없어 전부 hold로 낸다
   RULE_VERSION     rules.yaml의 git SHA 앞 7자 (이미지 빌드 때 넣음). Kafka 헤더로 나간다
+  LEASE_NAME       대장 선출에 쓸 Lease 이름. 있으면 Lease를 잡은 Pod만 알람을 처리한다(7절). 없으면 혼자 도는 것으로 본다
 """
 from __future__ import annotations
 
@@ -13,16 +14,17 @@ import os
 import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import Body, FastAPI, HTTPException, Response
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
 
 from . import dedup, intended
 from . import pipeline as p
 from .enrich import Enricher, mimir_query
 from .event import Context
 from .kafka_reader import TopicReader, kafka_consumer
+from .lease import Elector, LeaseApi
 from .publish import Publisher, StdoutProducer, kafka_producer
 from .rules import Rules
 from .signals import Signal
@@ -40,7 +42,8 @@ def enabled_signals() -> frozenset[str]:
     return frozenset(x.strip() for x in os.environ.get("ENABLED_SIGNALS", DEFAULT_SIGNALS).split(",") if x.strip())
 
 
-def pipeline_from_env() -> p.Pipeline:
+def pipeline_from_env() -> tuple[p.Pipeline, Callable[[], None]]:
+    """파이프라인과 「기억 복원」 함수. 복원은 알람을 처리하기 직전에 부른다(혼자 돌면 시작할 때, 아니면 대장이 됐을 때)."""
     bootstrap = os.environ.get("KAFKA_BOOTSTRAP")
     if not bootstrap and os.environ.get("REQUIRE_KAFKA", "").lower() == "true":
         raise RuntimeError("REQUIRE_KAFKA=true인데 KAFKA_BOOTSTRAP이 없다")
@@ -52,9 +55,9 @@ def pipeline_from_env() -> p.Pipeline:
     lifecycle = intended.Lifecycle()
     pipeline = p.Pipeline(Rules.load(), Publisher(producer, os.environ.get("RULE_VERSION", "dev")), enrich, lifecycle,
                           signals)
-    if bootstrap:
-        restore_from_kafka(bootstrap, pipeline, lifecycle)
-    return pipeline
+    if not bootstrap:
+        return pipeline, lambda: None
+    return pipeline, lambda: restore_from_kafka(bootstrap, pipeline, lifecycle)
 
 
 def restore_from_kafka(bootstrap: str, pipeline: p.Pipeline, lifecycle: intended.Lifecycle) -> None:
@@ -62,7 +65,7 @@ def restore_from_kafka(bootstrap: str, pipeline: p.Pipeline, lifecycle: intended
     faults = TopicReader(kafka_consumer(bootstrap), "gpu.fault",
                          timedelta(seconds=dedup.KEEP_SECONDS), pipeline.restore)
     faults.catch_up()
-    faults.close()      # 복제본이 하나라 내가 낸 것은 내가 기억한다. 이어 읽지 않는다
+    faults.close()      # 처리하는 쪽은 대장 하나라 그 뒤로 내가 낸 것은 내가 기억한다. 이어 읽지 않는다
 
     jobs = TopicReader(kafka_consumer(bootstrap), "job.lifecycle", intended.KEEP,
                        lambda e: lifecycle.apply(e, datetime.now(timezone.utc)),
@@ -71,13 +74,44 @@ def restore_from_kafka(bootstrap: str, pipeline: p.Pipeline, lifecycle: intended
     jobs.follow()
 
 
-def create_app(pipeline: p.Pipeline | None = None) -> FastAPI:
+def _die(reason: str) -> None:
+    """프로세스를 바로 끝낸다. 쿠버네티스가 다시 띄우면 대기 쪽으로 시작한다."""
+    p.log("exit", reason=reason)
+    os._exit(1)
+
+
+def create_app(pipeline: p.Pipeline | None = None, lease_api=None) -> FastAPI:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    pipeline = pipeline or pipeline_from_env()
+    restore: Callable[[], None] = lambda: None
+    if pipeline is None:
+        pipeline, restore = pipeline_from_env()
+
+    active = threading.Event()      # 알람을 처리하는 중인가: 대장이고 기억 복원이 끝났다
+    Gauge("classifier_leader", "이 Pod가 알람을 처리하는가 (1 = 대장이고 기억 복원이 끝남)",
+          registry=pipeline.registry).set_function(lambda: float(active.is_set()))
+
+    def lead() -> None:
+        try:
+            restore()
+        except Exception:           # 기억 없이 받으면 같은 사건을 또 낸다. 내려놓고 다른 쪽이 잡게 한다
+            p.logger.exception("restore failed")
+            _die("restore failed")
+        active.set()
+
+    elector = None
+    lease = os.environ.get("LEASE_NAME")
+    if lease_api is None and lease:
+        lease_api = LeaseApi(lease, os.environ["KUBERNETES_SERVICE_HOST"], os.environ["KUBERNETES_SERVICE_PORT"])
+    if lease_api is not None:
+        # 갱신하지 못한 대장은 처리를 멈춰야 한다. 기억도 버려야 하므로(그 사이 새 대장이 낸 것을 모른다) 프로세스를 끝낸다
+        elector = Elector(lease_api, os.environ.get("HOSTNAME", "local"), lead, lambda: _die("lease lost"))
+    else:
+        restore()                   # 혼자 돈다. 복원이 끝나야 포트를 연다. 실패하면 예외로 시작을 멈춘다
+        active.set()
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
-        """기다리는 Pod 종료 신호를 1초마다 확인하는 타이머."""
+        """기다리는 Pod 종료 신호를 1초마다 확인하는 타이머 + 대장 선출."""
         stop = threading.Event()
 
         def tick() -> None:
@@ -88,6 +122,8 @@ def create_app(pipeline: p.Pipeline | None = None) -> FastAPI:
                     p.logger.exception("flush failed")
 
         threading.Thread(target=tick, name="flush", daemon=True).start()
+        if elector:
+            threading.Thread(target=elector.run, args=(stop,), name="lease", daemon=True).start()
         yield
         stop.set()
 
@@ -97,6 +133,8 @@ def create_app(pipeline: p.Pipeline | None = None) -> FastAPI:
     @app.post("/alerts")
     def alerts(body: dict[str, Any] = Body(...)) -> dict[str, int]:
         """Alertmanager 웹훅. 전달 실패가 하나라도 있으면 503 → Alertmanager가 묶음을 다시 보낸다(이미 낸 것은 중복 제거로 걸러짐)."""
+        if not active.is_set():     # 대기 쪽. Service에서 빠져 있어 보통은 오지 않는다(직접 찌른 경우)
+            raise HTTPException(status_code=503, detail="대장이 아니다")
         items = body.get("alerts")
         if not isinstance(items, list):
             raise HTTPException(status_code=400, detail="alerts 배열이 없다")
@@ -112,6 +150,13 @@ def create_app(pipeline: p.Pipeline | None = None) -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/readyz")
+    def readyz() -> dict[str, str]:
+        """알람을 처리하는 Pod만 200. 대기 쪽은 503이라 Service에서 빠지고 웹훅은 늘 대장에게 간다."""
+        if not active.is_set():
+            raise HTTPException(status_code=503, detail="standby")
+        return {"status": "leader"}
 
     @app.get("/metrics")
     def metrics() -> Response:
