@@ -113,6 +113,8 @@ def test_healthz_and_metrics(env):
     assert "classifier_signals_rejected_total 1.0" in text
     assert "classifier_lifecycle_healthy 0.0" in text       # 읽는 쪽을 붙이지 않은 상태
     assert "classifier_pending_pod_exits 0.0" in text
+    assert "classifier_leader 1.0" in text                  # 선출 없이 혼자 도는 상태
+    assert client.get("/readyz").status_code == 200
 
 
 def test_default_context_holds_everything(monkeypatch, capsys):
@@ -162,3 +164,48 @@ def test_enabled_signals_env(monkeypatch, capsys):
     monkeypatch.setenv("ENABLED_SIGNALS", "xid, pod_exit ,site")
     client = TestClient(create_app())
     assert post(client, alert(ts(30), signal="site", node="")).json() == {"published": 1}
+
+
+class HeldLease:
+    """다른 Pod가 잡고 계속 갱신하는 Lease."""
+    name = "classifier"
+
+    def get(self):
+        return {"metadata": {"resourceVersion": "1"},
+                "spec": {"holderIdentity": "other", "renewTime": ts(0), "leaseDurationSeconds": 15}}
+
+
+class FreeLease:
+    name, lease = "classifier", None
+
+    def get(self):
+        return self.lease
+
+    def create(self, body):
+        self.lease = {**body, "metadata": {"resourceVersion": "1"}}
+
+    replace = create
+
+
+def test_standby_is_not_ready_and_refuses_alerts(env):
+    _, fake = env
+    pipeline = Pipeline(Rules.load(), Publisher(fake, "abc1234"), lambda s: Context(az="a", collector_healthy=True))
+    with TestClient(create_app(pipeline, lease_api=HeldLease())) as client:
+        assert client.get("/healthz").status_code == 200      # 살아 있음 (재시작 대상 아님)
+        assert client.get("/readyz").status_code == 503       # Service에서 빠짐
+        assert post(client, alert(ts(30))).status_code == 503
+        assert "classifier_leader 0.0" in client.get("/metrics").text
+    assert fake.sent == []
+
+
+def test_leader_becomes_ready_after_acquiring(env):
+    import time
+    _, fake = env
+    pipeline = Pipeline(Rules.load(), Publisher(fake, "abc1234"), lambda s: Context(az="a", collector_healthy=True))
+    with TestClient(create_app(pipeline, lease_api=FreeLease())) as client:
+        deadline = time.monotonic() + 3
+        while client.get("/readyz").status_code != 200 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert client.get("/readyz").json() == {"status": "leader"}
+        assert post(client, alert(ts(30))).json() == {"published": 1}
+        assert "classifier_leader 1.0" in client.get("/metrics").text
