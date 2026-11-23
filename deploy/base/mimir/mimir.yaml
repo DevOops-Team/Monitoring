@@ -57,7 +57,6 @@ memberlist:
 # 룰은 ConfigMap(mimir-rules)을 /etc/mimir/rules/anonymous/ 에 마운트해 읽는다. 1분마다 다시 읽음
 ruler:
   rule_path: /data/ruler
-  alertmanager_url: http://alertmanager.monitoring.svc.cluster.local:9093
   evaluation_interval: 15s           # compose Prometheus와 같은 평가 주기(fault-event ±45s 창의 전제)
   poll_interval: 1m
 ruler_storage:
@@ -73,6 +72,10 @@ limits:
   ingestion_rate: 50000                    # 초당 샘플
   ingestion_burst_size: 1000000            # 재시작 · 단절 복구 직후 몰리는 양
   max_global_series_per_user: 300000       # 메모리 안 시계열 수. 더 올리려면 Pod 메모리(2Gi)도 같이 본다
+  # 알람은 Service 하나가 아니라 Alertmanager Pod 전부에게 보낸다(AM끼리는 알림 기록만 나누고 알람은 나누지 않는다).
+  # headless Service의 SRV 레코드로 Pod 목록을 찾는다. ruler.alertmanager_url은 3.2.4에서 폐기 예정이라 여기로 옮겼다 (docs/monitoring-ha.md 3.1)
+  ruler_alertmanager_client_config:
+    alertmanager_url: dnssrvnoa+http://_http._tcp.alertmanager-headless.monitoring.svc.cluster.local.
 
 # 진행 중인 쿼리 기록 파일. 기본값은 작업 디렉터리라 비루트 계정이 못 쓴다 → PVC로
 activity_tracker:
