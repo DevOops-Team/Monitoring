@@ -60,7 +60,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 
 - 필수 값이 빠진 알람은 이벤트를 만들지 않고 카운터 `classifier_signals_rejected_total`만 올린다.
 - 분류기는 env `ENABLED_SIGNALS`에 적힌 종류만 받는다(기본 `xid,pod_exit`). 그 밖의 `signal`은 계약에 맞아도 이벤트를 만들지 않는다(`outcome="disabled"`). Alertmanager 라우팅이 틀리거나 누가 알람을 직접 넣어도 `site`의 `fence_evacuate`가 나가지 않게 하는 두 번째 잠금이다. `site` · `spot`을 켤 때는 라우트와 이 값을 같이 바꾼다.
-- 룰은 `deploy/base/mimir/rules/failover.yml`에 있다(2026-11-18): `FailoverXidDcgm`(`xid` · `dcgm`) · `FailoverPodExit`(`pod_exit`) · `FailoverSiteDown`(`site`). 커널 로그 경로 Xid와 `spot`은 아직 없다(8절).
+- 룰은 `deploy/base/mimir/rules/failover.yml`에 있다(2026-11-18): `FailoverXidDcgm`(`xid` · `dcgm`) · `FailoverPodExit`(`pod_exit`) · `FailoverSiteDown`(`site`) · `FailoverGpuNodeLost`(`node_lost`, 2026-11-24: GPU 노드만 사라지고 클러스터 지표는 계속 올 때). 커널 로그 경로 Xid와 `spot`은 아직 없다(8절).
 - 룰은 사건 직후 1~2분만 울리고(사이트는 8분), 그동안 `event_ts`가 바뀌지 않게 쓴다. `event_ts`가 평가할 때마다 밀리면 중복 제거 창(±45초)을 벗어나 같은 고장이 여러 번 나간다.
 - `ckpt-init` 종료는 `pod_exit`로 보내지 않는다. 복구 컨트롤러가 `job.init_failed`를 직접 구독한다.
 

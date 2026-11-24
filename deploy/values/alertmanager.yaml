@@ -53,8 +53,9 @@ config:
         group_wait: 0s
         group_interval: 1m
         repeat_interval: 1m      # healthchecks.io 체크 period 1m · grace 4m → 미수신 5m에 알림
-      # 원인 알람은 사람이 아니라 분류기가 읽는다 (docs/classifier.md 2절). Xid · Pod 종료만 분류기로 보낸다
-      - matchers: ["pipeline = failover", 'signal =~ "xid|pod_exit"']
+      # 원인 알람은 사람이 아니라 분류기가 읽는다 (docs/classifier.md 2절). Xid · Pod 종료 · GPU 노드 소실만 분류기로 보낸다.
+      # node_lost는 분류기 ENABLED_SIGNALS에 넣기 전까지 분류기가 받아서 버린다(outcome="disabled")
+      - matchers: ["pipeline = failover", 'signal =~ "xid|pod_exit|node_lost"']
         receiver: classifier
         group_by: [alertname, cluster, node, pod, gpu_uuid]   # 사건 하나 = 알림 하나
         group_wait: 0s           # 원인 알람은 약 30초만 발화한다. 기다리면 그 사이 꺼져서 못 보낸다

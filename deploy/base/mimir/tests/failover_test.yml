@@ -249,3 +249,138 @@ tests:
             exp_annotations:
               event_ts: '1970-01-01T00:15:00Z'
               summary: '클러스터 수집 끊김: eks-a'
+
+  # --- FailoverGpuNodeLost. g1 = GPU 노드, c1 = CPU 노드. KSM은 계속 긁힌다(따로 적은 경우 제외) ---
+  # 11) GPU 노드 g1이 5분에 지워진다(KSM이 지표를 더 안 냄 → Agent가 stale 표시). 1분 뒤 울리고 event_ts = 마지막 Ready 샘플,
+  #     최근 10분 안에 Ready였던 동안(15분 전까지)만 울린다
+  - name: GPU 노드가 지워지면 1분 뒤 울리고 10분 뒤 꺼진다
+    interval: 15s
+    input_series:
+      - series: 'kube_node_status_condition{job="kube-state-metrics", cluster="eks-a", node="g1", condition="Ready", status="true"}'
+        values: '1x20 stale'
+      - series: 'kube_node_status_allocatable{job="kube-state-metrics", cluster="eks-a", node="g1", resource="nvidia_com_gpu"}'
+        values: '1x20 stale'
+      - series: 'up{job="kube-state-metrics", cluster="eks-a", instance="ksm:8080"}'
+        values: '1x80'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
+      - eval_time: 6m15s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: &nodelost
+          - exp_labels: {pipeline: failover, signal: node_lost, cluster: eks-a, node: g1}
+            exp_annotations:
+              event_ts: '1970-01-01T00:05:00Z'
+              log_line: 'GPU node not Ready or deleted'
+              summary: 'GPU 노드 소실: eks-a g1'
+      - eval_time: 14m45s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: *nodelost
+      - eval_time: 15m15s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
+
+  # 12) g1이 5분 15초부터 NotReady로 계속 남는다(Node가 안 지워짐). 같은 시각에 울리고 10분 뒤 꺼진다
+  - name: NotReady가 이어져도 10분 뒤에는 꺼진다
+    interval: 15s
+    input_series:
+      - series: 'kube_node_status_condition{job="kube-state-metrics", cluster="eks-a", node="g1", condition="Ready", status="true"}'
+        values: '1x20 0x80'
+      - series: 'kube_node_status_allocatable{job="kube-state-metrics", cluster="eks-a", node="g1", resource="nvidia_com_gpu"}'
+        values: '1x100'
+      - series: 'up{job="kube-state-metrics", cluster="eks-a", instance="ksm:8080"}'
+        values: '1x100'
+    alert_rule_test:
+      - eval_time: 6m15s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: *nodelost
+      - eval_time: 14m45s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: *nodelost
+      - eval_time: 15m15s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
+
+  # 13) 45초만 NotReady였다가 돌아온다. 1분이 안 돼 울리지 않는다
+  - name: 1분 안에 돌아온 노드는 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'kube_node_status_condition{job="kube-state-metrics", cluster="eks-a", node="g1", condition="Ready", status="true"}'
+        values: '1x20 0 0 0 1x60'
+      - series: 'kube_node_status_allocatable{job="kube-state-metrics", cluster="eks-a", node="g1", resource="nvidia_com_gpu"}'
+        values: '1x80'
+      - series: 'up{job="kube-state-metrics", cluster="eks-a", instance="ksm:8080"}'
+        values: '1x80'
+    alert_rule_test:
+      - eval_time: 5m45s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
+      - eval_time: 6m15s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
+
+  # 14) KSM이 5분에 죽는다(up 0). 노드 지표가 한꺼번에 사라져도 노드가 죽은 것으로 보지 않는다
+  - name: KSM이 죽어 노드 지표가 사라진 것은 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'kube_node_status_condition{job="kube-state-metrics", cluster="eks-a", node="g1", condition="Ready", status="true"}'
+        values: '1x20 stale'
+      - series: 'kube_node_status_allocatable{job="kube-state-metrics", cluster="eks-a", node="g1", resource="nvidia_com_gpu"}'
+        values: '1x20 stale'
+      - series: 'up{job="kube-state-metrics", cluster="eks-a", instance="ksm:8080"}'
+        values: '1x20 0x60'
+    alert_rule_test:
+      - eval_time: 6m15s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
+      - eval_time: 10m
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
+
+  # 15) EKS OFF 절차: 펜싱(fenced="true") 뒤 GPU 노드가 사라진다. 울리지 않는다
+  - name: 펜싱된 EKS의 노드가 사라지면 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'kube_node_status_condition{job="kube-state-metrics", cluster="eks-a", node="g1", condition="Ready", status="true"}'
+        values: '1x20 stale'
+      - series: 'kube_node_status_allocatable{job="kube-state-metrics", cluster="eks-a", node="g1", resource="nvidia_com_gpu"}'
+        values: '1x20 stale'
+      - series: 'up{job="kube-state-metrics", cluster="eks-a", instance="ksm:8080"}'
+        values: '1x80'
+      - series: 'kube_customresource_multikueuecluster_info{job="kube-state-metrics", cluster="onprem-manager", customresource_kind="MultiKueueCluster", name="eks-a", fenced="true"}'
+        values: '1x80'
+    alert_rule_test:
+      - eval_time: 6m15s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
+
+  # 16) GPU가 없는 노드(c1, CPU allocatable만 있음)가 지워지는 것은 대상이 아니다
+  - name: CPU 노드가 사라지는 것은 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'kube_node_status_condition{job="kube-state-metrics", cluster="eks-a", node="c1", condition="Ready", status="true"}'
+        values: '1x20 stale'
+      - series: 'kube_node_status_allocatable{job="kube-state-metrics", cluster="eks-a", node="c1", resource="cpu"}'
+        values: '2x20 stale'
+      - series: 'up{job="kube-state-metrics", cluster="eks-a", instance="ksm:8080"}'
+        values: '1x80'
+    alert_rule_test:
+      - eval_time: 6m15s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
+
+  # 17) 대상(eks-a · b · c) 밖의 클러스터는 GPU 노드가 사라져도 울리지 않는다(kind 검증 클러스터 kind-test 등)
+  - name: eks-a · b · c가 아닌 클러스터의 GPU 노드는 대상이 아니다
+    interval: 15s
+    input_series:
+      - series: 'kube_node_status_condition{job="kube-state-metrics", cluster="kind-test", node="g1", condition="Ready", status="true"}'
+        values: '1x20 stale'
+      - series: 'kube_node_status_allocatable{job="kube-state-metrics", cluster="kind-test", node="g1", resource="nvidia_com_gpu"}'
+        values: '1x20 stale'
+      - series: 'up{job="kube-state-metrics", cluster="kind-test", instance="ksm:8080"}'
+        values: '1x80'
+    alert_rule_test:
+      - eval_time: 6m15s
+        alertname: FailoverGpuNodeLost
+        exp_alerts: []
