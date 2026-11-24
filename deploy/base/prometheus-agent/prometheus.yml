@@ -125,10 +125,17 @@ scrape_configs:
       - {target_label: cluster, replacement: monitoring}
       - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
 
+  # Tempo 분산형(GPU-227): 구성 요소마다 Service가 있다. 같은 Pod를 또 고르는 *-discovery Service는 뺀다
   - job_name: tempo
-    static_configs:
-      - targets: ["tempo.monitoring.svc.cluster.local:3200"]
-        labels: {cluster: monitoring}
+    kubernetes_sd_configs:
+      - role: endpointslice
+        namespaces: {names: [monitoring]}
+    relabel_configs:
+      - source_labels: [__meta_kubernetes_service_name, __meta_kubernetes_endpointslice_port_name]
+        regex: tempo-(distributor|querier|query-frontend|block-builder|live-store|backend-scheduler|backend-worker);http-metrics
+        action: keep
+      - {target_label: cluster, replacement: monitoring}
+      - {source_labels: [__meta_kubernetes_pod_name], target_label: pod}
 
   - job_name: blackbox-exporter
     static_configs:
