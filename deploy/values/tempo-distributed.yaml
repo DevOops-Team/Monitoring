@@ -72,6 +72,14 @@ blockBuilder:
       volumeMounts: &helper_mounts
         - {name: s3-cert, mountPath: /cert, readOnly: true}
         - {name: aws-credentials, mountPath: /aws}
+      # Tempo 컨테이너와 같은 uid로. 도우미 이미지 기본은 65532라 0600으로 쓴 키 파일을 Tempo(uid 1000)가 못 읽고,
+      # S3 클라이언트가 EC2 메타데이터 주소로 넘어가 시작 단계에서 멈춘다(11/24 운영). 옛 차트는 Pod 전체가 uid 10001이었다
+      securityContext: &helper_security
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+        allowPrivilegeEscalation: false
+        capabilities: {drop: [ALL]}
     - name: aws-credentials
       image: public.ecr.aws/rolesanywhere/credential-helper:1.8.5-2026.08.24.20.52
       restartPolicy: Always
@@ -85,6 +93,7 @@ blockBuilder:
       env: *helper_env
       resources: *helper_resources
       volumeMounts: *helper_mounts
+      securityContext: *helper_security
   extraEnv: &s3_env
     - {name: AWS_SHARED_CREDENTIALS_FILE, value: /aws/credentials}
   extraVolumeMounts: &s3_mounts
