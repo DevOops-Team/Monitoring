@@ -9,32 +9,48 @@
 groups:
   - name: failover
     rules:
-      # DCGM_FI_DEV_XID_ERRORS = 그 GPU에서 마지막으로 난 Xid 번호(없었으면 0). 값이 바뀐 뒤 1분만 울린다.
-      # GPU 단위(cluster · node · UUID)로 합쳐서 본다: dcgm-exporter는 GPU를 쓰는 Pod 이름을 라벨로 붙여서,
-      # 학습 Pod가 죽으면 같은 값의 새 시계열이 생긴다. 합치지 않으면 그때 한 번 더 울린다.
-      # 한계: 같은 번호가 연달아 나면 값이 안 바뀌어 두 번째는 못 본다
+      # Xid 사건. 두 경로 중 하나가 보면 1분만 울린다. GPU 단위(cluster · node · UUID)로 합쳐서 본다:
+      # dcgm-exporter는 GPU를 쓰는 Pod 이름을 라벨로 붙여서, 학습 Pod가 죽으면 같은 값의 새 시계열이 생긴다. 합치지 않으면 그때 한 번 더 울린다.
+      #  ① 횟수 경로(앞): DCGM_EXP_XID_ERRORS_COUNT = Xid 번호(xid 라벨)별 「최근 10분 안 횟수」. Xid마다 생기고 10분 뒤 빠진다(창, dcgm-exporter
+      #     daemonset.yaml). 1분 전보다 늘었거나 1분 전엔 없었으면 새 사건 → 같은 번호가 다시 나도 잡는다(GPU-221)
+      #     한계: 앞 Xid가 빠지고 15초(수집 주기) 안에 같은 번호가 다시 나면 빈 순간이 기록되지 않아 「1, 1」로 이어져 못 본다(간격 10분 ~ 10분 15초)
+      #  ② 번호 경로(뒤): DCGM_FI_DEV_XID_ERRORS = 그 GPU에서 마지막으로 난 Xid 번호(없었으면 0). 값이 바뀌면 새 사건. 같은 번호 재발은 못 본다.
+      #     횟수 지표가 안 나올 때를 위해 남긴다. 같은 GPU에 ①이 울리면 ②는 빠진다(or on) → 알람은 하나
       # 출처를 고정한다(monitoring 네임스페이스의 dcgm-exporter 컨테이너). 이 세 라벨은 Agent가 긁는 대상에서 붙이는 것이라
       # 지표를 내는 쪽이 정할 수 없다. 이름만 보면 학습 Pod(사용자 코드, :8000 /metrics)가 같은 이름의 지표를 내 장애를 꾸밀 수 있다
       - alert: FailoverXidDcgm
         expr: >
-          (max by (cluster, node, UUID) (DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter"}) != 0)
-          unless
           (
-              max by (cluster, node, UUID) (last_over_time(DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter"}[10m] offset 1m))
-            ==
-              max by (cluster, node, UUID) (DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter"})
+            (max by (cluster, node, UUID, xid) (DCGM_EXP_XID_ERRORS_COUNT{job="annotated-pods", namespace="monitoring", container="dcgm-exporter", xid!=""}) > 0)
+            unless
+            (
+                max by (cluster, node, UUID, xid) (DCGM_EXP_XID_ERRORS_COUNT{job="annotated-pods", namespace="monitoring", container="dcgm-exporter", xid!=""} offset 1m)
+              >=
+                max by (cluster, node, UUID, xid) (DCGM_EXP_XID_ERRORS_COUNT{job="annotated-pods", namespace="monitoring", container="dcgm-exporter", xid!=""})
+            )
+          )
+          or on (cluster, node, UUID)
+          (
+            (max by (cluster, node, UUID) (DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter"}) != 0)
+            unless
+            (
+                max by (cluster, node, UUID) (last_over_time(DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter"}[10m] offset 1m))
+              ==
+                max by (cluster, node, UUID) (DCGM_FI_DEV_XID_ERRORS{job="annotated-pods", namespace="monitoring", container="dcgm-exporter"})
+            )
           )
         labels:
           pipeline: failover
           signal: xid
           source: dcgm
-          xid: '{{ $value }}'
+          # ①은 값이 횟수라 번호를 xid 라벨에서, ②는 값이 번호
+          xid: '{{ with $labels.xid }}{{ . }}{{ else }}{{ $value }}{{ end }}'
           gpu_uuid: '{{ $labels.UUID }}'
         annotations:
-          # 이 번호가 처음 찍힌 샘플의 시각(최근 2분 안에서 가장 이른 것)
+          # 원본 샘플 시각. ① 그 횟수가 처음 찍힌 샘플(최근 1분 안 — 울리는 1분 동안 고정), ② 이 번호가 처음 찍힌 샘플(최근 2분 안)
           event_ts: >-
-            {{ with printf "min_over_time(max by (cluster, node, UUID) (timestamp(DCGM_FI_DEV_XID_ERRORS{job=\"annotated-pods\", namespace=\"monitoring\", container=\"dcgm-exporter\", cluster=%q, UUID=%q} == %v))[2m:15s])" $labels.cluster $labels.UUID $value | query }}{{ (. | first | value | toTime).UTC.Format "2006-01-02T15:04:05Z" }}{{ end }}
-          summary: 'Xid {{ $value }}: {{ $labels.cluster }} {{ $labels.node }} {{ $labels.UUID }}'
+            {{ if $labels.xid }}{{ with printf "min_over_time(max by (cluster, node, UUID, xid) (timestamp(DCGM_EXP_XID_ERRORS_COUNT{job=\"annotated-pods\", namespace=\"monitoring\", container=\"dcgm-exporter\", cluster=%q, UUID=%q, xid=%q} == %v))[1m:15s])" $labels.cluster $labels.UUID $labels.xid $value | query }}{{ (. | first | value | toTime).UTC.Format "2006-01-02T15:04:05Z" }}{{ end }}{{ else }}{{ with printf "min_over_time(max by (cluster, node, UUID) (timestamp(DCGM_FI_DEV_XID_ERRORS{job=\"annotated-pods\", namespace=\"monitoring\", container=\"dcgm-exporter\", cluster=%q, UUID=%q} == %v))[2m:15s])" $labels.cluster $labels.UUID $value | query }}{{ (. | first | value | toTime).UTC.Format "2006-01-02T15:04:05Z" }}{{ end }}{{ end }}
+          summary: 'Xid {{ with $labels.xid }}{{ . }}{{ else }}{{ $value }}{{ end }}: {{ $labels.cluster }} {{ $labels.node }} {{ $labels.UUID }}'
 
       # 학습 컨테이너(trainer)가 정상 완료가 아닌 사유로 끝난 뒤 90초만 울린다. ckpt-init · ckpt-sidecar는 보지 않는다.
       # 값 = 종료 시각(kube_pod_completion_time) → event_ts로 쓴다.

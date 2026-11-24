@@ -227,13 +227,15 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
 **실 클러스터(모니터링 클러스터 `monitoring` 네임스페이스)에는 Argo CD가 올린다**(11/18): Application `gpu-monitoring-classifier` → Gitops 레포 `monitoring/onprem/classifier`. 그 overlay가 이 레포의 `deploy/classifier/base`를 릴리스 태그로 참조하고 이미지 태그를 고정한다.
 
 - **버전을 올릴 때**: 손으로 할 일이 없다(배포 봇 연결 11/19). `classifier/` · `schemas/fault-event.v1.json` · `.dockerignore` · `.github/workflows/ci.yml`이 바뀐 main 머지에서 `ci.yml`의 `deploy`가 Gitops overlay의 `newTag` · `digest`와 `?ref=vX.Y.Z`(매니페스트 base)를 같은 릴리스로 바꾼다. `deploy/classifier/base`만 바뀐 머지는 이미지가 안 올라가 `deploy`도 돌지 않는다: 그때만 Gitops overlay의 `?ref=`를 손으로 올린다
+  - **릴리스 노트 문구는 짧게**: 릴리스 설명(항목 요약을 이은 것)이 이미지 라벨 `org.opencontainers.image.description`으로 들어간다. 11/24 v1.32.0은 한글 670바이트에서 GHCR push가 500으로 4번 실패했고, 380바이트로 줄이자 성공했다(성공한 최대는 608바이트, 정확한 한도는 모름). 실패하면 main PR 본문 문구를 줄이고 **전체 재실행**(실패한 job만 재실행하면 설명이 그대로다)
 - **pull secret**: 이미지 패키지가 비공개라 Secret `ghcr-pull`이 필요하다. Git에 없다. 관리 클러스터 `platform`의 것을 복사한다(값이 화면에 나오지 않는다):
   ```bash
   kubectl --kubeconfig <관리 클러스터 admin.conf> -n platform get secret ghcr-pull -o json \
   | jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.managedFields,.metadata.annotations)' \
   | kubectl --kubeconfig <모니터링 클러스터 admin.conf> -n monitoring apply -f -
   ```
-- **알람이 들어오는 길**: Alertmanager 라우트 `pipeline=failover` + `signal=~"xid|pod_exit"` → 웹훅 `http://classifier.monitoring.svc:8080/alerts`. 사이트 알람은 아직 보내지 않는다(`values/alertmanager.yaml` 주석)
+- **알람이 들어오는 길**: Alertmanager 라우트 `pipeline=failover` + `signal=~"xid|pod_exit|node_lost"` → 웹훅 `http://classifier.monitoring.svc:8080/alerts`. 사이트 알람은 아직 보내지 않는다(`values/alertmanager.yaml` 주석)
+- **받는 신호**: Gitops overlay의 `ENABLED_SIGNALS=xid,pod_exit,node_lost`(11/24 19:07부터, Gitops #101). 라우트와 이 값이 둘 다 있어야 그 신호로 사건이 나간다. 복구 컨트롤러가 실행 모드라 `node_lost`는 GPU 노드가 1분 넘게 NotReady이거나 사라지면 그 노드 작업을 실제로 옮긴다. 사이트를 켤 때는 `xid,pod_exit,node_lost,site`
 - **확인**: `kubectl -n monitoring get deploy classifier`(2/2) · `kubectl -n monitoring get lease classifier`(`HOLDER` = 지금 대장) · `kubectl -n monitoring logs <대장 Pod>` · 아래 지표
 - **2개 중 하나만 처리한다**(대장, `docs/classifier.md` 7.1절). 대기 쪽은 받은 웹훅을 대장에게 넘기므로 `svc/classifier`로 보내면 어느 Pod에 닿든 대장이 처리한다. 로그 `event.published`는 대장에만 남는다
 - **끄기**: 웹훅만 끊으려면 `values/alertmanager.yaml`의 수신자 `classifier`에서 `webhook_configs`를 지운다. 분류기는 떠 있어도 알람이 안 오면 아무것도 내지 않는다
@@ -248,14 +250,16 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
 
 **종단 검증이 하는 일** (약 5분, 끝나면 `--delete`로 클러스터 삭제):
 
-1. 워커 2대짜리 kind에 수집 층 · 분류기 · 임시 Kafka를 올리고, 작업 라벨이 붙은 가짜 Pod 3개를 띄운다
+1. 워커 3대짜리 kind에 수집 층 · 분류기 · 임시 Kafka를 올리고, 작업 라벨이 붙은 가짜 Pod 3개를 띄운다(worker3는 9단계에서 끌 노드라 taint로 다른 Pod를 막는다)
 2. 웹훅을 보내 응답을 확인한다: Xid 79 → 1건 발행 / 재전송 → 중복 / 분류기 재시작 뒤 재전송 → 중복 / 대기 쪽으로 보냄 → 대장이 처리 / 대장을 얼림 → 대기 쪽이 넘겨받고(초 측정) 재전송 → 중복 / `job.fenced` 뒤 Pod 종료 → 버림 / 기록 없는 Pod 종료 → 1건 발행 / Xid가 난 작업의 Pod 종료 → 버림
 3. kind의 `gpu.fault`에서 메시지를 읽어 v1 스키마 · 봉투 · `rule_version` 헤더를 확인한다
+4. GPU 노드 소실(11/24): worker3에 가짜 GPU와 작업을 두고 `docker stop` + Node 삭제 → 실제 Mimir에서 `FailoverGpuNodeLost` 식(대상만 `kind-test`로)이 잡는지 → 웹훅 → `isolate_migrate` 1건(`source=node` · `collector_healthy=true`), 재전송은 중복
 
 알아 둘 것:
 
 - **지표 · 로그가 실제 Mimir · Loki로 간다**(`cluster="kind-test"`). `deploy-k8s.sh --agents-kind`와 같은 방식이고, 분류기가 `job_id` · `collector_healthy`를 Mimir에서 읽기 때문에 필요하다. Kafka는 kind 안의 임시 브로커라 실제 브로커(`.40~.42`)에는 쓰지 않는다
 - kubeconfig는 `$TMPDIR/classifier-e2e/kubeconfig`에 따로 둔다. 평소 쓰는 컨텍스트를 바꾸지 않는다
+- **18080이 이미 쓰이고 있으면 바로 멈춘다**(11/24). 실제 분류기로 가는 port-forward(아래 ②)가 떠 있으면 `/healthz`는 응답하므로, 확인 없이 진행하면 시험 알람이 실제 `gpu.fault`로 나간다. 11/24 18:15에 이렇게 `cluster="kind-test"` 사건 2건이 실제로 나갔다
 - kind 노드에는 `/var/log/journal`이 없어 Fluent Bit가 뜨지 못한다. 스크립트가 노드에 디렉터리를 만든다(`--agents-kind`만 따로 쓸 때도 같은 문제가 난다)
 - `kind load docker-image`가 Docker의 containerd 이미지 저장소에서 실패해(`content digest ... not found`) 이미지를 파일로 저장해 넣는다
 
@@ -502,6 +506,7 @@ curl -s -X POST localhost:18080/alerts -H 'Content-Type: application/json' -d "{
 - **45초 안에 같은 것을 다시 보내면 `duplicate`**(같은 사건). 다시 보내야 하면 1분 기다린다
 - 79의 복구가 끝나면 한송이가 새 세대 · 새 노드 · 시각을 준다 → 그 노드로 48
 - 시험 이벤트는 실제 `gpu.fault`에 남는다. 구분은 `raw.log_line`의 `TEST NODE-00x`
+- **끝나면 port-forward를 끈다**. 남아 있으면 맥에서 `localhost:18080`으로 가는 요청이 전부 실제 분류기로 간다(11/24 kind 종단 검증 사고)
 
 ### ③ `dcgmi`로 Xid 주입 (GPU 고장, 룰부터 실제 경로)
 
@@ -534,7 +539,9 @@ kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- dcgmi test --introspect -
 | 4 | 묶기 | `classifier_alerts_total{outcome="absorbed"}` | 복구로 지워지는 같은 세대 학습 Pod의 종료가 따로 `restart_in_place`로 나가지 않는다 |
 | 5 | 복구 | ①의 7번과 같다 | 새 세대가 다른 노드에서 이어서 학습. 원래 노드는 격리(해제는 한송이) |
 
-**끝나면 반드시 주입값을 지운다.** 값은 엔진이 재시작될 때까지 캐시에 남는다. 남겨 두면 그 GPU에서 나중에 진짜 Xid 79가 나도 값이 그대로라 알람이 안 울린다.
+**같은 Xid 연속(GPU-221)**: 위 주입을 5분 뒤 같은 번호로 한 번 더 한다. 실행 모드라 두 번 다 실제 복구가 나가므로 번호는 79보다 덜 파괴적인 13(`restart_in_place`)으로, 한송이와 시각을 맞춘다. 볼 것: 먼저 `DCGM_EXP_XID_ERRORS_COUNT`에 `window_size_in_ms="600000"`(창 10분)이 붙었는지 → 둘째 주입 뒤 그 GPU의 `xid="13"` 값이 1 → 2 → `FailoverXidDcgm`이 다시 울리고 `gpu.fault` 2건(event_ts가 약 5분 차이). 둘째는 컨트롤러가 반복으로 거절할 수 있다 — 사건이 2건이면 통과. 같은 값을 다시 주입해도 횟수가 느는지는 이때 처음 확인한다
+
+**끝나면 반드시 주입값을 지운다.** 값은 엔진이 재시작될 때까지 캐시에 남는다. 남겨 두면 번호 지표가 계속 그 값이라 대시보드가 헷갈리고, 진짜 Xid는 횟수 경로로만 잡힌다.
 
 ```bash
 kubectl -n monitoring delete pod "$DCGM"     # DaemonSet이 새로 띄운다 → 엔진 캐시가 비워진다

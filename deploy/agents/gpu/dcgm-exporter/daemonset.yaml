@@ -69,6 +69,9 @@ spec:
           env:
             - {name: DCGM_EXPORTER_LISTEN, value: ":9400"}
             - {name: DCGM_EXPORTER_INTERVAL, value: "5000"}     # ms. 기본 30000
+            # DCGM_EXP_XID_ERRORS_COUNT의 창. ms. 기본 5분 → 10분(GPU-221): 같은 Xid가 창 길이 ~ 창+1분 간격으로 다시 나면
+            # FailoverXidDcgm이 놓친다. 5분이면 「5분 간격 재발」이 바로 그 구간이라 10분으로 옮겼다
+            - {name: DCGM_EXPORTER_XID_COUNT_WINDOW_SIZE, value: "600000"}
             # kubelet pod-resources로 "이 GPU를 쓰는 Pod"를 지표에 붙인다.
             # Agent가 붙이는 pod · namespace · container(exporter 자신)와 이름이 겹쳐 학습 Pod 쪽은 exported_pod 등으로 들어온다
             - {name: DCGM_EXPORTER_KUBERNETES, value: "true"}

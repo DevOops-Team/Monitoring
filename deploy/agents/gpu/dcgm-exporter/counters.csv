@@ -24,7 +24,7 @@ DCGM_FI_DEV_RETIRED_SBE,       counter, Total number of retired pages due to sin
 DCGM_FI_DEV_RETIRED_DBE,       counter, Total number of retired pages due to double-bit errors.
 DCGM_FI_DEV_RETIRED_PENDING,   gauge,   Whether pages are pending retirement (1 means pending and 0 means not pending).
 
-# Xid (MON-STD-04). 메인 신호는 커널 로그(Loki), 이것은 보조. ERRORS = 마지막 Xid 번호, COUNT = 시간 창 안 횟수
+# Xid (MON-STD-04). 메인 신호는 커널 로그(Loki), 이것은 보조. ERRORS = 마지막 Xid 번호, COUNT = 최근 10분(창, daemonset.yaml) 안 횟수
 DCGM_FI_DEV_XID_ERRORS,    gauge, Value of the last XID error encountered.
 DCGM_EXP_XID_ERRORS_COUNT, gauge, XID errors observed during the configured time window.
 
