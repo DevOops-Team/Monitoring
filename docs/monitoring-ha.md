@@ -116,7 +116,7 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 | 6 | Tempo 분산형 | 트레이스 수신 · 조회 · 한 live-store를 지워도 최근 트레이스 조회 |
 
 ### 6단계 운영 결과 (2026-11-24)
-분산형 19 Pod(Tempo 18 + rollout-operator) 11:00 Ready → 12:40 연결부(v1.28.0) 반영 → 12:45 옛 StatefulSet `tempo` · PVC 삭제(옛 Pod는 11/16 뒤 받은 span 0건).
+분산형 18 Pod(Tempo 구성 요소 7종 17 Pod + rollout-operator 1) 11:00 Ready → 12:40 연결부(v1.28.0) 반영 → 12:45 옛 StatefulSet `tempo` · PVC 삭제(옛 Pod는 11/16 뒤 받은 span 0건).
 
 | 시험 | 결과 |
 |---|---|
