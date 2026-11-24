@@ -303,6 +303,19 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_pending_workloads{cluster="onprem-manager", replica_role="leader"}'             # 대기 잡 수
 ```
 
+### MultiKueueCluster 펜싱 라벨 (11/24, GPU-220)
+
+관리 클러스터 KSM만 CustomResourceState로 MultiKueueCluster를 읽는다(`overlays/onprem/ksm-custom-resources.yaml`). EKS를 끄기 전 OFF 절차(K8s `scheduling/ops/README.md`, `eks_gate.py fence`)가 붙이는 `devoops/fenced=true`를 사이트 알람(`FailoverSiteDown`)이 보고, 펜싱된 클러스터는 수집이 끊겨도 울리지 않는다.
+
+- 객체마다 한 줄 `kube_customresource_multikueuecluster_info{name="eks-a"}`. 라벨이 있을 때만 `fenced="true"`가 붙는다. `fenced`를 info 안에 두면 라벨 없는 객체는 줄 자체가 안 나와 「안 붙음」과 「수집 안 됨」을 못 가린다(kind에서 확인)
+- KSM 권한에 `multikueueclusters` · `customresourcedefinitions` 읽기를 overlay에서 더했다. `--resources` 목록이 있어도 사용자 정의 리소스는 켜진다
+- **fence를 빼먹고 EKS를 내리면 사이트 알람이 울린다.** 펜싱 라벨은 사람이 지울 때까지 남는다(ON 때 `eks_gate.py on-check --unfence`)
+
+확인:
+```bash
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kube_customresource_multikueuecluster_info{cluster="onprem-manager"}'   # eks-a · b · c 3줄, 펜싱된 것만 fenced="true"
+```
+
 ### 모니터링 클러스터 자신의 로그 (`overlays/monitoring`)
 
 모니터링 클러스터에는 수집 층 중 **Fluent Bit만** 올린다. 지표 쪽(Agent · kube-state-metrics · node-exporter)은 저장 층(`deploy/base` · `values/`)에 이미 있다.
