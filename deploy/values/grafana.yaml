@@ -108,7 +108,7 @@ datasources:
         uid: tempo
         type: tempo
         access: proxy
-        url: http://tempo.monitoring.svc.cluster.local:3200
+        url: http://tempo-query-frontend.monitoring.svc.cluster.local:3200   # 분산형은 조회 입구가 query-frontend(GPU-227)
         jsonData:
           tracesToLogsV2:
             datasourceUid: loki   # trace에서 같은 시각의 로그로 건너가기
