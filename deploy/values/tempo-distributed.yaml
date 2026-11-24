@@ -1,0 +1,151 @@
+# Tempo 분산형(ADR-18 · GPU-227, 계획 docs/monitoring-ha.md 3.6). 차트 grafana-community/tempo-distributed 3.25.0 (app 3.1.1)
+# 쓰기: OTLP → distributor → Kafka tempo.ingest(파티션 3) → block-builder → S3 / Kafka → live-store(최근 트레이스)
+# 읽기: query-frontend → querier → S3 + live-store. 압축 · 보존 삭제: backend-scheduler → backend-worker
+# 옛 단일 바이너리(values/tempo.yaml)와 같은 S3 접두어 tempo/를 쓴다
+fullnameOverride: tempo
+reportingEnabled: false
+
+# Kafka 토픽은 데이터 파트가 만들었다(현수 11/20, 파티션 3 · 복제 3 · min.insync 2). Tempo가 만들지 않게 자동 생성은 끈다
+# 주소는 하나만 받는다(쉼표 목록 안 됨, franz-go SeedBrokers). 떠 있는 Pod는 브로커 3대를 다 알지만, 그 하나가 죽은 동안
+# 새로 뜨는 Pod는 못 붙는다 → 아래 defaults.hostAliases로 이름 하나에 브로커 3대를 걸고, Go가 차례로 시도한다
+ingest:
+  kafka:
+    address: kafka-bootstrap:9092
+    topic: tempo.ingest
+    auto_create_topic_enabled: false
+tempo:
+  structuredConfig:
+    ingest:
+      kafka:
+        dial_timeout: 6s   # 주소가 여러 개면 이 시간을 나눠 쓴다(주소당 최소 2초). 기본 2초면 첫 브로커가 응답 없이 죽었을 때 다음을 못 간다
+
+traces:
+  otlp:
+    grpc: {enabled: true}
+    http: {enabled: true}
+
+storage:
+  trace:
+    backend: s3
+    s3:
+      bucket: devoops-prod-monitoring-947027666399-us-east-2
+      endpoint: s3.us-east-2.amazonaws.com
+      region: us-east-2
+      # 끝의 /는 일부러 붙였다: 시작할 때 이 값 그대로 목록을 조회하는데 역할의 ListBucket 조건이 s3:prefix = tempo/* 라서
+      # 'tempo'로는 403이 난다. 객체 키를 만들 때는 path.Join이 /를 정리한다
+      prefix: tempo/
+
+# 자원: kind 실측(11/24) 구성 요소당 22 ~ 43MiB, 조회 직후 querier · live-store 약 160MiB. 한도의 85%가 GOMEMLIMIT이 된다
+defaults:
+  hostAliases:   # Kafka 브로커 3대(데이터 파트). Kafka에 붙는 것은 distributor · block-builder · live-store
+    - {ip: 172.30.0.40, hostnames: [kafka-bootstrap]}
+    - {ip: 172.30.0.41, hostnames: [kafka-bootstrap]}
+    - {ip: 172.30.0.42, hostnames: [kafka-bootstrap]}
+  resources:
+    requests: {cpu: 20m, memory: 64Mi}
+    limits: {memory: 512Mi}
+
+# 개수: block-builder · live-store 한 벌 = Kafka 파티션 수(3). live-store는 존 두 벌이라 하나가 죽어도 최근 트레이스를 답한다
+# PVC는 없다(차트 기본): 다시 뜨면 Kafka에 커밋한 오프셋부터 다시 읽는다. 그래서 Pod가 노드 디스크에 묶이지 않는다
+# S3 임시 키 공급: S3를 부르는 구성 요소(block-builder · querier · query-frontend · backend-scheduler · backend-worker, kind 실측)에만 붙인다.
+# Tempo의 S3 클라이언트(minio-go)는 EC2 메타데이터 주소를 바꿀 수 없어 AWS 자격 증명 파일을 읽는다. 인증서(Secret tempo-s3-cert)로
+# IAM Roles Anywhere에서 1시간짜리 키를 받아 /aws/credentials에 쓴다. 첫 컨테이너가 한 번 쓰고 끝나야 Tempo가 뜨고(키가 없으면 죽는다),
+# 둘째는 restartPolicy: Always = 사이드카로 남아 만료 전에 갱신한다. Tempo는 요청마다 파일을 다시 읽는다
+blockBuilder:
+  replicas: 3
+  initContainers: &s3_init
+    - name: aws-credentials-init
+      image: public.ecr.aws/rolesanywhere/credential-helper:1.8.5-2026.08.24.20.52
+      args:
+        - update
+        - --once
+        - --certificate=/cert/client.pem
+        - --private-key=/cert/client.key
+        - --trust-anchor-arn=arn:aws:rolesanywhere:us-east-2:947027666399:trust-anchor/e64f2c94-9faa-4510-9e0d-b04c71170678
+        - --profile-arn=arn:aws:rolesanywhere:us-east-2:947027666399:profile/1bb6f08f-fa74-49f2-89fe-14b907aecaef
+        - --role-arn=arn:aws:iam::947027666399:role/devoops-prod-onprem-tempo
+      env: &helper_env
+        - {name: AWS_SHARED_CREDENTIALS_FILE, value: /aws/credentials}
+      resources: &helper_resources
+        requests: {cpu: 10m, memory: 32Mi}
+        limits: {memory: 64Mi}
+      volumeMounts: &helper_mounts
+        - {name: s3-cert, mountPath: /cert, readOnly: true}
+        - {name: aws-credentials, mountPath: /aws}
+    - name: aws-credentials
+      image: public.ecr.aws/rolesanywhere/credential-helper:1.8.5-2026.08.24.20.52
+      restartPolicy: Always
+      args:
+        - update
+        - --certificate=/cert/client.pem
+        - --private-key=/cert/client.key
+        - --trust-anchor-arn=arn:aws:rolesanywhere:us-east-2:947027666399:trust-anchor/e64f2c94-9faa-4510-9e0d-b04c71170678
+        - --profile-arn=arn:aws:rolesanywhere:us-east-2:947027666399:profile/1bb6f08f-fa74-49f2-89fe-14b907aecaef
+        - --role-arn=arn:aws:iam::947027666399:role/devoops-prod-onprem-tempo
+      env: *helper_env
+      resources: *helper_resources
+      volumeMounts: *helper_mounts
+  extraEnv: &s3_env
+    - {name: AWS_SHARED_CREDENTIALS_FILE, value: /aws/credentials}
+  extraVolumeMounts: &s3_mounts
+    - {name: aws-credentials, mountPath: /aws, readOnly: true}
+  extraVolumes: &s3_volumes
+    - name: s3-cert
+      secret: {secretName: tempo-s3-cert}   # scripts/create-secrets.sh s3-certs
+    - name: aws-credentials
+      emptyDir: {medium: Memory}            # 키를 디스크에 남기지 않는다
+querier:
+  replicas: 2
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {memory: 1Gi}
+  initContainers: *s3_init
+  extraEnv: *s3_env
+  extraVolumeMounts: *s3_mounts
+  extraVolumes: *s3_volumes
+queryFrontend:
+  replicas: 2
+  initContainers: *s3_init
+  extraEnv: *s3_env
+  extraVolumeMounts: *s3_mounts
+  extraVolumes: *s3_volumes
+backendScheduler:
+  # 30일 보존(ADR-18). 차트 기본은 48h. backend-worker는 이 값을 물려받는다
+  config:
+    provider:
+      compaction:
+        compaction:
+          block_retention: 720h
+  initContainers: *s3_init
+  extraEnv: *s3_env
+  extraVolumeMounts: *s3_mounts
+  extraVolumes: *s3_volumes
+backendWorker:
+  initContainers: *s3_init
+  extraEnv: *s3_env
+  extraVolumeMounts: *s3_mounts
+  extraVolumes: *s3_volumes
+distributor:
+  replicas: 2
+liveStore:
+  replicas: 3
+  resources:
+    requests: {cpu: 20m, memory: 128Mi}
+    limits: {memory: 512Mi}
+  zoneAwareReplication:
+    enabled: true
+    # 존을 가로지르는 ZoneAwarePodDisruptionBudget 대신 일반 PDB 하나(6개 중 동시에 1개만 내려감). 아래 webhook을 끄기 때문
+    podDisruptionBudget:
+      enabled: false
+rollout_operator:
+  enabled: true      # 존 두 벌을 한 존씩 차례로 교체한다(존 복제를 켜면 차트가 요구)
+  # webhook은 끈다. 실패하면 거절(Fail)하고 네임스페이스 전체에 걸려서, rollout-operator가 죽은 동안 Mimir · Loki ·
+  # Alertmanager · Agent의 StatefulSet 수정과 노드 drain까지 막는다. 라벨로 좁히면 eviction에는 아예 안 걸린다(kind 11/24).
+  # 차례 교체는 webhook 없이 돈다. 잃는 것: 줄이기 보호(쓰지 않음) · 존별 PDB
+  webhooks:
+    enabled: false
+
+memcached:
+  enabled: false     # 트레이스가 적어(30일 span 5개, 11/23) 캐시가 필요 없다
+cache:
+  caches: []         # 비우지 않으면 memcached를 꺼도 설정에 남아 1분마다 없는 주소를 찾는다

@@ -13,7 +13,7 @@ ADR-18의 목표 구성(저장소 ×3 · Alertmanager ×2 · Agent ×2 · 분류
 | Alertmanager | 1 | 2 | 개수만 올리면 차트가 클러스터링을 자동 설정. Mimir · Loki ruler가 Service 하나가 아니라 **모든 AM에** 보내게 주소를 바꾼다 |
 | Mimir | 1 | 3 | `replication_factor` 1 → 3 (2곳), 노드마다 하나씩(anti-affinity), 메모리 한도 2Gi → 3Gi |
 | Loki | 1 | 3 | `replication_factor` 3 + **ruler 분담 켜기**(기본 꺼짐, 안 켜면 3개가 같은 알람을 각자 냄) |
-| Tempo | 1 | 분산형 | 3.x는 Kafka 없이는 늘릴 수 없다 → `tempo-distributed` + Kafka 토픽 + rollout-operator (5절 결정 1) |
+| Tempo | 1 | 분산형 | 3.x는 Kafka 없이는 늘릴 수 없다 → `tempo-distributed` + Kafka 토픽 + live-store 존 2벌 + rollout-operator (5절 결정 1 · 6) |
 | Prometheus Agent | 1 (모니터링 · 관리 클러스터) | 2 | Mimir HA tracker + Agent 묶음 전용 라벨 (5절 결정 2) |
 | 분류기 | 1 | 2 | active-standby: 대장 하나만 처리 (5절 결정 3) |
 | Grafana | 1 | 1 | 그대로 (persistence 끄고 파일 프로비저닝) |
@@ -79,10 +79,28 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 - 구조: `앱 → distributor → Kafka(토픽) → block-builder → S3` / `Kafka → live-store(최근 데이터)`, 조회는 `query-frontend → querier → S3 + live-store`, 압축은 `backend-scheduler · backend-worker`
 - 차트: `grafana-community/tempo-distributed` **3.25.0**(app 3.1.1, 11/05 출시). 3.29.1은 11/18 출시라 2주 규칙에 걸린다
 - Kafka 토픽(현수가 생성 11/20, 데이터 파트 설계 · Kafka 흐름 문서 토픽 표에 있음): `tempo.ingest`, 파티션 3 · 복제 3 · `min.insync.replicas` 2, 보존 24시간 + 파티션당 1GB 상한(`retention.bytes`, 브로커 디스크를 학습 사건과 같이 써서 트레이스가 몰려도 못 채우게). 접속 `172.30.0.40~42:9092`(PLAINTEXT, 인증 없음), 컨슈머 그룹은 Tempo 이름으로. live-store 수 = 파티션 수(3)
-- rollout-operator: live-store를 존마다 두는 HA에 필요(차트가 요구)
-- OTLP 받는 주소: `.35:4317/4318`의 대상 Service를 distributor로 바꾼다. 보내는 쪽(OTel 게이트웨이) 설정은 그대로
-- Gitops: Application `gpu-monitoring-tempo`를 새 차트로 교체, AppProject에 차트 · rollout-operator 리소스 허용
-- 기존 트레이스: 거의 없음. 같은 S3 접두어(`tempo/`)의 옛 블록을 새 구성이 읽는지는 확인 전 → 못 읽으면 버린다
+- values: `deploy/values/tempo-distributed.yaml`(옛 `tempo.yaml`은 전환이 끝나면 지운다). 이미지 tempo 3.1.1 · rollout-operator v0.41.1
+- 개수(11/24 kind 검증으로 확정):
+
+  | 구성 요소 | 개수 | 이유 |
+  |---|---|---|
+  | distributor · query-frontend · querier | 각 2 | 상태 없음. 하나 죽어도 수신 · 조회 |
+  | block-builder | 3 | = 파티션 수(필수) |
+  | live-store | 3 × 존 2 | = 파티션 수 × 두 벌(5절 결정 6). 한 벌이면 하나가 죽은 동안 그 파티션의 「아직 S3에 안 올라간 최근 트레이스」를 답할 곳이 없다 |
+  | backend-scheduler · backend-worker | 각 1 | 압축 · 보존 삭제만 한다. 죽어도 쓰기 · 읽기는 안 멈추고 늦어지기만 한다(6절) |
+  | rollout-operator | 1 | 두 벌을 한 존씩 차례로 교체한다(존 복제를 켤 때만 차트가 요구). 죽어도 Tempo는 돈다 |
+
+- **PVC 없음**(차트 기본): 다시 뜨면 Kafka에 커밋한 오프셋부터 다시 읽는다. 그래서 Tempo는 노드 디스크에 묶이지 않는다(6절 첫 위험에서 빠짐)
+- **rollout-operator webhook은 끈다.** webhook 4개가 실패하면 거절(`Fail`)하고 네임스페이스 전체에 걸려서, operator가 죽은 동안 Mimir · Loki · AM · Agent의 StatefulSet 수정과 노드 drain까지 막는다. `objectSelector`로 좁히면 eviction(라벨 없는 Eviction 객체)에는 아예 안 걸려 보호가 사라진다(kind). 차례 교체는 webhook 없이 돈다 → live-store는 존별 PDB 대신 일반 PDB 하나(6개 중 동시에 1개). CRD는 남긴다(operator가 없으면 오류를 반복)
+- **Kafka 주소는 하나만 받는다**(쉼표 목록 안 됨, franz-go `SeedBrokers`). 떠 있는 Pod는 브로커 3대를 다 알지만 그 하나가 죽은 동안 새로 뜨는 Pod는 못 붙는다 → Pod `hostAliases`로 `kafka-bootstrap`에 .40 · .41 · .42를 걸고 Go가 차례로 시도, `dial_timeout` 6s(주소당 2초). Service + EndpointSlice는 Argo CD가 기본으로 관리하지 않아 안 쓴다. Kafka에 붙는 것은 distributor · block-builder · live-store
+- 컨슈머 그룹: block-builder는 `block-builder`로 코드에 고정(바꿀 수 없음, 운영 Kafka에 같은 이름 없음 11/24 확인), live-store는 `tempo-live-store-zone-a` · `-b`
+- 보존: 차트 기본은 48h → `backendScheduler.config.provider.compaction.compaction.block_retention: 720h`(backend-worker가 물려받음)
+- S3 키 사이드카: S3를 부르는 block-builder · querier · query-frontend · backend-scheduler · backend-worker에만(kind에서 구성 요소별 `tempodb_backend_request_duration_seconds_count`로 확인). memcached와 캐시 설정은 끈다(캐시 설정을 비우지 않으면 memcached를 꺼도 1분마다 없는 주소를 찾는다)
+- 자원: kind 실측 구성 요소당 22 ~ 43MiB, 조회 직후 querier · live-store 약 160MiB, 합계 약 780MiB → 요청 64Mi(querier · live-store 128Mi) · 한도 512Mi(querier 1Gi)
+- OTLP 받는 주소: `.35:4317/4318`의 대상 Service(`tempo-external`)를 distributor로(`component: distributor` 추가). 보내는 쪽(OTel 게이트웨이) 설정은 그대로. Grafana 데이터소스는 `tempo-query-frontend:3200`, Agent는 Pod마다 수집
+- Gitops: Application `gpu-monitoring-tempo`를 새 차트로 교체(releaseName `tempo` 그대로 → 리소스 이름 `tempo-*`라 옛 StatefulSet `tempo`와 안 겹친다), AppProject에 CRD 허용, `SkipDryRunOnMissingResource`는 필요 없음(CR을 만들지 않음)
+- 기존 트레이스: 같은 S3 접두어(`tempo/`)의 옛 블록을 새 구성이 그대로 읽는다(kind 11/24). prune이 꺼져 있어 차트를 바꿔도 옛 Tempo가 계속 떠 있으므로, 새 구성 확인 직후 옛 StatefulSet을 내린다(옛 압축기와 새 backend-worker가 같은 접두어에서 같이 돌지 않게)
+- 순서(main PR 둘): ① 새 values · 이 문서 → main ② Gitops AppProject · Application 교체 ③ 연결부(외부 Service 선택자 · Agent · Grafana URL) → main ④ 옛 Tempo 정리(지시 때) ⑤ 옛 values 삭제. 연결부를 차트 교체보다 먼저 넣으면 Gitops 승인을 기다리는 동안 OTLP 대상이 0개가 된다
 
 ## 4. 순서와 검증
 
@@ -106,19 +124,22 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 3. **분류기는 active-standby**(Lease 대장 하나만 처리)
 4. **Jira는 GPU-227 하나로 통일**
 5. 받아들이는 위험 2개(6절 맨 위)
+6. **Tempo live-store는 존 2벌 × 3 + rollout-operator**(11/23 사용자). 11/24: Kafka 주소는 이름 하나에 브로커 3대(사용자)
 
 ## 6. 위험 · 확인할 것
 
 **받아들이는 것**
 - **노드를 새로 만들 때만 손이 필요하다.** 디스크가 노드 로컬(local-path)이라 Pod가 그 노드에 묶인다. 노드가 잠깐 죽으면 남은 2개로 버티고, 노드가 돌아오면 자기 디스크로 자동으로 뜬다. VM을 지우고 새로 만들면 옛 PVC를 지워야 그 Pod가 뜬다(데이터는 S3 · 다른 복제본에 있음) → 런북에 절차 추가. 노드끼리 복제하는 저장소(Longhorn · Ceph)는 노드 3대에 무거워 안 쓴다
 - **Alertmanager 둘 사이가 끊기면 같은 알림이 두 번 갈 수 있다.** AM은 놓치기보다 두 번 보내기를 택하도록 설계됐다. 분류기는 중복 제거가 있고 Slack은 가끔 두 번 온다
+- **Tempo backend-scheduler · backend-worker는 1개씩이다.** 죽은 동안 압축 · 30일 지난 블록 삭제가 늦어질 뿐, 쓰기 · 읽기는 계속된다
+- **rollout-operator webhook을 꺼서** live-store 줄이기 보호(쓰지 않음)와 존별 PDB가 없다. 일반 PDB가 6개 중 1개만 내려가게 막는다
 
 **확인할 것 (구현 때)**
 - Mimir store-gateway RF 3이면 Pod마다 모든 블록의 index-header를 든다 → PVC 10Gi로 충분한지
 - Loki `common.compactor_grpc_address`가 ClusterIP라 리더 아닌 Pod로 갈 수 있음(삭제 기능이 꺼져 있어 무해할 것으로 봄)
 - Loki 종료 대기 30초 안에 WAL flush가 끝나는지
 - Alertmanager Pod가 준비되기 전 피어 DNS 해석 지연
-- Tempo 분산형이 옛 블록(`tempo/`)을 읽는지 · rollout-operator 버전(2주 규칙)
+- ~~Tempo 분산형이 옛 블록(`tempo/`)을 읽는지 · rollout-operator 버전(2주 규칙)~~ → 읽는다 · v0.41.1(10/21 출시) 통과 (kind 11/24, 3.6절)
 - 전용 라벨을 넣은 뒤 대시보드 · 룰 · 분류기의 Mimir 조회에 영향 없는지
 
 ## 출처 (11/20 조사, 버전 고정)
