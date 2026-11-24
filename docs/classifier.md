@@ -47,7 +47,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 종류 | 이름 | 필수 | 뜻 |
 |---|---|---|---|
 | 라벨 | `pipeline` | 모든 알람 | 값 `failover` |
-| 라벨 | `signal` | 모든 알람 | `xid` · `pod_exit` · `spot` · `site` |
+| 라벨 | `signal` | 모든 알람 | `xid` · `pod_exit` · `spot` · `site` · `node_lost`(이벤트 `source: node`) |
 | 라벨 | `source` | `xid`만 | `dmesg`(커널 로그 경로) 또는 `dcgm`(필드 230 경로). 나머지 신호는 `signal`에서 정해진다 |
 | 라벨 | `cluster` | 모든 알람 | 예 `eks-a` |
 | 라벨 | `node` | `site` 제외 | 노드 이름 |
