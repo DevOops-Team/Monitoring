@@ -32,7 +32,7 @@
 | `cluster` · `az` | 문자열 | 예: `eks-a`, `us-east-2a` (클러스터 이름은 ADR-32의 `eks-a` · `b` · `c`) |
 | `node` | 문자열 / null | site 이벤트는 null |
 | `gpu_uuid` | `GPU-…` / null | dcgm-exporter 레이블(pci_bus_id → UUID)로 채움 |
-| `job_id` | 문자열 / null | **학습 작업 ID** = 백엔드가 만드는 8자리 hex (예 `3f9a1c2e`). k8s JobSet 이름 `job-3f9a1c2e-g0003`이 아니다. 분류기는 **Mimir의 kube-state-metrics 지표**로 찾는다: `kube_pod_info{node}` → `kube_pod_labels{label_devoops_job_id, label_devoops_generation}` (각 클러스터 KSM이 remote_write로 보낸 것, KSM `--metric-labels-allowlist` 필요). EKS API를 직접 부르지 않으므로 VPN·EKS 권한이 없어도 되고, VPN이 끊겨도 마지막 매핑이 남는다 (2026-11-11 김현수 지적으로 정정). 못 찾으면 null. **site는 클러스터가 끊기기 직전에 Running이던 작업마다 이벤트 1건**(작업이 없으면 이벤트 없음, 조회 실패면 null로 1건. 2026-11-24 GPU-220) |
+| `job_id` | 문자열 / null | **학습 작업 ID** = 백엔드가 만드는 8자리 hex (예 `3f9a1c2e`). k8s JobSet 이름 `job-3f9a1c2e-g0003`이 아니다. 분류기는 **Mimir의 kube-state-metrics 지표**로 찾는다: `kube_pod_info{node}` → `kube_pod_labels{label_devoops_job_id, label_devoops_generation}` (각 클러스터 KSM이 remote_write로 보낸 것, KSM `--metric-labels-allowlist` 필요). EKS API를 직접 부르지 않으므로 VPN·EKS 권한이 없어도 되고, VPN이 끊겨도 마지막 매핑이 남는다 (2026-11-11 김현수 지적으로 정정). 못 찾으면 null. **site는 클러스터가 끊기기 직전에 Running이던 작업마다 이벤트 1건**(작업이 없으면 이벤트 없음, 조회 실패 · 그 시각 KSM이 안 긁히고 있었으면 null로 1건. 2026-11-24 GPU-220) |
 | `generation` | 정수 / null | 세대 번호. 원본은 DynamoDB 펜싱 테이블 `devoops-job-fencing` (ADR-6). Pod 라벨 `devoops/generation`에서 읽음 |
 | `source` | enum | `dcgm` · `dmesg`(커널 로그, journald 경유) · `pod` · `straggler` · `site` · `spot` |
 | `raw` | 객체 | 분류 근거 원본. `xid` · `exit_code` · `metric` · `value` · `log_line` (해당 없으면 null) |

@@ -105,7 +105,17 @@ def test_site_finds_running_jobs_of_the_cluster():
 def test_site_lookup_failure_is_none():
     ctx = Enricher(FakeMimir(kube_pod_labels=RuntimeError("down")))(site())
     assert ctx.jobs is None
-    assert Enricher(FakeMimir())(site()).jobs == ()
+
+
+def test_site_no_jobs_only_if_ksm_was_up():
+    """작업 0개는 그 시각에 KSM이 긁히고 있었을 때만 「작업 없음」. KSM이 먼저 죽었으면 「모름」(None → HOLD 1건)."""
+    up = {"job": "kube-state-metrics", "__value__": 1.0}
+    mimir = FakeMimir(**{"kube-state-metrics": [up]})
+    assert Enricher(mimir)(site()).jobs == ()
+    assert mimir.calls[-1][1] == TS and 'cluster="eks-a"' in mimir.calls[-1][0]
+    assert Enricher(FakeMimir(**{"kube-state-metrics": [{**up, "__value__": 0.0}]}))(site()).jobs is None
+    assert Enricher(FakeMimir())(site()).jobs is None                                       # 지표 자체가 없음
+    assert Enricher(FakeMimir(**{"kube-state-metrics": RuntimeError("down")}))(site()).jobs is None
 
 
 def test_label_values_are_escaped():

@@ -106,11 +106,18 @@ class Enricher:
                          f' (last_over_time(kube_pod_status_phase{{cluster="{c}", phase="Running"}}[5m]) == 1)', s.ts)
         if rows is None:
             return None
+        if not rows and not self._ksm_was_up(s):    # KSM이 먼저 죽어 있었으면 「작업 없음」이 아니라 「모름」
+            return None
         generations: dict[str, list[int]] = {}
         for r in rows:
             g = r.get("label_devoops_generation", "")
             generations.setdefault(r["label_devoops_job_id"], []).extend([int(g)] if g.isdigit() else [])
         return tuple((job, max(gens) if gens else None) for job, gens in sorted(generations.items()))
+
+    def _ksm_was_up(self, s: Signal) -> bool:
+        """신호 시각(직전 5분)에 그 클러스터 KSM이 긁히고 있었나. 조회 실패 · 지표 없음 · 0이면 False."""
+        rows = self._try("ksm_up", s, f'last_over_time(up{{cluster="{_q(s.cluster)}", job="kube-state-metrics"}}[5m])', s.ts)
+        return bool(rows) and all(r["__value__"] == 1 for r in rows)
 
     def _az(self, s: Signal) -> str:
         # TODO(EKS overlay): KSM --metric-labels-allowlist에 nodes=[topology.kubernetes.io/zone]을 넣어야 값이 나온다
