@@ -9,7 +9,7 @@ from classifier.rules import Rules
 from classifier.signals import Signal
 
 EXAMPLES = Path(__file__).resolve().parents[2] / "schemas" / "examples"
-SIGNAL_OF = {"dmesg": "xid", "dcgm": "xid", "pod": "pod_exit", "spot": "spot", "site": "site"}
+SIGNAL_OF = {"dmesg": "xid", "dcgm": "xid", "pod": "pod_exit", "spot": "spot", "site": "site", "node": "node_lost"}
 TS = datetime(2026, 11, 18, 14, 2, 11, tzinfo=timezone.utc)
 
 rules = Rules.load()
@@ -23,7 +23,7 @@ def signal(**kw) -> Signal:
 # 07 · 09는 스트래글러(이번 범위 밖)
 @pytest.mark.parametrize("name", [
     "01-hw-xid79-isolate", "02-hw-xid48-reset", "03-app-xid13-restart", "04-hwwarn-xid63-none",
-    "05-infra-spot-evacuate", "06-site-az-fence", "08-hold-collector-down",
+    "05-infra-spot-evacuate", "06-site-az-fence", "08-hold-collector-down", "10-infra-node-lost-isolate",
 ])
 def test_examples(name):
     ex = json.loads((EXAMPLES / f"{name}.json").read_text(encoding="utf-8"))

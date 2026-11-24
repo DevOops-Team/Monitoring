@@ -78,3 +78,13 @@ def test_ts_normalized_to_utc_and_old_ts_allowed():
     s = parse(alert(annotations={"event_ts": "2026-11-18T20:02:11+09:00"}))
     assert s.ts == datetime(2026, 11, 18, 11, 2, 11, tzinfo=timezone.utc)
     assert s.ts.utcoffset() == timedelta(0)
+
+
+def test_node_lost():
+    s = parse(alert({"signal": "node_lost", "node": "ip-10-0-1-23"}))
+    assert (s.signal, s.source, s.node) == ("node_lost", "node", "ip-10-0-1-23")
+
+
+def test_node_lost_needs_node():
+    with pytest.raises(RejectError):
+        parse(alert({"signal": "node_lost", "node": ""}))

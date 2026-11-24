@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "event_id": "5d1f0c8a9b3e47f2a6c4e0b17d29f3a8",
+  "traceparent": "00-5d1f0c8a9b3e47f2a6c4e0b17d29f3a8-7a3c91e0b4d2f658-01",
+  "ts": "2026-11-18T14:02:11Z",
+  "cluster": "eks-a",
+  "az": "us-east-2a",
+  "node": "ip-10-0-1-23",
+  "gpu_uuid": null,
+  "job_id": "3f9a1c2e",
+  "generation": 3,
+  "source": "node",
+  "raw": {
+    "xid": null,
+    "exit_code": null,
+    "metric": null,
+    "value": null,
+    "log_line": "GPU node not Ready or deleted"
+  },
+  "correlated": [],
+  "collector_healthy": true,
+  "dedup_key": "ip-10-0-1-23|node|1795010531",
+  "category": "infra",
+  "confidence": 0.8,
+  "suggested_action": "isolate_migrate"
+}
