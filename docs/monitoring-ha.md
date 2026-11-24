@@ -2,7 +2,7 @@
 
 ADR-18의 목표 구성(저장소 ×3 · Alertmanager ×2 · Agent ×2 · 분류기 ×2)으로 가는 계획. 지금은 모니터링 클러스터의 거의 모든 것이 1개라, 하나가 죽으면 그동안 룰 평가 · 알람 · 원인 분류가 멈춘다.
 
-- 상태: **계획 (2026-11-20 확정)**. 구현은 11/22 뒤, 기능 동결 12/06 전
+- 상태: **1 ~ 6단계 운영 반영 끝 (2026-11-24)**. 남은 것 = 노드 한 대 재부팅 시험 · 4절 「마지막에」의 문서 갱신. 계획 확정은 11/20
 - Jira: GPU-227 「모니터링 클러스터 HA 구현」 하나로 전부 진행
 - 근거: 아래 「출처」의 버전 고정 소스 · 문서와 차트 렌더링 결과(11/20 조사). 확인하지 못한 것은 6절에 따로 적었다
 
@@ -114,6 +114,20 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 | 4 | Agent ×2 + HA tracker | `cortex_ha_tracker_elected_replica_changes_total` · 중복 샘플 거름(`cortex_distributor_deduped_samples_total`) · 한 Agent를 지우면 30초 안에 다른 쪽 선출 |
 | 5 | 분류기 ×2 | Pod 2개 Ready · `classifier_leader`가 1인 Pod 하나 · 대장 지우면 넘겨받음 · 같은 알람 `gpu.fault` 1건 |
 | 6 | Tempo 분산형 | 트레이스 수신 · 조회 · 한 live-store를 지워도 최근 트레이스 조회 |
+
+### 6단계 운영 결과 (2026-11-24)
+분산형 19 Pod(Tempo 18 + rollout-operator) 11:00 Ready → 12:40 연결부(v1.28.0) 반영 → 12:45 옛 StatefulSet `tempo` · PVC 삭제(옛 Pod는 11/16 뒤 받은 span 0건).
+
+| 시험 | 결과 |
+|---|---|
+| 새 distributor로 보낸 span → query-frontend 조회 | 8초 안에 조회 |
+| block-builder S3 쓰기 | PUT 성공 |
+| 존 a live-store 3개 삭제 | 조회 계속 200 |
+| 존 b 3개 + distributor 1개 동시 삭제, 아직 S3에 없는 span 조회 | 조회 · 수신 계속 200 |
+| block-builder 3개 삭제(11:08) | 다시 떠서 쌓인 18건 처리 · 오프셋 18 커밋, 지연 0(빈 파티션은 -1) |
+| 연결부 반영 뒤 VIP `.35:4318`로 span → 조회 | 보내기 · 조회 200, 외부 Service 대상 = distributor 2개, Agent 수집 17개 up |
+
+반영 중 걸린 것 2개: ① AppProject(CRD 허용)는 Argo CD가 관리하지 않아 Gitops 머지만으로는 안 바뀐다 → IaC `register-root.yml`과 같은 `kubectl apply -k bootstrap/onprem`으로 적용 ② S3 키 사이드카 기본 uid(65532)와 Tempo uid(1000)가 달라 키 파일을 못 읽고 시작 단계에서 멈췄다 → 사이드카를 uid 1000으로(v1.27.1). kind는 사이드카 없이 정적 키로 시험해서 못 잡았다
 
 마지막에: ADR-18 적용 현황 · 아키텍처 그림 「지금 어디까지 왔나」 표 · 런북 · `docs/monitoring-cluster.md` 첫 줄 갱신, 노드 한 대 재부팅 시험(4절 방식)으로 전체 확인.
 
