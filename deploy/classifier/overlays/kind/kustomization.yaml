@@ -26,3 +26,4 @@ patches:
                 env:
                   - {name: KAFKA_BOOTSTRAP, value: "kafka:9092"}
                   - {name: MIMIR_URL, value: "http://172.30.0.35:9009"}
+                  - {name: ENABLED_SIGNALS, value: "xid,pod_exit,node_lost"}   # 9단계(GPU 노드 소실). 운영 값은 Gitops

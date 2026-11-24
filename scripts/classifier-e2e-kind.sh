@@ -14,6 +14,7 @@ cd "$(dirname "$0")/.."
 NAME=clf-e2e
 NODE="$NAME-worker"                     # Xid가 났다고 할 노드. 작업 e2e00001의 Pod만 여기 둔다
 OTHER_NODE="$NAME-worker2"              # 나머지 가짜 Pod. 한 노드에 작업이 둘이면 Xid의 job_id를 특정할 수 없다(의도한 동작)
+LOST_NODE="$NAME-worker3"               # 9단계에서 멈추고 지울 GPU 노드(taint로 다른 Pod는 안 올라감)
 CLUSTER=kind-test                       # deploy/agents/overlays/kind의 CLUSTER_NAME
 MIMIR=http://172.30.0.35:9009
 PORT=18080
@@ -47,10 +48,21 @@ xid_labels() { echo "{\"alertname\":\"GpuXid\",\"pipeline\":\"failover\",\"signa
 pod_labels() { echo "{\"alertname\":\"TrainerExited\",\"pipeline\":\"failover\",\"signal\":\"pod_exit\",\"cluster\":\"$CLUSTER\",\"node\":\"$2\",\"pod\":\"$1\",\"reason\":\"Error\"}"; }
 
 # 인자가 없으면 Service로, 있으면 그 Pod 하나로 붙는다(예: forward pod/이름)
+# 포트가 이미 쓰이고 있으면 멈춘다. 실제 분류기로 가는 port-forward가 떠 있으면 healthz는 응답하므로,
+# 확인 없이 진행하면 시험 알람이 실제 gpu.fault로 나간다(11/24 18:15 실제로 2건 나감)
 forward() {
   if [[ -n "${PF:-}" ]]; then kill "$PF" 2>/dev/null || true; wait "$PF" 2>/dev/null || true; fi
+  if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN > /dev/null 2>&1; then
+    fail "포트 $PORT 를 다른 프로세스가 쓰고 있다(실제 분류기 port-forward일 수 있음): $(lsof -nP -iTCP:"$PORT" -sTCP:LISTEN | tail -n +2 | head -1)"
+  fi
   $K port-forward "${1:-svc/classifier}" "$PORT:8080" > "$WORK/port-forward.log" 2>&1 & PF=$!
-  for _ in $(seq 1 40); do curl -s -o /dev/null "localhost:$PORT/healthz" && return; sleep 0.5; done
+  for _ in $(seq 1 40); do
+    if curl -s -o /dev/null "localhost:$PORT/healthz"; then
+      kill -0 "$PF" 2>/dev/null || fail "port-forward가 죽었다($(tail -1 "$WORK/port-forward.log")) — 다른 곳이 응답하고 있다"
+      return
+    fi
+    sleep 0.5
+  done
   fail "port-forward"
 }
 trap '[[ -n "${PF:-}" ]] && kill "$PF" 2>/dev/null || true' EXIT
@@ -58,6 +70,8 @@ trap '[[ -n "${PF:-}" ]] && kill "$PF" 2>/dev/null || true' EXIT
 step "kind 클러스터 ($NAME)"
 if kind get clusters 2>/dev/null | grep -qx "$NAME"; then
   kind export kubeconfig --name "$NAME" --kubeconfig "$KUBECONFIG" > /dev/null
+  for n in $(kind get nodes --name "$NAME"); do docker start "$n" > /dev/null; done   # 앞 실행의 9단계가 멈춘 노드
+  kubectl wait --for=condition=ready node --all --timeout=180s > /dev/null
 else
   kind create cluster --name "$NAME" --kubeconfig "$KUBECONFIG" --config deploy/classifier/overlays/kind/kind-cluster.yaml
 fi
@@ -187,6 +201,66 @@ step "8. 지표 (대장 Pod. 대기 쪽은 job.lifecycle을 읽지 않아 classi
 kubectl get --raw "/api/v1/namespaces/monitoring/pods/$(leader):8080/proxy/metrics" > "$WORK/metrics.txt"
 grep -E '^classifier_(leader|lifecycle_healthy|alerts_total)' "$WORK/metrics.txt" | sed 's/^/   /'
 grep -q '^classifier_lifecycle_healthy 1.0' "$WORK/metrics.txt" || fail "classifier_lifecycle_healthy가 1이 아니다"
+
+step "9. GPU 노드 소실: 노드를 멈추고 지우면 룰이 잡고, 그 노드 작업의 isolate_migrate 1건이 나간다"
+# 가짜 GPU(Node status의 extended resource) + 작업 e2e00004 Pod. 지우기 전에 Mimir에 Ready · GPU · Running이 보여야 한다
+kubectl patch node "$LOST_NODE" --subresource=status --type=merge -p '{"status":{"capacity":{"nvidia.com/gpu":"1"}}}' > /dev/null
+kubectl -n training delete pod "$(pod_name e2e00004 1)" --ignore-not-found --wait=false > /dev/null
+kubectl -n training run "$(pod_name e2e00004 1)" --image=busybox:1.37.0 --restart=Never \
+  --labels="devoops/job-id=e2e00004,devoops/generation=1" --dry-run=client -o yaml \
+  --overrides="{\"spec\":{\"nodeName\":\"$LOST_NODE\",\"tolerations\":[{\"operator\":\"Exists\"}]}}" -- sleep 86400 | kubectl apply -f - > /dev/null
+kubectl -n training wait --for=condition=ready "pod/$(pod_name e2e00004 1)" --timeout=120s > /dev/null
+echo "   Mimir에 GPU 노드 · Running Pod가 보일 때까지 기다린다 (최대 4분)"
+lost_ready="kube_node_status_condition{job=\"kube-state-metrics\",cluster=\"$CLUSTER\",node=\"$LOST_NODE\",condition=\"Ready\",status=\"true\"}"
+for _ in $(seq 1 48); do
+  gpu=$(mimir_count "count(kube_node_status_allocatable{cluster=\"$CLUSTER\",node=\"$LOST_NODE\",resource=\"nvidia_com_gpu\"} > 0 and on (node) $lost_ready == 1)")
+  run=$(mimir_count "count(kube_pod_labels{cluster=\"$CLUSTER\",label_devoops_job_id=\"e2e00004\"} and on (namespace, pod) kube_pod_status_phase{cluster=\"$CLUSTER\",phase=\"Running\"} == 1)")
+  [[ "$gpu" == 1 && "$run" == 1 ]] && break
+  sleep 5
+done
+[[ "$gpu" == 1 && "$run" == 1 ]] || fail "Mimir: GPU 노드 $gpu/1, Running Pod $run/1"
+sleep 20                                # 그 시각 직전에도 Running이었어야 분류기가 작업을 찾는다
+docker stop "$LOST_NODE" > /dev/null
+kubectl delete node "$LOST_NODE" --wait=false > /dev/null
+echo "   $LOST_NODE 멈춤 + Node 삭제. 룰 식이 이 노드를 잡을 때까지 기다린다 (최대 3분, for 1m은 Mimir ruler 몫이라 여기선 식만)"
+# 실제 룰 식에서 대상 클러스터만 kind-test로 바꾼다. 실제 ruler는 eks-a · b · c만 보므로 kind는 실제 알람이 되지 않는다
+rule_expr=$("$PY" -c '
+import sys, yaml
+r = yaml.safe_load(open("deploy/base/mimir/rules/failover.yml"))
+e = next(x for g in r["groups"] for x in g["rules"] if x.get("alert") == "FailoverGpuNodeLost")["expr"]
+print(e.replace("cluster=~\"eks-(a|b|c)\"", "cluster=\"" + sys.argv[1] + "\""))' "$CLUSTER")
+for _ in $(seq 1 36); do
+  caught=$(mimir_count "count(($rule_expr) and on (node) label_replace(vector(1), \"node\", \"$LOST_NODE\", \"\", \"\"))" 2>/dev/null || echo 0)
+  [[ "$caught" == 1 ]] && break
+  sleep 5
+done
+[[ "$caught" == 1 ]] || fail "룰 식이 $LOST_NODE 를 잡지 못함"
+echo "   ok   룰 식이 $LOST_NODE 를 잡음"
+# event_ts = 룰 annotation과 같은 식(마지막 Ready 샘플 시각)
+last_ready=$(curl -s -G "$MIMIR/prometheus/api/v1/query" \
+  --data-urlencode "query=max_over_time((timestamp($lost_ready) and $lost_ready == 1)[15m:15s])" \
+  | python3 -c "import json,sys,time; r=json.load(sys.stdin)['data']['result']; print(int(time.time()-float(r[0]['value'][1])))")
+lost_labels="{\"alertname\":\"FailoverGpuNodeLost\",\"pipeline\":\"failover\",\"signal\":\"node_lost\",\"cluster\":\"$CLUSTER\",\"node\":\"$LOST_NODE\"}"
+before9=$(offset)
+send "노드 소실(마지막 Ready ${last_ready}초 전)" '{"published":1}' "$lost_labels" "$last_ready"
+send "같은 알람 재전송" '{"duplicate":1}' "$lost_labels" "$last_ready"
+[[ $(($(offset) - before9)) == 1 ]] || fail "9단계에서 낸 메시지 $(($(offset) - before9))건 (기대 1건)"
+$K exec deploy/kafka -- /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic gpu.fault \
+  --from-beginning --timeout-ms 6000 2>/dev/null > "$WORK/gpu.fault.9.jsonl" || true
+"$PY" - "$WORK/gpu.fault.9.jsonl" "$LOST_NODE" <<'PY'
+import json, sys
+sys.path.insert(0, "classifier")
+from classifier.publish import validate
+
+path, node = sys.argv[1:]
+env = sorted((json.loads(l) for l in open(path, encoding="utf-8") if l.strip()
+              and json.loads(l)["payload"]["job_id"] == "e2e00004"), key=lambda x: x["occurred_at"])[-1]
+e = env["payload"]
+validate(e)
+got = (env["type"], e["source"], e["category"], e["suggested_action"], e["node"], e["generation"], e["collector_healthy"])
+print(f"   ok   {got}")
+assert got == ("fault.detected", "node", "infra", "isolate_migrate", node, 1, True), got
+PY
 
 echo
 echo "통과. 클러스터는 남겨 둔다 → 지우기: scripts/classifier-e2e-kind.sh --delete"
