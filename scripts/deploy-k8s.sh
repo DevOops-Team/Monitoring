@@ -33,6 +33,10 @@ chart() {
   if [[ -f "$tgz" ]]; then echo "$tgz"; else echo "$1 --version $2"; fi
 }
 
+# helm 릴리스 이름 = values 파일 이름. Tempo 분산형만 tempo: Argo CD Application과 같아야 instance 라벨
+# (외부 Service 선택자) · memberlist cluster_label이 맞는다
+release() { [[ "$1" == tempo-distributed ]] && echo tempo || echo "$1"; }
+
 lint() {
   local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   echo "== promtool check rules (Mimir ruler가 읽을 룰)"
@@ -89,17 +93,17 @@ lint() {
     -f "$D/values/alertmanager.yaml" -s templates/configmap.yaml \
     | awk '/^  alertmanager.yml: \|/{f=1;next} f&&/^    /{sub(/^    /,"");print;next} f&&!/^ *$/{f=0}' > "$tmp/alertmanager.yml"
   [[ -s "$tmp/alertmanager.yml" ]] || { echo "alertmanager.yml 추출 실패" >&2; return 1; }
-  for f in loki tempo blackbox kafka-exporter postgres-exporter; do
+  for f in loki tempo-distributed blackbox kafka-exporter postgres-exporter; do
     [[ -f "$D/values/$f.yaml" ]] || continue
     case "$f" in
       loki)     c="$(chart grafana-community/loki "$LOKI_CHART")" ;;
-      tempo)    c="$(chart grafana-community/tempo "$TEMPO_CHART")" ;;
+      tempo-distributed) c="$(chart grafana-community/tempo-distributed "$TEMPO_DISTRIBUTED_CHART")" ;;
       blackbox) c="$(chart prometheus-community/prometheus-blackbox-exporter "$BLACKBOX_CHART")" ;;
       kafka-exporter) c="$(chart prometheus-community/prometheus-kafka-exporter "$KAFKA_EXPORTER_CHART")" ;;
       postgres-exporter) c="$(chart prometheus-community/prometheus-postgres-exporter "$POSTGRES_EXPORTER_CHART")" ;;
     esac
     # shellcheck disable=SC2086
-    helm template "$f" $c -n "$NS" -f "$D/values/$f.yaml" > /dev/null
+    helm template "$(release "$f")" $c -n "$NS" -f "$D/values/$f.yaml" > /dev/null
   done
   echo "== amtool check-config (차트가 만든 alertmanager.yml)"
   docker run --rm -v "$tmp:/cfg:ro" --entrypoint amtool "$ALERTMANAGER_IMAGE" check-config /cfg/alertmanager.yml
@@ -173,18 +177,18 @@ SC
   # shellcheck disable=SC2046
   helm upgrade --install kube-state-metrics $(chart prometheus-community/kube-state-metrics "$KSM_CHART") \
     -n "$NS" -f "$D/values/kube-state-metrics.yaml" --wait --timeout 5m
-  for f in loki tempo blackbox kafka-exporter postgres-exporter; do
+  for f in loki tempo-distributed blackbox kafka-exporter postgres-exporter; do
     [[ -f "$D/values/$f.yaml" ]] || continue
     case "$f" in
       loki)     c="$(chart grafana-community/loki "$LOKI_CHART")" ;;
-      tempo)    c="$(chart grafana-community/tempo "$TEMPO_CHART")" ;;
+      tempo-distributed) c="$(chart grafana-community/tempo-distributed "$TEMPO_DISTRIBUTED_CHART")" ;;
       blackbox) c="$(chart prometheus-community/prometheus-blackbox-exporter "$BLACKBOX_CHART")" ;;
       kafka-exporter) c="$(chart prometheus-community/prometheus-kafka-exporter "$KAFKA_EXPORTER_CHART")" ;;
       postgres-exporter) c="$(chart prometheus-community/prometheus-postgres-exporter "$POSTGRES_EXPORTER_CHART")" ;;
     esac
     echo "== 차트 ($f)"
     # shellcheck disable=SC2086
-    helm upgrade --install "$f" $c -n "$NS" -f "$D/values/$f.yaml" --wait --timeout 8m
+    helm upgrade --install "$(release "$f")" $c -n "$NS" -f "$D/values/$f.yaml" --wait --timeout 8m
   done
   # 여기까지는 Secret 없이 뜬다(수집 · 저장은 이미 시작). Alertmanager · Grafana는 Secret이 있어야 한다
   ensure_secrets

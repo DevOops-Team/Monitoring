@@ -2,19 +2,19 @@
 
 모니터링 클러스터(monitoring1~3, `docs/monitoring-cluster.md`)에 올리는 스택. `compose/`(VM 1대)를 대체한다. 이 문서가 MON-STD-22 "모니터링 클러스터 복구 런북"이다. 부 담당이 이 절차만으로 다시 올릴 수 있어야 한다.
 
-ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/16 전환, 버킷 `devoops-prod-monitoring-947027666399-us-east-2`의 `mimir/` · `loki/` · `tempo/`), 배포는 **ArgoCD**(11/17, 아래 「적용」). 3노드 복제 · 분류기는 아직 없다. 클러스터에 붙이는 수집 층은 `agents/`(아래 절).
+상태(11/24): ADR-18 목표 구성 — 저장소 **×3**(Mimir · Loki RF 3, Tempo 분산형), Alertmanager · Agent · 분류기 **×2**, Grafana ×1(계획 · 결과 `docs/monitoring-ha.md`, GPU-227). 블록 · 청크는 **S3**(11/16 전환, 버킷 `devoops-prod-monitoring-947027666399-us-east-2`의 `mimir/` · `loki/` · `tempo/`), 배포는 **ArgoCD**(11/17, 아래 「적용」). 클러스터에 붙이는 수집 층은 `agents/`(아래 절).
 
 ## 구성
 
-| 구성물 | 방법 | 복제 | PVC | 뜬 노드 (11/09) | 클러스터 안 주소 | 밖 주소 (서비스 VIP) |
+| 구성물 | 방법 | 개수 | PVC | 배치 (11/24) | 클러스터 안 주소 | 밖 주소 (서비스 VIP) |
 |---|---|---|---|---|---|---|
 | StorageClass `local-path` | Helm `containeroo/local-path-provisioner` | 1 | - | - | - | - |
-| Mimir 3.2.4 (지표 저장 · 룰 평가) | `base/mimir/` | 1 | 10Gi | monitoring3 | `mimir.monitoring.svc:9009` | `172.30.0.35:9009` |
-| Prometheus Agent v3.15.1 (스크레이프 → Mimir) | `base/prometheus-agent/` | 1 | 2Gi (WAL) | monitoring1 | `prometheus-agent:9090` | - |
-| Loki 3.7.9 | Helm `grafana-community/loki` | 1 | 10Gi | monitoring2 | `loki.monitoring.svc:3100` | `172.30.0.35:3100` |
-| Tempo 3.1.1 | Helm `grafana-community/tempo` | 1 | 5Gi | monitoring1 | `tempo.monitoring.svc:3200`(조회) | `172.30.0.35:4317` · `:4318` (OTLP만) |
-| Alertmanager v0.34.2 | Helm `prometheus-community/alertmanager` | 1 | 1Gi | monitoring2 | `alertmanager.monitoring.svc:9093` | `172.30.0.35:9093` |
-| Grafana 13.3.0 | Helm `grafana-community/grafana` | 1 | 2Gi | monitoring2 | `grafana.monitoring.svc:3000` | `http://172.30.0.35:3000` |
+| Mimir 3.2.4 (지표 저장 · 룰 평가) | `base/mimir/` | 3 (RF 3) | 10Gi × 3 | 노드마다 하나 | `mimir.monitoring.svc:9009` | `172.30.0.35:9009` |
+| Prometheus Agent v3.15.1 (스크레이프 → Mimir) | `base/prometheus-agent/` | 2 (HA tracker) | 2Gi (WAL) × 2 | 서로 다른 노드 | `prometheus-agent:9090` | - |
+| Loki 3.7.9 | Helm `grafana-community/loki` | 3 (RF 3) | 10Gi × 3 | 노드마다 하나 | `loki.monitoring.svc:3100` | `172.30.0.35:3100` |
+| Tempo 3.1.1 분산형 | Helm `grafana-community/tempo-distributed` | 구성 요소 8종 · 18 Pod (아래) | 없음 | 흩어짐 | `tempo-query-frontend.monitoring.svc:3200`(조회) | `172.30.0.35:4317` · `:4318` (OTLP만) |
+| Alertmanager v0.34.2 | Helm `prometheus-community/alertmanager` | 2 (클러스터링) | 1Gi × 2 | 서로 다른 노드 | `alertmanager.monitoring.svc:9093` | `172.30.0.35:9093` |
+| Grafana 13.3.0 | Helm `grafana-community/grafana` | 1 | 2Gi | 한 노드 | `grafana.monitoring.svc:3000` | `http://172.30.0.35:3000` |
 | node-exporter 1.12.1 | Helm | 노드마다 | - | 3대 | - | - |
 | kube-state-metrics v2.20.0 (11/13 추가) | Helm `prometheus-community/kube-state-metrics` | 1 | - | - | `kube-state-metrics:8080` | - |
 | blackbox_exporter v0.29.1 | Helm | 1 | - | monitoring2 | `blackbox-exporter:9115` | - |
@@ -22,8 +22,9 @@ ADR-18 1단계 상태: 저장소는 **복제 1**, 블록 · 청크는 **S3**(11/
 | postgres_exporter v0.20.1 (11/17 추가) | Helm `prometheus-community/prometheus-postgres-exporter` | 1 | - | - | `postgres-exporter:80` | - |
 
 - 버전은 `versions.env` 한 곳에. Grafana · Loki · Tempo 차트는 2026-01부터 `grafana-community/helm-charts`(옛 `grafana/*`는 deprecated)
-- PVC는 local-path라 **만들어진 노드에 묶인다.** 그 노드가 죽으면 해당 저장소가 멈춘다(복제 1 단계의 한계, 3노드 복제에서 해소). cAdvisor는 따로 안 깔고 kubelet 내장 것을 긁는다
-- Mimir · Loki · Tempo의 PVC에는 WAL · 아직 안 올린 최근 데이터 · 캐시만 있다. 오래 두는 데이터는 S3에 있고 보존 30일은 각 앱 설정이 지킨다(버킷에는 수명 규칙 없음). S3 키는 Pod 안 `aws-credentials` 사이드카가 인증서(IAM Roles Anywhere)로 1시간짜리를 받아 준다
+- Tempo 분산형: distributor · query-frontend · querier 각 2, block-builder 3 · live-store 3 × 존 2(= Kafka `tempo.ingest` 파티션 3), backend-scheduler · backend-worker 각 1, rollout-operator 1. 쓰기는 Kafka를 거친다(`docs/monitoring-ha.md` 3.6)
+- PVC는 local-path라 **만들어진 노드에 묶인다.** 노드 하나가 죽으면 남은 복제본으로 버티고, 노드를 새로 만들 때만 옛 PVC를 지워야 한다(`docs/monitoring-ha.md` 6절). Tempo 분산형은 PVC가 없어 묶이지 않는다. cAdvisor는 따로 안 깔고 kubelet 내장 것을 긁는다
+- Mimir · Loki의 PVC에는 WAL · 아직 안 올린 최근 데이터 · 캐시만 있다(Tempo는 같은 역할을 Kafka가 한다). 오래 두는 데이터는 S3에 있고 보존 30일은 각 앱 설정이 지킨다(버킷에는 수명 규칙 없음). S3 키는 Pod 안 `aws-credentials` 사이드카가 인증서(IAM Roles Anywhere)로 1시간짜리를 받아 준다
 - 밖으로 나가는 문은 전부 `type: LoadBalancer` + `kube-vip.io/loadbalancerIPs: "172.30.0.35"`, 포트로 공유. Loki · Tempo는 차트 Service를 내부용으로 두고 `base/external/services.yaml`이 필요한 포트만 연다
 
 수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`) · Kafka · DB VM 4대(`job="vm-host"`) · kafka_exporter · postgres_exporter(아래 「Kafka · DB VM 수집」) · pfSense 2대(`job="pfsense-host"`, 아래 「pfSense 수집」) · 분류기(`job="classifier"`, Pod를 찾아 긁는다).
