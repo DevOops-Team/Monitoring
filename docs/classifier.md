@@ -38,7 +38,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `job_id` · `generation` | `kube_pod_labels`의 `label_devoops_job_id` · `label_devoops_generation`. `pod_exit`는 Pod 이름으로, 나머지는 `kube_pod_info`로 그 노드의 Pod를 찾는다 | 신호 발생 시각(직전 5분) | `null`. 한 노드에 작업이 둘이어도 `null` → 컨트롤러가 HOLD |
 | `gpu_uuid` | 커널 로그 경로 Xid만. dcgm-exporter 지표의 `UUID` 라벨(g4dn은 노드당 GPU 1장) | 신호 발생 시각(직전 5분) | `null` → 중복 제거 대상이 `node`가 된다 |
 | `az` | `kube_node_labels`의 `label_topology_kubernetes_io_zone` | 지금 | `unknown` |
-| site의 작업 목록 | 그 클러스터의 `kube_pod_labels` 중 `kube_pod_status_phase{phase="Running"}`이 1인 Pod를 작업별로 묶고 세대는 가장 큰 값 | 신호 발생 시각 = 마지막 샘플(직전 5분) | 조회 실패 → `job_id` 없는 사건 1건(컨트롤러 HOLD). 0개 → 사건 없음(`outcome="no_jobs"`) |
+| site의 작업 목록 | 그 클러스터의 `kube_pod_labels` 중 `kube_pod_status_phase{phase="Running"}`이 1인 Pod를 작업별로 묶고 세대는 가장 큰 값 | 신호 발생 시각 = 마지막 샘플(직전 5분) | 조회 실패 → `job_id` 없는 사건 1건(컨트롤러 HOLD). 0개 → 사건 없음(`outcome="no_jobs"`). 단 그 시각에 그 클러스터 KSM(`up{job="kube-state-metrics"}`)이 1이 아니었으면 0개가 아니라 「모름」 → 조회 실패와 같다 |
 
 ## 2. 알람 → 분류기 라벨 계약
 
