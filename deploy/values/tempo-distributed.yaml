@@ -1,7 +1,7 @@
 # Tempo 분산형(ADR-18 · GPU-227, 계획 docs/monitoring-ha.md 3.6). 차트 grafana-community/tempo-distributed 3.25.0 (app 3.1.1)
 # 쓰기: OTLP → distributor → Kafka tempo.ingest(파티션 3) → block-builder → S3 / Kafka → live-store(최근 트레이스)
 # 읽기: query-frontend → querier → S3 + live-store. 압축 · 보존 삭제: backend-scheduler → backend-worker
-# 옛 단일 바이너리(values/tempo.yaml)와 같은 S3 접두어 tempo/를 쓴다
+# 옛 단일 바이너리(차트 tempo, 11/24까지)와 같은 S3 접두어 tempo/를 쓴다. 옛 블록도 그대로 읽는다
 fullnameOverride: tempo
 reportingEnabled: false
 
