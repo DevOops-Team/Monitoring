@@ -1,0 +1,19 @@
+# 관리 클러스터 KSM이 사용자 정의 리소스(CRD)에서 뽑아 내는 지표. kustomization.yaml이 ConfigMap으로 만들어 KSM에 넘긴다.
+# MultiKueueCluster: EKS를 일부러 내리기 전에 OFF 절차(K8s scheduling/ops/README.md)가 devoops/fenced=true를 붙인다.
+#   객체는 Gitops에 있어 EKS를 지워도 남는다 → 사이트 알람(FailoverSiteDown)이 「펜싱된 클러스터」를 거르는 근거.
+#   결과: 객체마다 한 줄 kube_customresource_multikueuecluster_info{name="eks-a", fenced="true"} 1. 라벨이 없으면 fenced 라벨만 빠진다
+#   fenced를 info 안에 두면 라벨 없는 객체는 줄 자체가 안 나온다 → 「안 붙음」과 「수집 안 됨」을 못 가려서 리소스 수준에 둔다 (11/24 kind 확인)
+kind: CustomResourceStateMetrics
+spec:
+  resources:
+    - groupVersionKind: {group: kueue.x-k8s.io, version: v1beta2, kind: MultiKueueCluster}
+      labelsFromPath:
+        fenced: [metadata, labels, devoops/fenced]
+      metrics:
+        - name: multikueuecluster_info
+          help: MultiKueueCluster와 펜싱 라벨(devoops/fenced)
+          each:
+            type: Info
+            info:
+              labelsFromPath:
+                name: [metadata, name]
