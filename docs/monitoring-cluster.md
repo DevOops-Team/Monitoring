@@ -62,7 +62,7 @@ export ANSIBLE_HOST_KEY_CHECKING=True ANSIBLE_SSH_ARGS='-o ControlMaster=auto -o
 | kube-system | 22 Pod Running (calico · coredns · nodelocaldns · dns-autoscaler · 제어 평면) |
 | 예약 자원 | capacity 4 CPU · 9.7GiB → allocatable 3400m · 8.6GiB |
 | 서비스 VIP | nginx `type: LoadBalancer` + `kube-vip.io/loadbalancerIPs: 172.30.0.35` → EXTERNAL-IP .35, 노트북에서 `curl http://172.30.0.35` 200, Service 삭제 뒤 .35 ARP 사라짐 |
-| 미완 | `verify-etcd-ha.yml`(sudo). 재부팅 전환은 4.1절(자동 복구 확인, 전환 시간은 미측정) |
+| 미완 | `verify-etcd-ha.yml`(sudo). 재부팅 전환은 4.1절(자동 복구 확인) · 4.2절(VIP 전환 시간 실측) |
 
 알려진 점:
 - **kube-vip static Pod의 미러 Pod가 API에 없다.** `kubectl get pods -A`에 안 보이지만 kubelet은 안다: `kubectl get --raw /api/v1/nodes/<노드>/proxy/pods`, 로그는 `.../proxy/containerLogs/kube-system/kube-vip-<노드>/kube-vip`. 리스 갱신 · VIP 동작은 정상. 원인은 미확인(Kubespray 템플릿 vs kubelet 1.35), 운영엔 영향 없음
@@ -92,10 +92,35 @@ export ANSIBLE_HOST_KEY_CHECKING=True ANSIBLE_SSH_ARGS='-o ControlMaster=auto -o
 - **VIP 전환에 걸린 시간은 재지 못했다.** 밖에서 VIP를 찌르는 기록이 없었다. 다음 재부팅 때 노트북에서 1초 간격으로 `:6443/healthz` · `:9009/ready`를 찔러 잰다
 - 재부팅 간격이 빠듯했다: monitoring3 kubelet이 16:17:10에 돌아왔고 monitoring1이 16:19:03에 부팅됐다(중단은 그 전). etcd 과반이 유지됐는지는 따로 확인하지 못했다. 다음에는 `kubectl get nodes` Ready와 etcd 멤버 상태를 본 뒤 다음 노드로 넘어간다
 
+### 4.2 HA 구성에서 한 대 재부팅 (2026-11-24 14:03 ~ 14:06 KST, GPU-227)
+
+이중화 1 ~ 6단계(`docs/monitoring-ha.md`)가 끝난 뒤 전체 확인. 사용자가 monitoring1(API VIP · 서비스 VIP 리더, Agent-0, Mimir-2, Loki-1, Tempo 9개)을 드레인 없이 재부팅했고 클러스터에는 손대지 않았다. 노트북에서 VIP 뒤 입구 8개(`:6443/healthz` · Mimir `/ready` · 조회 · Loki `/ready` · labels · AM · Grafana · Tempo OTLP)를 1초 간격으로 찔렀다.
+
+| 시각 | 일어난 일 |
+|---|---|
+| 14:03:07 ~ 14:03:54 | 종료 시작. `.35`의 Mimir · Loki · Tempo가 3 ~ 4번에 1번 실패(000 · 503). API · AM · Grafana는 계속 200 |
+| 14:04:12 | monitoring1 NotReady (마지막 하트비트 14:03:04) |
+| 14:04:28 ~ 14:04:42 | **API VIP 약 15초 끊김**(500 7번 → 000 5번) → 리더 monitoring2 |
+| 14:04:45 | **서비스 VIP 전환** → monitoring3. `.35`의 모든 입구가 1번(1초) 실패 |
+| 14:05:06 | monitoring1 Ready (NotReady 약 54초) |
+| 14:06:17 | Pod 전부 Running · Ready. monitoring1의 12개가 같은 노드에서 제자리 재시작, PVC 전부 Bound |
+
+| 확인 | 결과 |
+|---|---|
+| 저장 층 | 끝난 뒤 Mimir · Loki 링 ACTIVE 3, AM peers 2. 분류기 대장(monitoring2)은 그대로 |
+| 알람 | 울린 것 없음. Pod 수 알람(`MonitoringReplicasDegraded` 10분 · `AllDown` 2분) · `MonitoringTargetDown`은 pending까지만. Watchdog 계속 |
+| 수집 | `up{instance="172.30.0.21:9100"}` 샘플 간격 39.5초 1번(14:03:01, Agent-0이 죽고 Agent-1 선출) · 24.5초 2번(14:04:46 · 14:05:46). 샘플 0개인 1분 창 없음 |
+| 1개뿐인 것 | kafka-exporter · postgres-exporter는 monitoring1과 같이 약 2분 없었다. `MonitoringReplicasAllDown`(2분)이 울리기 직전에 돌아옴 |
+
+읽는 법:
+- **노드 한 대가 죽어도 쓰기 · 조회 · 룰 평가 · 알림 · 분류기는 이어진다.** 끊기는 것은 VIP가 넘어가는 순간(API 약 15초, 서비스 1초)뿐이다
+- **종료 중 47초 동안의 간헐 실패**는 끝나 가는 노드의 Pod가 아직 Service 대상에 남아 있어서로 추정한다(원인 미확인). Agent는 다시 보내서 유실이 없고, 그 사이 Grafana 조회가 가끔 실패한다
+- Agent가 넘어가는 동안 스크레이프 1 ~ 2번을 놓친다(약 40초). Mimir `ha_tracker_failover_timeout` 30초 + 스크레이프 간격 15초와 맞는다
+
 ## 5. 다음
 
 1. ~~Helm 이전~~ → 11/09 완료(복제 1). 스택 구성 · 적용 · 확인은 [`deploy/README.md`](../deploy/README.md). StorageClass `local-path`(기본)도 그때 설치. 서비스 VIP는 Mimir 9009 · Loki 3100 · Tempo 4317/4318 · Alertmanager 9093 · Grafana 3000이 공유
 2. ArgoCD 원격 등록(노찬경, 후순위): server `https://172.30.0.30:6443`
 3. Monitoring 레포 `ansible/` roles(node_exporter · fluent_bit) → Proxmox 호스트 · Kafka/DB VM
-4. VIP 전환 시간 측정(다음 노드 재부팅 때 1초 간격 probe) → 4.1절에 추가
+4. ~~VIP 전환 시간 측정~~ → 11/24 4.2절(API 약 15초 · 서비스 1초)
 5. ~~kubelet serving 인증서를 클러스터 CA로~~ → 11/09 하지 않기로 결정(`deploy/README.md` 보안 메모)
