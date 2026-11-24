@@ -61,7 +61,12 @@ groups:
       # EKS는 켰다 껐다 하므로 「있다가 사라진 것」만 본다. 대상은 eks-a · b · c(3개 고정). 복구 컨트롤러가 다른 이름을 받으면 소비가 멈춘다.
       # 일부러 내린 클러스터는 뺀다: EKS OFF 절차가 내리기 전에 관리 클러스터 MultiKueueCluster에 devoops/fenced=true를 붙인다
       #   (지표는 deploy/agents/overlays/onprem/ksm-custom-resources.yaml). 진짜 사고 뒤 relocator가 같은 라벨을 붙이면 알람이 풀린다(사건은 이미 나감).
+      # 온프레 인터넷(모니터링 클러스터 → 1.1.1.1 ping)이 최근 10분 안에 한 번이라도 실패했으면 울리지 않는다.
+      #   온프레 인터넷 · EKS VPN이 같은 회선(pve4 Wi-Fi → pfSense WAN)을 지나서, 우리 쪽 회선이 끊기면 모든 EKS가 같이 끊겨 보인다.
+      #   2026-11-24 15:30 pve4 Wi-Fi 작업 때 eks-a · b가 같이 울렸다(진짜 장애 아님). Agent가 버퍼에 쌓았다가 회선이 돌아오자 보내서
+      #   나중에 보면 샘플 빈칸도 없다. 10분 = 이 알람이 울릴 수 있는 기간(마지막 샘플 뒤 2~10분) 전체를 덮는 길이
       # 한계: 관리 클러스터 KSM 지표가 없으면 거르지 못하고 울린다(놓치는 것보다 낫다). Agent 하나만 죽은 경우도 울린다.
+      #   온프레 인터넷이 끊긴 동안 난 진짜 사이트 장애는 못 본다(그때는 우리 쪽 문제와 구분할 수 없다). 프로브 지표가 아예 없으면 거르지 않고 울린다.
       #   VPN 단절 · 사이트 장애 구분은 복구 컨트롤러 몫이다(fault-event.md 4절)
       - alert: FailoverSiteDown
         expr: >
@@ -72,6 +77,8 @@ groups:
           )
           unless on (cluster)
           label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
+          unless on ()
+          (min(min_over_time(probe_success{job="blackbox-icmp", target_name="internet"}[10m])) == 0)
         labels:
           pipeline: failover
           signal: site

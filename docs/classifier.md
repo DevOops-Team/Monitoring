@@ -197,6 +197,7 @@ Pod 2개가 서로 다른 노드에 뜨고, 쿠버네티스 Lease `classifier`�
 - [ ] (박기현 · 김성모) 스팟 회수 예고가 어디로 나오는지(관리형 노드그룹). 정해지면 `spot` 룰을 쓴다
 - [ ] (나) `FailoverXidDcgm`은 같은 번호가 연달아 나면 값이 안 바뀌어 두 번째를 못 본다 → `DCGM_EXP_XID_ERRORS_COUNT` 검토
 - [x] (나) `FailoverSiteDown`이 일부러 내린 클러스터에도 울리던 것(11/24, GPU-220): EKS OFF 절차가 붙이는 MultiKueueCluster `devoops/fenced=true`를 관리 클러스터 KSM이 지표로 내고(`deploy/agents/overlays/onprem/ksm-custom-resources.yaml`), 룰이 펜싱된 클러스터를 뺀다. 대상도 `eks-(a|b|c)`로 좁혔다. Agent 하나만 죽은 경우는 여전히 울린다
+- [x] (나) `FailoverSiteDown`이 온프레 회선이 끊길 때도 울리던 것(11/24 15:30 pve4 Wi-Fi 작업, eks-a · b 동시 발화, GPU-220): 모니터링 클러스터 → 1.1.1.1 ping(`probe_success{target_name="internet"}`)이 최근 10분 안에 실패한 적 있으면 울리지 않는다. 온프레 인터넷 · EKS VPN이 같은 회선을 지나기 때문. 그동안 난 진짜 사이트 장애는 못 본다
 - [ ] (나 · 한송이) `OOMKilled`를 따로 판정할지(지금은 `Error`와 같이 `restart_in_place`). 한송이 POD-003 · 004는 설정 수정이 필요한 실패로 다루기를 기대한다
 - [x] `classifier_lifecycle_healthy == 0`이 이어지면 Slack으로 알리는 룰 — `ClassifierLifecycleUnhealthy`(2분), 분류기가 없거나 안 긁히면 `ClassifierDown`(3분). `deploy/base/mimir/rules/classifier.yml`(11/19, MON-STD-27). 0인 동안 `pod_exit`는 전부 `hold`이고, 메시지 반영 실패로 0이 되면 재시작 전까지 돌아오지 않는다
 - [ ] (나 · 한송이) `pod_exit` 대기 30초를 E2E 실측으로 조정

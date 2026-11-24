@@ -213,3 +213,39 @@ tests:
       - eval_time: 7m15s
         alertname: FailoverSiteDown
         exp_alerts: []
+
+  # 9) 11/24 15:30 재현: 온프레 인터넷(1.1.1.1)이 5분~5분 30초에 끊기고 같은 때 eks-a · b 수집도 끊긴다.
+  #    알람이 울릴 수 있는 기간(7분 15초 ~ 14분 45초) 내내 울리지 않는다
+  - name: 온프레 인터넷이 끊겼던 동안에는 사이트 알람이 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="eks-a", instance="localhost:9090"}'
+        values: '1x20'
+      - series: 'up{job="prometheus-agent", cluster="eks-b", instance="localhost:9090"}'
+        values: '1x20'
+      - series: 'probe_success{job="blackbox-icmp", target_name="internet", instance="1.1.1.1"}'
+        values: '1x19 0 0 0 1x80'
+    alert_rule_test:
+      - eval_time: 7m15s
+        alertname: FailoverSiteDown
+        exp_alerts: []
+      - eval_time: 14m45s
+        alertname: FailoverSiteDown
+        exp_alerts: []
+
+  # 10) 인터넷 실패가 10분보다 오래전(1분 ~ 1분 30초)이면 거르지 않는다. eks-a는 15분에 끊겨 17분 15초에 울린다
+  - name: 10분보다 오래된 인터넷 실패는 사이트 알람을 막지 않는다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="eks-a", instance="localhost:9090"}'
+        values: '1x60'
+      - series: 'probe_success{job="blackbox-icmp", target_name="internet", instance="1.1.1.1"}'
+        values: '1x3 0 0 0 1x120'
+    alert_rule_test:
+      - eval_time: 17m15s
+        alertname: FailoverSiteDown
+        exp_alerts:
+          - exp_labels: {pipeline: failover, signal: site, cluster: eks-a}
+            exp_annotations:
+              event_ts: '1970-01-01T00:15:00Z'
+              summary: '클러스터 수집 끊김: eks-a'
