@@ -1,13 +1,14 @@
 """알람 1건을 끝까지 처리한다: 정규화 → 보강 → 판정 → 중복 제거 → 조립 → 발행 (docs/classifier.md 1절).
 
 Pod 종료 신호만 길이 다르다. 의도된 종료인지 확인하려고 신호 시각 + 30초까지 기다렸다가 판정한다 (4절).
+사이트 신호는 그 클러스터에서 돌던 작업마다 사건 1건을 낸다(컨트롤러가 사건 1건 = 작업 1개로 대피한다).
 """
 from __future__ import annotations
 
 import json
 import logging
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any, Callable
 
@@ -40,6 +41,7 @@ DEFERRED = "deferred"               # Pod 종료. 30초 뒤 판정
 INTENDED = "intended"               # Pod 종료. 펜싱 · 사용자 중단
 STALE = "stale_generation"          # Pod 종료. 옛 세대의 뒤늦은 종료
 ABSORBED = "absorbed"               # Pod 종료. 같은 작업 · 세대의 원인 사건에 묶임
+NO_JOBS = "no_jobs"                 # 사이트. 그 클러스터에 돌던 작업이 없다(또는 전부 펜싱 · 중단 · 옛 세대)
 
 
 def log(msg: str, **fields: Any) -> None:
@@ -133,6 +135,8 @@ class Pipeline:
             return IGNORED
 
         ctx = self.enrich(s)
+        if s.signal == "site":
+            return self._site(s, ctx, now)
         if s.signal != "pod_exit":
             return self._emit(s, ctx, now)
         if now < s.ts + POD_EXIT_WAIT:
@@ -143,6 +147,25 @@ class Pipeline:
             self.pending.append(Pending(s, ctx, s.ts + POD_EXIT_WAIT))
             return DEFERRED
         return self._pod_exit(s, ctx, now)
+
+    def _site(self, s: Signal, ctx: Context, now: datetime) -> str:
+        """작업마다 사건 1건. 조회가 실패하면 job_id 없는 1건(컨트롤러가 HOLD → 사람이 본다)."""
+        if ctx.jobs is None:
+            return self._emit(s, ctx, now)
+        jobs = [(job, gen) for job, gen in ctx.jobs
+                if gen is None or not (self.lifecycle.intended(job, gen) or (self.lifecycle.latest(job) or 0) > gen)]
+        if not jobs:
+            log("site.no_jobs", cluster=s.cluster, found=len(ctx.jobs))
+            return NO_JOBS
+        # job.lifecycle을 못 읽으면 위 거르기가 비어 있다 → 취소된 작업을 되살리지 않게 hold (Pod 종료와 같은 기준)
+        hold = not self.lifecycle.healthy
+        outcomes = [self._emit(s, replace(ctx, job_id=job, generation=gen, jobs=None), now, hold=hold)
+                    for job, gen in jobs]
+        # 하나라도 못 냈으면 Alertmanager가 다시 보내게 한다. 이미 낸 작업은 그때 duplicate로 걸러진다
+        for outcome in (PUBLISH_FAILED, PUBLISHED):
+            if outcome in outcomes:
+                return outcome
+        return outcomes[0]
 
     def _pod_exit(self, s: Signal, ctx: Context, now: datetime) -> str:
         """대기가 끝난 Pod 종료 신호 (4절 표)."""

@@ -86,10 +86,36 @@ def test_gpu_uuid_in_label_skips_lookup():
     assert not any("DCGM" in e for e, _ in mimir.calls)
 
 
-def test_site_asks_nothing():
-    mimir = FakeMimir(up=UP)
-    ctx = Enricher(mimir)(signal(signal="site", source="site", xid=None, node=None))
-    assert (ctx.collector_healthy, ctx.az, mimir.calls) == (False, "unknown", [])
+def site():
+    return signal(signal="site", source="site", xid=None, node=None)
+
+
+def test_site_finds_running_jobs_of_the_cluster():
+    """끊기기 전 마지막 시각(신호 시각)에 Running이던 학습 Pod를 작업별로 묶고, 세대는 가장 큰 값."""
+    rows = [POD, {**POD, "pod": "job-3f9a1c2e-g0002-w-0-0", "label_devoops_generation": "2"},
+            {**POD, "pod": "job-7c1d0b2a-g0001-w-0-0", "label_devoops_job_id": "7c1d0b2a", "label_devoops_generation": ""}]
+    mimir = FakeMimir(kube_pod_labels=rows, up=UP)
+    ctx = Enricher(mimir)(site())
+    assert (ctx.jobs, ctx.job_id, ctx.collector_healthy, ctx.az) == (
+        (("3f9a1c2e", 3), ("7c1d0b2a", None)), None, False, "unknown")
+    (expr, at), = mimir.calls
+    assert at == TS and 'cluster="eks-a"' in expr and 'phase="Running"' in expr
+
+
+def test_site_lookup_failure_is_none():
+    ctx = Enricher(FakeMimir(kube_pod_labels=RuntimeError("down")))(site())
+    assert ctx.jobs is None
+
+
+def test_site_no_jobs_only_if_ksm_was_up():
+    """작업 0개는 그 시각에 KSM이 긁히고 있었을 때만 「작업 없음」. KSM이 먼저 죽었으면 「모름」(None → HOLD 1건)."""
+    up = {"job": "kube-state-metrics", "__value__": 1.0}
+    mimir = FakeMimir(**{"kube-state-metrics": [up]})
+    assert Enricher(mimir)(site()).jobs == ()
+    assert mimir.calls[-1][1] == TS and 'cluster="eks-a"' in mimir.calls[-1][0]
+    assert Enricher(FakeMimir(**{"kube-state-metrics": [{**up, "__value__": 0.0}]}))(site()).jobs is None
+    assert Enricher(FakeMimir())(site()).jobs is None                                       # 지표 자체가 없음
+    assert Enricher(FakeMimir(**{"kube-state-metrics": RuntimeError("down")}))(site()).jobs is None
 
 
 def test_label_values_are_escaped():

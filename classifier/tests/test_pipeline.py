@@ -203,3 +203,85 @@ def test_pending_is_bounded(env, monkeypatch):
     monkeypatch.setattr(p, "MAX_PENDING", 2)
     assert [pipe.handle(pod_exit(rank=r), at(10)) for r in range(3)] == [p.DEFERRED, p.DEFERRED, p.PUBLISHED]
     assert len(pipe.pending) == 2 and fake.sent[0]["payload"]["suggested_action"] == "hold"
+
+
+# 사이트: 클러스터 1건 → 그때 돌던 작업마다 사건 1건 (docs/classifier.md 2절)
+OTHER = "7c1d0b2a"
+
+
+def site(ts=T0):
+    return {"status": "firing",
+            "labels": {"alertname": "FailoverSiteDown", "pipeline": "failover", "signal": "site", "cluster": "eks-a"},
+            "annotations": {"event_ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ")}}
+
+
+def site_pipe(jobs, fake=None):
+    fake, life = fake or FakeProducer(), Lifecycle()
+    life.healthy = True
+    pipe = p.Pipeline(Rules.load(), Publisher(fake, "abc1234"),
+                      lambda s: Context(az="unknown", collector_healthy=False, jobs=jobs), life)
+    return pipe, fake, life
+
+
+def test_site_is_one_event_per_job():
+    pipe, fake, _ = site_pipe(((JOB, GEN), (OTHER, 1)))
+    assert pipe.handle(site(), at(150)) == p.PUBLISHED
+    payloads = [m["payload"] for m in fake.sent]
+    assert [(e["job_id"], e["generation"], e["suggested_action"]) for e in payloads] == [
+        (JOB, GEN, "fence_evacuate"), (OTHER, 1, "fence_evacuate")]
+    epoch = int(T0.timestamp())
+    assert [e["dedup_key"] for e in payloads] == [f"eks-a/{JOB}|site|{epoch}", f"eks-a/{OTHER}|site|{epoch}"]
+    assert pipe.handle(site(), at(210)) == p.DUPLICATE          # Alertmanager 재전송
+    assert len(fake.sent) == 2
+
+
+def test_site_without_jobs_publishes_nothing():
+    pipe, fake, _ = site_pipe(())
+    assert pipe.handle(site(), at(150)) == p.NO_JOBS
+    assert fake.sent == []
+
+
+def test_site_lookup_failure_publishes_one_without_job():
+    """작업을 모르면 job_id 없이 1건. 컨트롤러가 HOLD해 사람이 보게 된다."""
+    pipe, fake, _ = site_pipe(None)
+    assert pipe.handle(site(), at(150)) == p.PUBLISHED
+    e = fake.sent[0]["payload"]
+    assert (len(fake.sent), e["job_id"], e["dedup_key"]) == (1, None, f"eks-a|site|{int(T0.timestamp())}")
+
+
+def test_site_skips_fenced_cancelled_and_stale_jobs():
+    third = "9e8f7a6b"
+    pipe, fake, life = site_pipe(((JOB, GEN), (OTHER, 1), (third, 2)))
+    life.apply(lifecycle_event("job.fenced"), at(5))                                    # JOB 세대 3 펜싱
+    life.apply({**lifecycle_event("job.cancelled", 1), "job_id": OTHER}, at(5))        # OTHER 사용자 중단
+    assert pipe.handle(site(), at(150)) == p.PUBLISHED
+    assert [m["payload"]["job_id"] for m in fake.sent] == [third]
+    life.apply({**lifecycle_event("job.submitted", 3), "job_id": third}, at(160))      # 이미 새 세대가 있다
+    pipe2, fake2, _ = site_pipe(((third, 2),))
+    pipe2.lifecycle = life
+    assert pipe2.handle(site(), at(170)) == p.NO_JOBS
+
+
+def test_site_partial_publish_failure_is_retried():
+    """두 번째 작업만 못 냈다 → 503으로 다시 받고, 첫 번째는 중복으로 걸러져 두 번째만 나간다."""
+    class FailSecond(FakeProducer):
+        def produce(self, topic, *, key, value, headers, on_delivery):
+            self.fail = len(self.sent) == 1 and not self.retried
+            super().produce(topic, key=key, value=value, headers=headers, on_delivery=on_delivery)
+    fake = FailSecond()
+    fake.retried = False
+    pipe, _, _ = site_pipe(((JOB, GEN), (OTHER, 1)), fake)
+    assert pipe.handle(site(), at(150)) == p.PUBLISH_FAILED
+    assert [m["payload"]["job_id"] for m in fake.sent] == [JOB]
+    fake.retried = True
+    assert pipe.handle(site(), at(165)) == p.PUBLISHED
+    assert [m["payload"]["job_id"] for m in fake.sent] == [JOB, OTHER]
+
+
+def test_site_holds_when_lifecycle_is_unreadable():
+    """펜싱 · 중단 기록을 못 읽으면 취소된 작업인지 모른다 → 작업마다 내되 hold (Pod 종료와 같은 기준)."""
+    pipe, fake, life = site_pipe(((JOB, GEN), (OTHER, 1)))
+    life.healthy = False
+    assert pipe.handle(site(), at(150)) == p.PUBLISHED
+    assert [(m["type"], m["payload"]["job_id"], m["payload"]["suggested_action"]) for m in fake.sent] == [
+        ("fault.held", JOB, "hold"), ("fault.held", OTHER, "hold")]
