@@ -539,7 +539,9 @@ kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- dcgmi test --introspect -
 | 4 | 묶기 | `classifier_alerts_total{outcome="absorbed"}` | 복구로 지워지는 같은 세대 학습 Pod의 종료가 따로 `restart_in_place`로 나가지 않는다 |
 | 5 | 복구 | ①의 7번과 같다 | 새 세대가 다른 노드에서 이어서 학습. 원래 노드는 격리(해제는 한송이) |
 
-**끝나면 반드시 주입값을 지운다.** 값은 엔진이 재시작될 때까지 캐시에 남는다. 남겨 두면 그 GPU에서 나중에 진짜 Xid 79가 나도 값이 그대로라 알람이 안 울린다.
+**같은 Xid 연속(GPU-221)**: 위 주입을 5분 뒤 같은 번호로 한 번 더 한다. 실행 모드라 두 번 다 실제 복구가 나가므로 번호는 79보다 덜 파괴적인 13(`restart_in_place`)으로, 한송이와 시각을 맞춘다. 볼 것: 먼저 `DCGM_EXP_XID_ERRORS_COUNT`에 `window_size_in_ms="600000"`(창 10분)이 붙었는지 → 둘째 주입 뒤 그 GPU의 `xid="13"` 값이 1 → 2 → `FailoverXidDcgm`이 다시 울리고 `gpu.fault` 2건(event_ts가 약 5분 차이). 둘째는 컨트롤러가 반복으로 거절할 수 있다 — 사건이 2건이면 통과. 같은 값을 다시 주입해도 횟수가 느는지는 이때 처음 확인한다
+
+**끝나면 반드시 주입값을 지운다.** 값은 엔진이 재시작될 때까지 캐시에 남는다. 남겨 두면 번호 지표가 계속 그 값이라 대시보드가 헷갈리고, 진짜 Xid는 횟수 경로로만 잡힌다.
 
 ```bash
 kubectl -n monitoring delete pod "$DCGM"     # DaemonSet이 새로 띄운다 → 엔진 캐시가 비워진다

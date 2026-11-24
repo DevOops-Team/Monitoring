@@ -49,7 +49,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 |---|---|---|---|
 | 라벨 | `pipeline` | 모든 알람 | 값 `failover` |
 | 라벨 | `signal` | 모든 알람 | `xid` · `pod_exit` · `spot` · `site` · `node_lost`(이벤트 `source: node`) |
-| 라벨 | `source` | `xid`만 | `dmesg`(커널 로그 경로) 또는 `dcgm`(필드 230 경로). 나머지 신호는 `signal`에서 정해진다 |
+| 라벨 | `source` | `xid`만 | `dmesg`(커널 로그 경로) 또는 `dcgm`(dcgm-exporter 지표 경로: 필드 230 마지막 번호 + Xid 번호별 횟수). 나머지 신호는 `signal`에서 정해진다 |
 | 라벨 | `cluster` | 모든 알람 | 예 `eks-a` |
 | 라벨 | `node` | `site` 제외 | 노드 이름 |
 | 라벨 | `gpu_uuid` | `xid`(알 수 있을 때) | `GPU-…`. 커널 로그 경로는 PCI 주소만 알므로 비워 두면 분류기가 dcgm-exporter 라벨로 찾는다 |
@@ -197,7 +197,8 @@ Pod 2개가 서로 다른 노드에 뜨고, 쿠버네티스 Lease `classifier`�
 - [ ] (나) 사이트 알람을 분류기로 보내기. 일부러 내린 EKS를 구분할 수 있게 된 뒤에(아래 `FailoverSiteDown` 항목). 지금은 수신자 `classifier-pending`(받는 곳 없음)
 - [ ] (나, EKS 테스트 뒤) 커널 로그 경로 Xid 룰. Loki에 룰 파일을 넣는 길(ConfigMap 마운트)부터 만들어야 한다. `dcgmi` 주입은 커널 로그를 남기지 않으므로 진짜 Xid 로그 줄(`NVRM: Xid`)이 생기면 원문을 보관해 그것에 맞춘다
 - [ ] (박기현 · 김성모) 스팟 회수 예고가 어디로 나오는지(관리형 노드그룹). 정해지면 `spot` 룰을 쓴다
-- [ ] (나) `FailoverXidDcgm`은 같은 번호가 연달아 나면 값이 안 바뀌어 두 번째를 못 본다 → `DCGM_EXP_XID_ERRORS_COUNT` 검토
+- [x] (나) `FailoverXidDcgm`이 같은 번호 재발을 못 보던 것(11/24, GPU-221): `DCGM_EXP_XID_ERRORS_COUNT`(Xid 번호별 최근 10분 횟수, 11/23 EKS 주입에서 값 확인)가 1분 전보다 늘었거나 1분 전엔 없었으면 울린다. 창은 dcgm-exporter env로 5분 → 10분. 번호 경로는 횟수 지표가 없을 때를 위해 남겼다(같은 GPU면 알람 하나). **한계**: 앞 Xid가 창에서 빠진 뒤 수집 주기(15초) 안에 같은 번호가 다시 나면(간격 10분 ~ 10분 15초) 빈 순간이 기록되지 않아 못 본다. 수집 주기를 줄여도 exporter 계산 주기(5초)가 남아 0은 안 된다. 지금 Xid 신호는 이 dcgm 경로 하나뿐이고, 빈틈 없이 막는 것은 커널 로그 경로(위 항목, GPU-218 — 줄마다 사건 하나)다
+- [ ] (나 · 한송이) GPU-221 실측: EKS 학습 중 `dcgmi`로 같은 Xid를 5분 간격 2번 주입 → `gpu.fault` 2건(deploy/README.md 「장애 주입」 ③)
 - [x] (나) `FailoverSiteDown`이 일부러 내린 클러스터에도 울리던 것(11/24, GPU-220): EKS OFF 절차가 붙이는 MultiKueueCluster `devoops/fenced=true`를 관리 클러스터 KSM이 지표로 내고(`deploy/agents/overlays/onprem/ksm-custom-resources.yaml`), 룰이 펜싱된 클러스터를 뺀다. 대상도 `eks-(a|b|c)`로 좁혔다. Agent 하나만 죽은 경우는 여전히 울린다
 - [x] (나) `FailoverSiteDown`이 온프레 회선이 끊길 때도 울리던 것(11/24 15:30 pve4 Wi-Fi 작업, eks-a · b 동시 발화, GPU-220): 모니터링 클러스터 → 1.1.1.1 ping(`probe_success{target_name="internet"}`)이 최근 10분 안에 실패한 적 있으면 울리지 않는다. 온프레 인터넷 · EKS VPN이 같은 회선을 지나기 때문. 그동안 난 진짜 사이트 장애는 못 본다
 - [ ] (나 · 한송이) `OOMKilled`를 따로 판정할지(지금은 `Error`와 같이 `restart_in_place`). 한송이 POD-003 · 004는 설정 수정이 필요한 실패로 다루기를 기대한다
