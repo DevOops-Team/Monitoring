@@ -123,3 +123,32 @@ def test_label_values_are_escaped():
     mimir = FakeMimir()
     Enricher(mimir)(signal(node='n1"} or vector(1) #'))
     assert all('node="n1\\"} or vector(1) #"' in e for e, _ in mimir.calls if "node=" in e)
+
+
+def node_lost():
+    return signal(signal="node_lost", source="node", xid=None)
+
+
+def test_node_lost_finds_the_running_job_on_that_node():
+    """신호 시각(마지막 Ready)에 그 노드에서 Running이던 학습 Pod. 그 노드의 Fluent Bit이 꺼진 것은 당연해서 수집 경로에서 뺀다."""
+    zone = [{"label_topology_kubernetes_io_zone": "us-east-2a", "__value__": 1.0}]
+    mimir = FakeMimir(kube_pod_labels=[POD], kube_node_labels=zone, up=UP[:2])
+    ctx = Enricher(mimir)(node_lost())
+    assert (ctx.jobs, ctx.job_id, ctx.collector_healthy, ctx.az) == ((("3f9a1c2e", 3),), None, True, "us-east-2a")
+    jobs_expr, jobs_at = next((e, t) for e, t in mimir.calls if "kube_pod_labels" in e)
+    assert jobs_at == TS and 'phase="Running"' in jobs_expr and 'kube_pod_info{cluster="eks-a", node="n1"}' in jobs_expr
+    up_expr = next(e for e, _ in mimir.calls if e.startswith("up{"))
+    assert "fluent-bit" not in up_expr
+    az_expr, az_at = next((e, t) for e, t in mimir.calls if "kube_node_labels" in e)
+    assert az_at == TS and az_expr.startswith("last_over_time(")      # 노드가 이미 지워졌을 수 있다
+
+
+def test_node_lost_still_needs_cluster_collectors():
+    assert not Enricher(FakeMimir(up=UP[:1]))(node_lost()).collector_healthy             # 게이트웨이 없음
+
+
+def test_node_lost_no_jobs_only_if_ksm_was_up():
+    up = {"job": "kube-state-metrics", "__value__": 1.0}
+    assert Enricher(FakeMimir(**{"kube-state-metrics": [up]}))(node_lost()).jobs == ()
+    assert Enricher(FakeMimir())(node_lost()).jobs is None
+    assert Enricher(FakeMimir(kube_pod_labels=RuntimeError("down")))(node_lost()).jobs is None

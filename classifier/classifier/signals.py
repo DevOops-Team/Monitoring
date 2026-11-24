@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # signal 라벨 → 이벤트 source. xid만 경로가 둘이라 source 라벨로 받는다
-_SOURCE = {"pod_exit": "pod", "spot": "spot", "site": "site"}
+_SOURCE = {"pod_exit": "pod", "spot": "spot", "site": "site", "node_lost": "node"}
 _XID_SOURCES = ("dmesg", "dcgm")
 _GPU_UUID = re.compile(r"^GPU-[0-9a-f-]+$")     # v1 스키마와 같은 형식
 _POD_NAME = re.compile(r"^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$")     # 쿠버네티스 이름 규칙
@@ -20,8 +20,8 @@ class RejectError(ValueError):
 
 @dataclass(frozen=True)
 class Signal:
-    signal: str                 # xid | pod_exit | spot | site
-    source: str                 # dcgm | dmesg | pod | spot | site
+    signal: str                 # xid | pod_exit | spot | site | node_lost
+    source: str                 # dcgm | dmesg | pod | spot | site | node
     alert: str                  # alertname
     cluster: str
     ts: datetime                # 원본 신호 발생 시각 (annotation event_ts)

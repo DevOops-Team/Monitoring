@@ -17,6 +17,8 @@ xid:
 signal:
   spot: {category: infra, action: evacuate_preemptive, confidence: 1.0}
   site: {category: site, action: fence_evacuate, confidence: 0.7}
+  # GPU 노드가 사라짐(NotReady · Node 삭제), 클러스터 지표는 계속 옴. 노드마다 1건, 그 노드에 학습 작업이 있었을 때만
+  node_lost: {category: infra, action: isolate_migrate, confidence: 0.8}
   pod_exit: {category: app, action: restart_in_place, confidence: 0.6}
 
 # 표에 없는 Xid

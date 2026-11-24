@@ -30,7 +30,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `app.py` | `POST /alerts` · `/healthz` · `/metrics`. Kafka 전달에 실패한 알람이 있으면 503을 돌려줘 Alertmanager가 다시 보내게 한다(이미 낸 것은 중복 제거로 걸러짐). 대장이 아니면 받은 웹훅을 대장에게 넘긴다(7.1절) |
 | `lease.py` | 대장 선출. 쿠버네티스 Lease를 잡은 Pod 하나만 위 흐름을 돈다(7.1절) |
 
-`enrich.py`가 묻는 것 (site 신호는 작업 목록만 묻는다: `collector_healthy=false` · `az=unknown`):
+`enrich.py`가 묻는 것 (site 신호는 작업 목록만 묻는다: `collector_healthy=false` · `az=unknown`. node_lost는 그 노드의 작업 목록 · 신호 시각의 `az` · 클러스터 수집 경로(Agent · 게이트웨이, 그 노드의 Fluent Bit은 빼고)):
 
 | 채우는 값 | 지표 | 기준 시각 | 못 찾으면 |
 |---|---|---|---|
@@ -39,6 +39,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `gpu_uuid` | 커널 로그 경로 Xid만. dcgm-exporter 지표의 `UUID` 라벨(g4dn은 노드당 GPU 1장) | 신호 발생 시각(직전 5분) | `null` → 중복 제거 대상이 `node`가 된다 |
 | `az` | `kube_node_labels`의 `label_topology_kubernetes_io_zone` | 지금 | `unknown` |
 | site의 작업 목록 | 그 클러스터의 `kube_pod_labels` 중 `kube_pod_status_phase{phase="Running"}`이 1인 Pod를 작업별로 묶고 세대는 가장 큰 값 | 신호 발생 시각 = 마지막 샘플(직전 5분) | 조회 실패 → `job_id` 없는 사건 1건(컨트롤러 HOLD). 0개 → 사건 없음(`outcome="no_jobs"`). 단 그 시각에 그 클러스터 KSM(`up{job="kube-state-metrics"}`)이 1이 아니었으면 0개가 아니라 「모름」 → 조회 실패와 같다 |
+| node_lost의 작업 | site와 같은 식에 그 노드(`kube_pod_info{node}`)로 거른다 | 신호 발생 시각 = 마지막 Ready 샘플(직전 5분) | 작업 1개 → 그 작업의 사건. 0개 → 사건 없음(예비 노드 등, KSM이 그 시각에 1이었을 때만). 조회 실패 · 작업 여럿 → `job_id` 없는 1건(컨트롤러 HOLD) |
 
 ## 2. 알람 → 분류기 라벨 계약
 
@@ -59,7 +60,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | annotation | `log_line` | 있으면 | 근거가 된 로그 한 줄 |
 
 - 필수 값이 빠진 알람은 이벤트를 만들지 않고 카운터 `classifier_signals_rejected_total`만 올린다.
-- 분류기는 env `ENABLED_SIGNALS`에 적힌 종류만 받는다(기본 `xid,pod_exit`). 그 밖의 `signal`은 계약에 맞아도 이벤트를 만들지 않는다(`outcome="disabled"`). Alertmanager 라우팅이 틀리거나 누가 알람을 직접 넣어도 `site`의 `fence_evacuate`가 나가지 않게 하는 두 번째 잠금이다. `site` · `spot`을 켤 때는 라우트와 이 값을 같이 바꾼다.
+- 분류기는 env `ENABLED_SIGNALS`에 적힌 종류만 받는다(기본 `xid,pod_exit`). 그 밖의 `signal`은 계약에 맞아도 이벤트를 만들지 않는다(`outcome="disabled"`). Alertmanager 라우팅이 틀리거나 누가 알람을 직접 넣어도 `site`의 `fence_evacuate`가 나가지 않게 하는 두 번째 잠금이다. `site` · `spot` · `node_lost`를 켤 때는 라우트와 이 값을 같이 바꾼다(`node_lost` 라우트는 2026-11-24에 미리 열어 둠).
 - 룰은 `deploy/base/mimir/rules/failover.yml`에 있다(2026-11-18): `FailoverXidDcgm`(`xid` · `dcgm`) · `FailoverPodExit`(`pod_exit`) · `FailoverSiteDown`(`site`) · `FailoverGpuNodeLost`(`node_lost`, 2026-11-24: GPU 노드만 사라지고 클러스터 지표는 계속 올 때). 커널 로그 경로 Xid와 `spot`은 아직 없다(8절).
 - 룰은 사건 직후 1~2분만 울리고(사이트는 8분), 그동안 `event_ts`가 바뀌지 않게 쓴다. `event_ts`가 평가할 때마다 밀리면 중복 제거 창(±45초)을 벗어나 같은 고장이 여러 번 나간다.
 - `ckpt-init` 종료는 `pod_exit`로 보내지 않는다. 복구 컨트롤러가 `job.init_failed`를 직접 구독한다.
@@ -95,6 +96,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 |---|---|---|---|---|---|
 | `spot` | 회수 예고 | `infra` | `evacuate_preemptive` | 1.0 | ADR-36. 예시 05 |
 | `site` | 클러스터 수집 끊김 | `site` | `fence_evacuate` | 0.7 | **그때 돌던 작업마다 1건**(컨트롤러가 사건 1건 = 작업 1개로 대피). `job.lifecycle`로 펜싱 · 중단 · 옛 세대인 작업은 뺀다(못 읽으면 작업마다 `hold`). VPN 단절과 구분은 컨트롤러가 한다(fault-event.md 4절). 예시 06. `node` · `gpu_uuid`는 null |
+| `node_lost` | GPU 노드가 NotReady · 삭제(클러스터 지표는 계속 옴) | `infra` | `isolate_migrate` | 0.8 | **노드마다 1건, 그 노드에서 돌던 작업만**. 같은 작업의 다른 노드도 사라지면 노드마다 나가고 둘째 건부터는 컨트롤러가 이미 복구 중이라 닫는다. 자리가 없으면 디스패처가 다른 클러스터로(ADR-38). `job.lifecycle`로 펜싱 · 중단 · 옛 세대인 작업은 뺀다(못 읽으면 `hold`). 예시 10 |
 | `pod_exit` | 종료 사유가 `Completed`가 아님, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | 같은 오류 반복은 컨트롤러가 `refuse`로 올린다 |
 
 ## 4. 의도된 종료 거르기
@@ -120,7 +122,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 
 **원인 사건에 묶기.** 한 고장으로 다른 랭크가 줄줄이 죽을 때 `restart_in_place`가 따로 나가지 않게 한다.
 
-- 원인 사건 = `xid` · `spot` · `site` 신호로 낸 이벤트 중 action이 `hold` · `none`이 아닌 것. Xid 63처럼 기록만 하는 사건은 원인으로 치지 않는다(그 뒤의 Pod 종료는 따로 판정해야 함).
+- 원인 사건 = `xid` · `spot` · `site` · `node_lost` 신호로 낸 이벤트 중 action이 `hold` · `none`이 아닌 것. Xid 63처럼 기록만 하는 사건은 원인으로 치지 않는다(그 뒤의 Pod 종료는 따로 판정해야 함).
 - 원인 사건을 낼 때 같은 (job_id, generation)의 `pod_exit`가 기다리고 있으면 그 이벤트의 `correlated`에 넣고 대기에서 뺀다.
 - 원인 사건을 낸 뒤에 오는 같은 (job_id, generation)의 `pod_exit`도 버린다. 그 세대는 이미 복구 대상이라 새 사건이 아니다.
 - `site` 사건도 작업마다 원인 사건으로 기억한다. 다만 클러스터가 안 보이는 상황이라 그 클러스터의 `pod_exit` 알람은 보통 오지 않는다.

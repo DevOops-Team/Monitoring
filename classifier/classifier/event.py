@@ -20,7 +20,7 @@ class Context:
     job_id: str | None = None
     generation: int | None = None
     gpu_uuid: str | None = None     # 커널 로그 경로는 PCI 주소만 알아서 dcgm-exporter 라벨로 찾은 값
-    # site 전용: 끊기기 직전까지 그 클러스터에서 Running이던 (작업, 세대). 조회가 실패하면 None
+    # site · node_lost 전용: 끊기기 직전까지 그 클러스터(node_lost는 그 노드)에서 Running이던 (작업, 세대). 조회가 실패하면 None
     jobs: tuple[tuple[str, int | None], ...] | None = None
 
 

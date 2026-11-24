@@ -40,7 +40,7 @@ def _unknown_context(s: Signal) -> Context:
     return Context(az="unknown", collector_healthy=False)
 
 
-DEFAULT_SIGNALS = "xid,pod_exit"     # site · spot은 명시해야 받는다 (docs/classifier.md 2절)
+DEFAULT_SIGNALS = "xid,pod_exit"     # site · spot · node_lost는 명시해야 받는다 (docs/classifier.md 2절)
 
 
 def enabled_signals() -> frozenset[str]:
