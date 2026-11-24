@@ -1,0 +1,75 @@
+# promtool test rules. scripts/deploy-k8s.sh의 lint 단계가 돌린다. Watchdog · 디스크 룰은 compose 때 검증해 여기선 복제본 룰만
+rule_files:
+  - ../rules/self.yml
+evaluation_interval: 15s
+
+tests:
+  # 1) mimir 3개 중 하나가 5분에 빠진다 → 10분 지나야 울리고, 돌아오면 꺼진다. 다 Ready인 loki는 안 울린다
+  - name: StatefulSet Ready가 10분 넘게 모자라면 울린다
+    interval: 1m
+    input_series:
+      - series: 'kube_statefulset_replicas{cluster="monitoring", namespace="monitoring", statefulset="mimir"}'
+        values: '3x30'
+      - series: 'kube_statefulset_status_replicas_ready{cluster="monitoring", namespace="monitoring", statefulset="mimir"}'
+        values: '3x4 2x15 3x10'
+      - series: 'kube_statefulset_replicas{cluster="monitoring", namespace="monitoring", statefulset="loki"}'
+        values: '3x30'
+      - series: 'kube_statefulset_status_replicas_ready{cluster="monitoring", namespace="monitoring", statefulset="loki"}'
+        values: '3x30'
+    alert_rule_test:
+      - eval_time: 13m
+        alertname: MonitoringReplicasDegraded
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: MonitoringReplicasDegraded
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: monitoring, namespace: monitoring, statefulset: mimir, workload: mimir}
+            exp_annotations:
+              summary: '모니터링 mimir Ready 2개 — 원하는 개수보다 적다. 하나 더 죽으면 그 기능이 멈출 수 있다'
+              standard: MON-STD-22
+      - eval_time: 25m
+        alertname: MonitoringReplicasDegraded
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: MonitoringReplicasAllDown
+        exp_alerts: []
+
+  # 2) classifier(Deployment 2개)가 전부 내려간다 → 2분 뒤 AllDown. 원래 0개로 둔 Deployment는 안 울린다
+  - name: Deployment가 하나도 Ready가 아니면 2분 뒤 울린다
+    interval: 1m
+    input_series:
+      - series: 'kube_deployment_spec_replicas{cluster="monitoring", namespace="monitoring", deployment="classifier"}'
+        values: '2x10'
+      - series: 'kube_deployment_status_replicas_available{cluster="monitoring", namespace="monitoring", deployment="classifier"}'
+        values: '2x2 0x8'
+      - series: 'kube_deployment_spec_replicas{cluster="monitoring", namespace="monitoring", deployment="scaled-to-zero"}'
+        values: '0x10'
+      - series: 'kube_deployment_status_replicas_available{cluster="monitoring", namespace="monitoring", deployment="scaled-to-zero"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: MonitoringReplicasAllDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: MonitoringReplicasAllDown
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: monitoring, namespace: monitoring, deployment: classifier, workload: classifier}
+            exp_annotations:
+              summary: '모니터링 classifier Ready 0개 — 그 기능이 멈췄다'
+              standard: MON-STD-22
+
+  # 3) 다른 클러스터(관리 클러스터)의 같은 이름은 보지 않는다
+  - name: 모니터링 클러스터 밖은 안 본다
+    interval: 1m
+    input_series:
+      - series: 'kube_statefulset_replicas{cluster="onprem", namespace="monitoring", statefulset="prometheus-agent"}'
+        values: '2x20'
+      - series: 'kube_statefulset_status_replicas_ready{cluster="onprem", namespace="monitoring", statefulset="prometheus-agent"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: MonitoringReplicasDegraded
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: MonitoringReplicasAllDown
+        exp_alerts: []
