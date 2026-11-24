@@ -12,7 +12,7 @@
 | Mimir 3.2.4 (지표 저장 · 룰 평가) | `base/mimir/` | 3 (RF 3) | 10Gi × 3 | 노드마다 하나 | `mimir.monitoring.svc:9009` | `172.30.0.35:9009` |
 | Prometheus Agent v3.15.1 (스크레이프 → Mimir) | `base/prometheus-agent/` | 2 (HA tracker) | 2Gi (WAL) × 2 | 서로 다른 노드 | `prometheus-agent:9090` | - |
 | Loki 3.7.9 | Helm `grafana-community/loki` | 3 (RF 3) | 10Gi × 3 | 노드마다 하나 | `loki.monitoring.svc:3100` | `172.30.0.35:3100` |
-| Tempo 3.1.1 분산형 | Helm `grafana-community/tempo-distributed` | 구성 요소 8종 · 18 Pod (아래) | 없음 | 흩어짐 | `tempo-query-frontend.monitoring.svc:3200`(조회) | `172.30.0.35:4317` · `:4318` (OTLP만) |
+| Tempo 3.1.1 분산형 | Helm `grafana-community/tempo-distributed` | 구성 요소 7종 · 17 Pod + rollout-operator 1 (아래) | 없음 | 흩어짐 | `tempo-query-frontend.monitoring.svc:3200`(조회) | `172.30.0.35:4317` · `:4318` (OTLP만) |
 | Alertmanager v0.34.2 | Helm `prometheus-community/alertmanager` | 2 (클러스터링) | 1Gi × 2 | 서로 다른 노드 | `alertmanager.monitoring.svc:9093` | `172.30.0.35:9093` |
 | Grafana 13.3.0 | Helm `grafana-community/grafana` | 1 | 2Gi | 한 노드 | `grafana.monitoring.svc:3000` | `http://172.30.0.35:3000` |
 | node-exporter 1.12.1 | Helm | 노드마다 | - | 3대 | - | - |
