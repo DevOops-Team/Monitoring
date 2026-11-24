@@ -54,6 +54,9 @@ class Enricher:
     def __call__(self, s: Signal) -> Context:
         if s.signal == "site":      # 클러스터가 통째로 안 보인다. 끊기기 전 마지막 지표로 그때 돌던 작업만 찾는다
             return Context(az=UNKNOWN_AZ, collector_healthy=False, jobs=self._cluster_jobs(s))
+        if s.signal == "node_lost":     # 노드가 사라졌다. 그 노드의 Fluent Bit이 꺼진 건 당연하니 클러스터 수집 경로만 본다
+            return Context(az=self._az(s, at=s.ts), collector_healthy=self._collector_healthy(s, node_path=False),
+                           jobs=self._cluster_jobs(s, node=s.node))
         job_id, generation = self._job(s)
         return Context(
             az=self._az(s),
@@ -70,15 +73,17 @@ class Enricher:
             log("enrich.failed", what=what, reason=str(e), cluster=s.cluster, node=s.node)
             return None
 
-    def _collector_healthy(self, s: Signal) -> bool:
-        """분류 시점(지금) 기준."""
+    def _collector_healthy(self, s: Signal, node_path: bool = True) -> bool:
+        """분류 시점(지금) 기준. node_path=False면 그 노드의 Fluent Bit은 보지 않는다(노드가 사라진 신호)."""
         c, n = _q(s.cluster), _q(s.node)
-        rows = self._try("collector", s,
-                         f'up{{cluster="{c}", job=~"prometheus-agent|otel-gateway"}}'
-                         f' or up{{cluster="{c}", job="fluent-bit", node="{n}"}}', None)
+        expr = f'up{{cluster="{c}", job=~"prometheus-agent|otel-gateway"}}'
+        if node_path:
+            expr += f' or up{{cluster="{c}", job="fluent-bit", node="{n}"}}'
+        rows = self._try("collector", s, expr, None)
         if rows is None:
             return False
-        up = {job: [r["__value__"] for r in rows if r.get("job") == job] for job in COLLECTOR_JOBS}
+        jobs = COLLECTOR_JOBS if node_path else COLLECTOR_JOBS[:2]
+        up = {job: [r["__value__"] for r in rows if r.get("job") == job] for job in jobs}
         return all(values and min(values) == 1 for values in up.values())
 
     def _job(self, s: Signal) -> tuple[str | None, int | None]:
@@ -97,13 +102,16 @@ class Enricher:
         generations = [int(g) for r in rows if (g := r.get("label_devoops_generation", "")).isdigit()]
         return jobs.pop(), max(generations) if generations else None
 
-    def _cluster_jobs(self, s: Signal) -> tuple[tuple[str, int | None], ...] | None:
-        """신호 시각(마지막 샘플)에 그 클러스터에서 Running이던 학습 Pod의 (작업, 가장 큰 세대). 끝난 Pod는 뺀다."""
+    def _cluster_jobs(self, s: Signal, node: str | None = None) -> tuple[tuple[str, int | None], ...] | None:
+        """신호 시각(마지막 샘플)에 그 클러스터(node를 주면 그 노드)에서 Running이던 학습 Pod의 (작업, 가장 큰 세대). 끝난 Pod는 뺀다."""
         c = _q(s.cluster)
+        on_node = ('' if node is None else
+                   f' and on (namespace, pod) last_over_time(kube_pod_info{{cluster="{c}", node="{_q(node)}"}}[5m])')
         rows = self._try("cluster_jobs", s,
                          f'last_over_time(kube_pod_labels{{cluster="{c}", label_devoops_job_id!=""}}[5m])'
                          f' and on (namespace, pod)'
-                         f' (last_over_time(kube_pod_status_phase{{cluster="{c}", phase="Running"}}[5m]) == 1)', s.ts)
+                         f' (last_over_time(kube_pod_status_phase{{cluster="{c}", phase="Running"}}[5m]) == 1)'
+                         + on_node, s.ts)
         if rows is None:
             return None
         if not rows and not self._ksm_was_up(s):    # KSM이 먼저 죽어 있었으면 「작업 없음」이 아니라 「모름」
@@ -119,9 +127,11 @@ class Enricher:
         rows = self._try("ksm_up", s, f'last_over_time(up{{cluster="{_q(s.cluster)}", job="kube-state-metrics"}}[5m])', s.ts)
         return bool(rows) and all(r["__value__"] == 1 for r in rows)
 
-    def _az(self, s: Signal) -> str:
+    def _az(self, s: Signal, at: datetime | None = None) -> str:
+        """at을 주면 그 시각 직전 5분의 마지막 값(노드가 이미 지워졌을 수 있는 신호)."""
         # TODO(EKS overlay): KSM --metric-labels-allowlist에 nodes=[topology.kubernetes.io/zone]을 넣어야 값이 나온다
-        rows = self._try("az", s, f'kube_node_labels{{cluster="{_q(s.cluster)}", node="{_q(s.node)}"}}', None)
+        expr = f'kube_node_labels{{cluster="{_q(s.cluster)}", node="{_q(s.node)}"}}'
+        rows = self._try("az", s, expr if at is None else f'last_over_time({expr}[5m])', at)
         zones = {z for r in rows or [] if (z := r.get("label_topology_kubernetes_io_zone"))}
         return zones.pop() if len(zones) == 1 else UNKNOWN_AZ
 

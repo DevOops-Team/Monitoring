@@ -34,7 +34,7 @@
 | `gpu_uuid` | `GPU-…` / null | dcgm-exporter 레이블(pci_bus_id → UUID)로 채움 |
 | `job_id` | 문자열 / null | **학습 작업 ID** = 백엔드가 만드는 8자리 hex (예 `3f9a1c2e`). k8s JobSet 이름 `job-3f9a1c2e-g0003`이 아니다. 분류기는 **Mimir의 kube-state-metrics 지표**로 찾는다: `kube_pod_info{node}` → `kube_pod_labels{label_devoops_job_id, label_devoops_generation}` (각 클러스터 KSM이 remote_write로 보낸 것, KSM `--metric-labels-allowlist` 필요). EKS API를 직접 부르지 않으므로 VPN·EKS 권한이 없어도 되고, VPN이 끊겨도 마지막 매핑이 남는다 (2026-11-11 김현수 지적으로 정정). 못 찾으면 null. **site는 클러스터가 끊기기 직전에 Running이던 작업마다 이벤트 1건**(작업이 없으면 이벤트 없음, 조회 실패 · 그 시각 KSM이 안 긁히고 있었으면 null로 1건. 2026-11-24 GPU-220) |
 | `generation` | 정수 / null | 세대 번호. 원본은 DynamoDB 펜싱 테이블 `devoops-job-fencing` (ADR-6). Pod 라벨 `devoops/generation`에서 읽음 |
-| `source` | enum | `dcgm` · `dmesg`(커널 로그, journald 경유) · `pod` · `straggler` · `site` · `spot` |
+| `source` | enum | `dcgm` · `dmesg`(커널 로그, journald 경유) · `pod` · `straggler` · `site` · `spot` · `node`(GPU 노드가 사라짐: NotReady · Node 삭제. 클러스터 지표는 계속 오는 경우만, 끊기면 `site`) |
 | `raw` | 객체 | 분류 근거 원본. `xid` · `exit_code` · `metric` · `value` · `log_line` (해당 없으면 null) |
 | `correlated` | 배열 | 상관 창 안에서 함께 본 다른 알람 (`alert` · `source` · `ts`) |
 | `collector_healthy` | bool | 분류 시점에 그 노드의 수집 경로(Prometheus Agent · Fluent Bit · OTel 게이트웨이)가 살아 있었나 |
@@ -58,7 +58,7 @@
 
 **키 만들기 (분류기)**
 
-- 대상 = `gpu_uuid` (spot은 `node`, site는 `cluster/job_id` — 작업마다 다른 사건이라서. `job_id`가 null이면 `cluster`), 코드 = `raw.xid` (없으면 `source`). 예 `eks-a/3f9a1c2e|site|1795010531`
+- 대상 = `gpu_uuid` (spot · node는 `node`, site는 `cluster/job_id` — 작업마다 다른 사건이라서. `job_id`가 null이면 `cluster`), 코드 = `raw.xid` (없으면 `source`). 예 `eks-a/3f9a1c2e|site|1795010531`
 - 같은 대상+코드 이벤트가 이미 본 사건의 기준 시각 **±45초** 안의 `ts`면 같은 사건 → 그 사건의 키를 그대로 쓴다
 - 아니면 새 사건 → 이 이벤트의 `ts`(epoch 초)가 기준 시각
 - 비교는 도착 시각이 아니라 `ts`(신호 발생 시각)로 한다. 로그 경로가 몇 시간 뒤 살아나 밀린 줄이 와도 같은 사건으로 묶인다
@@ -87,7 +87,7 @@
 | suggested_action | 뜻 | 컨트롤러가 실제로 하는 일 |
 |---|---|---|
 | `restart_in_place` | GPU 멀쩡, 프로그램만 문제 | 세대 +1 → 옛 JobSet 정리 · 중단 확인 → **원래 클러스터를 먼저 보는**(같은 노드는 보장 안 함. 빈 GPU가 잡 크기보다 적으면 디스패처가 다른 클러스터로 보낸다, ADR-38) 새 JobSet 재제출 → 승인 체크포인트에서 이어 감. Pod 재시작이 아니다: torchrun · Job · JobSet · Kueue 자동 재시작은 전부 꺼져 있고 재시작 주체는 컨트롤러뿐 (ADR-12) |
-| `isolate_migrate` | 이 GPU 못 씀 | 노드 cordon + taint `devoops/faulty` → 세대 +1 → 옛 JobSet 정리 · 중단 확인 → 같은 클러스터 예비 GPU(taint `devoops/spare`)로 새 JobSet (자리가 모자라면 디스패처가 다른 클러스터로, ADR-38) |
+| `isolate_migrate` | 이 GPU 못 씀 (Xid 79 · GPU 노드가 사라짐) | 노드 cordon + taint `devoops/faulty` → 세대 +1 → 옛 JobSet 정리 · 중단 확인 → 같은 클러스터 예비 GPU(taint `devoops/spare`)로 새 JobSet (자리가 모자라면 디스패처가 다른 클러스터로, ADR-38) |
 | `reset_then_migrate` | 이 GPU 리셋 필요 | 먼저 다른 노드로 이전 → 빈 노드에서 GPU 리셋 → 성공하면 예비로 복귀, 실패하면 폐기 |
 | `evacuate_preemptive` | 곧 죽거나 느려짐 (스팟 2분 통보, 스트래글러) | 노드 격리 → 세대 +1 → 옛 실행 종료 확인 → 같은 클러스터 예비 GPU로 새 JobSet, **마지막 승인본에서 재개**. 스팟 회수 예고 때도 마지막 저장을 기다리지 않는다(ADR-36, 11/13. ADR-28의 120초 마지막 저장은 폐기) |
 | `fence_evacuate` | 클러스터 전체가 사라짐 (AZ 장애) | 클러스터 펜싱(`devoops/fenced=true`) → 세대 +1 (옛 Job이 살아 있어도 승인 못 하게) → 옛 실행 중단을 확인할 수 없으므로 확인 어노테이션을 기다렸다가 다른 AZ 클러스터에서 재개 |
@@ -106,7 +106,7 @@
 | `suggested_action` (분류기) | 컨트롤러 액션 (한송이) | RelocationRequest `action` (김성모) | 비고 |
 |---|---|---|---|
 | `restart_in_place` | `RETRY_GROUP` | `restartInPlace` | 세대 +1 · 새 JobSet은 공통. **원래 클러스터를 먼저 본다**(같은 노드 보장 아님), Recovery 큐로 4·5·7단계를 밟는다. 원래 클러스터 빈 GPU가 잡 크기보다 적으면 디스패처가 기다리지 않고 다른 클러스터로 보낸다(ADR-38, action 이름은 그대로). 어디에도 자리가 없어 15분을 넘기면 `AdmitDelayed`로 표시하고 계속 지켜보며, JobSet이 사라졌을 때만 Failed (김성모 11/11) |
-| `isolate_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 노드 cordon + `devoops/faulty` → 같은 클러스터 예비로. 예비가 없거나 고장 노드가 여럿이어도 이 action 그대로이고, 자리가 모자라면 디스패처가 다른 클러스터로 보낸다(ADR-38) |
+| `isolate_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 노드 cordon + `devoops/faulty` → 같은 클러스터 예비로. 예비가 없거나 고장 노드가 여럿이어도 이 action 그대로이고, 자리가 모자라면 디스패처가 다른 클러스터로 보낸다(ADR-38). GPU 노드 여러 대가 사라지면(`source: node`) 노드마다 1건이 나가고, 같은 작업의 둘째 건부터는 컨트롤러가 이미 복구 중이라 STALE로 닫는다(2026-11-24) |
 | `reset_then_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 컨트롤러 입장에선 `isolate_migrate`와 같다. GPU 리셋은 한송이 6절대로 **별도 운영 액션**(격리 뒤 수동 · 후속), 자동 리셋 안 함 |
 | `evacuate_preemptive` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 스팟 2분 통보 · 스트래글러. 세대를 먼저 올리고 **마지막 승인본에서 재개**한다 (ADR-19 v5, 컨트롤러 contracts.md). 사전 저장 뒤 옮기는 `PLANNED_MIGRATE`는 **보류**(컨트롤러에서 현재 HOLD). 스팟 회수 예고의 이 순서(승인본 확정 → 세대 +1 → 옛 실행 종료 → 재개)는 ADR-36(11/13)으로 확정됐다. ADR-28은 폐기. **스트래글러는 조건부**(ADR-37, 11/16): 분류기는 느린 상태가 600초 이상 이어지고 「그대로 둘 때 손해 ≥ 2 × 이전 비용 C」일 때만 이 값을 내고, 아니면 `category: straggler` + `hold`로 낸다. C(실측 전 900초 가정)와 안전 계수 2는 **분류기**가 계산해 `straggler_evidence.estimated_gain_seconds`에 순절감으로 넣고, 컨트롤러는 양수인지만 본다. 예비 용량 · 작업당 1회 · 수집 정상 · 정책 활성화(기본 OFF)는 **컨트롤러**가 최종 확인한다 |
 | `fence_evacuate` | `FENCE_AND_EVACUATE` | `evacuateCluster` | 클러스터 펜싱(`devoops/fenced=true`) → 옛 실행 권한 차단. 펜싱 확인은 `devoops/old-execution-stopped=true` 어노테이션만이 아니라 **실제 차단 근거**(세대 +1 반영 · 하트비트 끊김)까지. `evacuateCluster`는 이 행 전용 |
@@ -155,6 +155,7 @@ RelocationRequest `action`은 `restartInPlace` · `moveToSpare` · `evacuateClus
 | `07-straggler-evacuate` | 랭크 계산 시간이 중앙값의 1.6배로 720초 지속 + 클럭 스로틀. 손해 2,880초 ≥ 2 × 900 → 순절감 1,980초 | straggler → evacuate_preemptive |
 | `08-hold-collector-down` | DCGM 필드 230만 바뀜, 로그 경로 죽음 | hw → hold |
 | `09-straggler-hold` | 같은 1.6배 · 720초지만 남은 스텝이 적어 손해 600초 < 2 × 900 → 순절감 −300초 | straggler → hold |
+| `10-infra-node-lost-isolate` | GPU 노드가 NotReady가 되거나 Node가 지워짐(스팟 회수 · 인스턴스 종료), CPU 노드의 Agent · KSM은 살아 있음 | infra → isolate_migrate |
 
 01과 08은 같은 사건이다. 로그 경로가 죽어 DCGM 경로(08, 14:02:40)가 먼저 와서 `hold`, 로그 경로가 살아나 커널 로그(01, 14:02:11)가 뒤늦게 와서 `isolate_migrate`. `ts` 차이 29초 < 45초라 01은 08의 키를 재사용한다. action이 달라졌으므로 새 `event_id`로 나가고, 컨트롤러는 새 사건으로 처리한다.
 

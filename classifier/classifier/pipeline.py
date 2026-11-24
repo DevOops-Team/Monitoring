@@ -2,6 +2,7 @@
 
 Pod 종료 신호만 길이 다르다. 의도된 종료인지 확인하려고 신호 시각 + 30초까지 기다렸다가 판정한다 (4절).
 사이트 신호는 그 클러스터에서 돌던 작업마다 사건 1건을 낸다(컨트롤러가 사건 1건 = 작업 1개로 대피한다).
+GPU 노드 소실은 그 노드에서 돌던 작업 1개의 사건을 낸다(작업이 없으면 사건 없음).
 """
 from __future__ import annotations
 
@@ -41,7 +42,7 @@ DEFERRED = "deferred"               # Pod 종료. 30초 뒤 판정
 INTENDED = "intended"               # Pod 종료. 펜싱 · 사용자 중단
 STALE = "stale_generation"          # Pod 종료. 옛 세대의 뒤늦은 종료
 ABSORBED = "absorbed"               # Pod 종료. 같은 작업 · 세대의 원인 사건에 묶임
-NO_JOBS = "no_jobs"                 # 사이트. 그 클러스터에 돌던 작업이 없다(또는 전부 펜싱 · 중단 · 옛 세대)
+NO_JOBS = "no_jobs"                 # 사이트 · 노드 소실. 그 클러스터(노드)에 돌던 작업이 없다(또는 전부 펜싱 · 중단 · 옛 세대)
 
 
 def log(msg: str, **fields: Any) -> None:
@@ -137,6 +138,8 @@ class Pipeline:
         ctx = self.enrich(s)
         if s.signal == "site":
             return self._site(s, ctx, now)
+        if s.signal == "node_lost":
+            return self._node_lost(s, ctx, now)
         if s.signal != "pod_exit":
             return self._emit(s, ctx, now)
         if now < s.ts + POD_EXIT_WAIT:
@@ -166,6 +169,22 @@ class Pipeline:
             if outcome in outcomes:
                 return outcome
         return outcomes[0]
+
+    def _node_lost(self, s: Signal, ctx: Context, now: datetime) -> str:
+        """그 노드에서 돌던 작업의 사건 1건. 조회가 실패했거나 작업이 여럿이면 job_id 없는 1건(컨트롤러가 HOLD → 사람이 본다).
+        같은 작업의 다른 노드도 사라지면 노드마다 1건씩 나가고, 둘째 건부터는 컨트롤러가 이미 복구 중이라 닫는다."""
+        if ctx.jobs is None or len(ctx.jobs) > 1:
+            return self._emit(s, replace(ctx, jobs=None), now)
+        if not ctx.jobs:
+            log("node_lost.no_jobs", cluster=s.cluster, node=s.node)
+            return NO_JOBS
+        (job, gen), = ctx.jobs
+        if gen is not None and self.lifecycle.intended(job, gen):
+            return INTENDED
+        if gen is not None and (self.lifecycle.latest(job) or 0) > gen:
+            return STALE
+        # job.lifecycle을 못 읽으면 위 거르기가 비어 있다 → 취소된 작업을 되살리지 않게 hold (Pod 종료와 같은 기준)
+        return self._emit(s, replace(ctx, job_id=job, generation=gen, jobs=None), now, hold=not self.lifecycle.healthy)
 
     def _pod_exit(self, s: Signal, ctx: Context, now: datetime) -> str:
         """대기가 끝난 Pod 종료 신호 (4절 표)."""

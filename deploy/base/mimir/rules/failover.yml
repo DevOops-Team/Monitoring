@@ -5,7 +5,7 @@
 #  - 사건 직후 1~2분만 발화한다. 계속 발화하면 분류기가 같은 고장을 계속 받는다
 #  - event_ts는 평가 시각이 아니라 원본 샘플 시각이고, 발화하는 동안 바뀌지 않는다.
 #    분류기는 event_ts가 처음 본 값에서 45초 넘게 움직이면 다른 사건으로 본다(fault-event.md 2.1절)
-# 스팟 회수 · 커널 로그 경로 Xid는 아직 없다(docs/classifier.md 8절)
+# 스팟 회수 · 커널 로그 경로 Xid는 아직 없다(docs/classifier.md 8절). 스팟 회수로 노드가 사라지면 지금은 FailoverGpuNodeLost가 잡는다
 groups:
   - name: failover
     rules:
@@ -57,11 +57,50 @@ groups:
           log_line: 'trainer terminated: {{ $labels.reason }}'
           summary: '학습 Pod 종료({{ $labels.reason }}): {{ $labels.cluster }} {{ $labels.pod }}'
 
+      # GPU 노드가 사라졌다: 최근 10분 안에 Ready였는데 지금은 Ready가 아니다(NotReady · Unknown · Node 삭제). 1분 이어지면 울린다.
+      # GPU 노드만 죽고 CPU 노드(Agent · KSM)가 살아 있을 때를 위한 것이다. 이때 FailoverSiteDown은 지표가 계속 와서 안 울리고,
+      #   FailoverPodExit은 Pod가 종료 사유 없이 사라져서 안 울린다(11/24 kind 재현). 지표까지 끊기면 FailoverSiteDown 몫이다.
+      # 분류기가 노드마다 isolate_migrate 1건을 낸다(그 노드에 학습 작업이 있었을 때만). 같은 작업의 둘째 건부터는 컨트롤러가 닫는다.
+      # GPU 노드 = KSM이 nvidia.com/gpu allocatable을 낸 노드. 「최근 10분 안에 Ready」 기준이라 NotReady가 이어져도 10분 뒤 꺼진다
+      # 조건:
+      #  - 그 클러스터 KSM이 지금 긁히고 있을 때만(up == 1). KSM이 죽으면 노드 지표가 한꺼번에 사라져 모든 노드가 죽은 것처럼 보인다
+      #  - 일부러 내린 클러스터는 뺀다(FailoverSiteDown과 같은 식). 11/24 17:10 eks-a OFF 때 GPU 노드가 CPU 노드보다 12분 먼저 사라졌다
+      #  - for 1m: kubelet이 잠깐 끊겼다 돌아오는 것은 울리지 않는다
+      # job="kube-state-metrics"로 출처를 고정한다(위 Xid 룰과 같은 이유)
+      - alert: FailoverGpuNodeLost
+        expr: >
+          (
+            max by (cluster, node) (max_over_time(kube_node_status_condition{job="kube-state-metrics", cluster=~"eks-(a|b|c)", condition="Ready", status="true"}[10m])) == 1
+            unless
+            max by (cluster, node) (kube_node_status_condition{job="kube-state-metrics", cluster=~"eks-(a|b|c)", condition="Ready", status="true"} == 1)
+          )
+          and on (cluster, node)
+          (max by (cluster, node) (max_over_time(kube_node_status_allocatable{job="kube-state-metrics", cluster=~"eks-(a|b|c)", resource="nvidia_com_gpu"}[10m])) > 0)
+          and on (cluster)
+          (max by (cluster) (up{job="kube-state-metrics", cluster=~"eks-(a|b|c)"}) == 1)
+          unless on (cluster)
+          label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
+        for: 1m
+        labels:
+          pipeline: failover
+          signal: node_lost
+        annotations:
+          # 마지막으로 Ready였던 샘플의 시각. 발화하는 동안 바뀌지 않는다
+          event_ts: >-
+            {{ with printf "max_over_time((timestamp(kube_node_status_condition{job=\"kube-state-metrics\", cluster=%q, node=%q, condition=\"Ready\", status=\"true\"}) and kube_node_status_condition{job=\"kube-state-metrics\", cluster=%q, node=%q, condition=\"Ready\", status=\"true\"} == 1)[15m:15s])" $labels.cluster $labels.node $labels.cluster $labels.node | query }}{{ (. | first | value | toTime).UTC.Format "2006-01-02T15:04:05Z" }}{{ end }}
+          log_line: 'GPU node not Ready or deleted'
+          summary: 'GPU 노드 소실: {{ $labels.cluster }} {{ $labels.node }}'
+
       # EKS 클러스터의 Agent 지표가 10분 안에는 왔는데 최근 2분 동안 하나도 없다. 마지막 샘플 뒤 2분~10분 사이에 울린다.
       # EKS는 켰다 껐다 하므로 「있다가 사라진 것」만 본다. 대상은 eks-a · b · c(3개 고정). 복구 컨트롤러가 다른 이름을 받으면 소비가 멈춘다.
       # 일부러 내린 클러스터는 뺀다: EKS OFF 절차가 내리기 전에 관리 클러스터 MultiKueueCluster에 devoops/fenced=true를 붙인다
       #   (지표는 deploy/agents/overlays/onprem/ksm-custom-resources.yaml). 진짜 사고 뒤 relocator가 같은 라벨을 붙이면 알람이 풀린다(사건은 이미 나감).
+      # 온프레 인터넷(모니터링 클러스터 → 1.1.1.1 ping)이 최근 10분 안에 한 번이라도 실패했으면 울리지 않는다.
+      #   온프레 인터넷 · EKS VPN이 같은 회선(pve4 Wi-Fi → pfSense WAN)을 지나서, 우리 쪽 회선이 끊기면 모든 EKS가 같이 끊겨 보인다.
+      #   2026-11-24 15:30 pve4 Wi-Fi 작업 때 eks-a · b가 같이 울렸다(진짜 장애 아님). Agent가 버퍼에 쌓았다가 회선이 돌아오자 보내서
+      #   나중에 보면 샘플 빈칸도 없다. 10분 = 이 알람이 울릴 수 있는 기간(마지막 샘플 뒤 2~10분) 전체를 덮는 길이
       # 한계: 관리 클러스터 KSM 지표가 없으면 거르지 못하고 울린다(놓치는 것보다 낫다). Agent 하나만 죽은 경우도 울린다.
+      #   온프레 인터넷이 끊긴 동안 난 진짜 사이트 장애는 못 본다(그때는 우리 쪽 문제와 구분할 수 없다). 프로브 지표가 아예 없으면 거르지 않고 울린다.
       #   VPN 단절 · 사이트 장애 구분은 복구 컨트롤러 몫이다(fault-event.md 4절)
       - alert: FailoverSiteDown
         expr: >
@@ -72,6 +111,8 @@ groups:
           )
           unless on (cluster)
           label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
+          unless on ()
+          (min(min_over_time(probe_success{job="blackbox-icmp", target_name="internet"}[10m])) == 0)
         labels:
           pipeline: failover
           signal: site

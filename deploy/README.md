@@ -34,7 +34,7 @@
 `base/mimir/rules/infra.yml` 4개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `base/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 `base/mimir/rules/classifier.yml` 2개(MON-STD-27): 분류기가 없거나 안 긁힘 · `job.lifecycle`을 못 읽음. 단위 테스트는 `base/mimir/tests/classifier_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 
-`base/mimir/rules/failover.yml` 3개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown`). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료는 분류기 웹훅(수신자 `classifier`), 사이트는 받는 곳 없는 수신자(`classifier-pending`). 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
+`base/mimir/rules/failover.yml` 4개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown` · `FailoverGpuNodeLost`). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료 · GPU 노드 소실은 분류기 웹훅(수신자 `classifier`), 사이트는 받는 곳 없는 수신자(`classifier-pending`). 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
 `recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 복구 컨트롤러 Pod의 수집 어노테이션은 11/19에 들어갔다(Gitops `onprem/controllers/recovery-controller`, 그 전까지는 `recovery_hold_total`이 수집되지 않아 울릴 수 없었다). 확인: `up{cluster="onprem-manager", namespace="platform"}` 3. HOLD가 한 번도 없으면 `recovery_hold_total` 시계열 자체가 없다.
 
@@ -301,6 +301,19 @@ Agent의 `kueue` 잡(`base/prometheus-agent/prometheus.yml`)이 `kueue-system`�
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{cluster="onprem-manager", job="kueue"}'                                           # 3개 1
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_cluster_queue_nominal_quota{cluster="onprem-manager", replica_role="leader"}'   # 큐마다 1줄
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_pending_workloads{cluster="onprem-manager", replica_role="leader"}'             # 대기 잡 수
+```
+
+### MultiKueueCluster 펜싱 라벨 (11/24, GPU-220)
+
+관리 클러스터 KSM만 CustomResourceState로 MultiKueueCluster를 읽는다(`overlays/onprem/ksm-custom-resources.yaml`). EKS를 끄기 전 OFF 절차(K8s `scheduling/ops/README.md`, `eks_gate.py fence`)가 붙이는 `devoops/fenced=true`를 사이트 알람(`FailoverSiteDown`)이 보고, 펜싱된 클러스터는 수집이 끊겨도 울리지 않는다.
+
+- 객체마다 한 줄 `kube_customresource_multikueuecluster_info{name="eks-a"}`. 라벨이 있을 때만 `fenced="true"`가 붙는다. `fenced`를 info 안에 두면 라벨 없는 객체는 줄 자체가 안 나와 「안 붙음」과 「수집 안 됨」을 못 가린다(kind에서 확인)
+- KSM 권한에 `multikueueclusters` · `customresourcedefinitions` 읽기를 overlay에서 더했다. `--resources` 목록이 있어도 사용자 정의 리소스는 켜진다
+- **fence를 빼먹고 EKS를 내리면 사이트 알람이 울린다.** 펜싱 라벨은 사람이 지울 때까지 남는다(ON 때 `eks_gate.py on-check --unfence`)
+
+확인:
+```bash
+curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kube_customresource_multikueuecluster_info{cluster="onprem-manager"}'   # eks-a · b · c 3줄, 펜싱된 것만 fenced="true"
 ```
 
 ### 모니터링 클러스터 자신의 로그 (`overlays/monitoring`)

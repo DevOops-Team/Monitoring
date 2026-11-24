@@ -285,3 +285,81 @@ def test_site_holds_when_lifecycle_is_unreadable():
     assert pipe.handle(site(), at(150)) == p.PUBLISHED
     assert [(m["type"], m["payload"]["job_id"], m["payload"]["suggested_action"]) for m in fake.sent] == [
         ("fault.held", JOB, "hold"), ("fault.held", OTHER, "hold")]
+
+
+
+# GPU 노드 소실: 노드 1건 → 그 노드에서 돌던 작업의 사건 1건 (docs/classifier.md 2절)
+def node_lost(node="node-0", ts=T0):
+    return {"status": "firing",
+            "labels": {"alertname": "FailoverGpuNodeLost", "pipeline": "failover", "signal": "node_lost",
+                       "cluster": "eks-a", "node": node},
+            "annotations": {"event_ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ")}}
+
+
+def node_pipe(jobs, collector_healthy=True):
+    fake, life = FakeProducer(), Lifecycle()
+    life.healthy = True
+    pipe = p.Pipeline(Rules.load(), Publisher(fake, "abc1234"),
+                      lambda s: Context(az="us-east-2a", collector_healthy=collector_healthy, jobs=jobs), life)
+    return pipe, fake, life
+
+
+def test_node_lost_is_isolate_migrate_for_the_job_on_it():
+    pipe, fake, _ = node_pipe(((JOB, GEN),))
+    assert pipe.handle(node_lost(), at(90)) == p.PUBLISHED
+    e = fake.sent[0]["payload"]
+    assert (e["source"], e["category"], e["suggested_action"], e["job_id"], e["generation"], e["node"]) == (
+        "node", "infra", "isolate_migrate", JOB, GEN, "node-0")
+    assert e["dedup_key"] == f"node-0|node|{int(T0.timestamp())}"
+    assert pipe.handle(node_lost(), at(150)) == p.DUPLICATE         # Alertmanager 재전송
+    assert pipe.handle(node_lost("node-1"), at(150)) == p.PUBLISHED  # 같은 작업의 다른 노드 = 노드마다 1건
+    assert len(fake.sent) == 2
+
+
+def test_node_lost_without_job_publishes_nothing():
+    """예비 노드처럼 학습 작업이 없던 노드. job_id 없이 내면 컨트롤러가 HOLD해 Slack이 울린다."""
+    pipe, fake, _ = node_pipe(())
+    assert pipe.handle(node_lost(), at(90)) == p.NO_JOBS
+    assert fake.sent == []
+
+
+@pytest.mark.parametrize("jobs", [None, ((JOB, GEN), (OTHER, 1))])
+def test_node_lost_unknown_job_publishes_one_without_job(jobs):
+    """조회 실패 · 작업이 여럿 → 어느 작업인지 모른다. job_id 없이 1건 → 컨트롤러 HOLD → 사람이 본다."""
+    pipe, fake, _ = node_pipe(jobs)
+    assert pipe.handle(node_lost(), at(90)) == p.PUBLISHED
+    e = fake.sent[0]["payload"]
+    assert (len(fake.sent), e["job_id"], e["suggested_action"]) == (1, None, "isolate_migrate")
+
+
+def test_node_lost_skips_fenced_and_stale_jobs():
+    pipe, fake, life = node_pipe(((JOB, GEN),))
+    life.apply(lifecycle_event("job.fenced"), at(5))
+    assert pipe.handle(node_lost(), at(90)) == p.INTENDED
+    pipe, fake, life = node_pipe(((JOB, GEN),))
+    life.apply(lifecycle_event("job.submitted", GEN + 1), at(5))
+    assert pipe.handle(node_lost(), at(90)) == p.STALE
+    assert fake.sent == []
+
+
+def test_node_lost_holds_when_lifecycle_is_unreadable():
+    pipe, fake, life = node_pipe(((JOB, GEN),))
+    life.healthy = False
+    assert pipe.handle(node_lost(), at(90)) == p.PUBLISHED
+    assert (fake.sent[0]["type"], fake.sent[0]["payload"]["suggested_action"]) == ("fault.held", "hold")
+
+
+def test_node_lost_holds_when_cluster_collectors_are_down():
+    pipe, fake, _ = node_pipe(((JOB, GEN),), collector_healthy=False)
+    assert pipe.handle(node_lost(), at(90)) == p.PUBLISHED
+    assert fake.sent[0]["payload"]["suggested_action"] == "hold"
+
+
+def test_pod_exit_after_node_lost_is_absorbed():
+    """노드가 사라진 뒤 그 작업 Pod의 종료가 알람으로 오면 결과이지 새 사건이 아니다."""
+    pipe, fake, _ = node_pipe(((JOB, GEN),))
+    pipe.enrich = lambda s: Context(az="us-east-2a", collector_healthy=True, job_id=JOB, generation=GEN,
+                                    jobs=((JOB, GEN),) if s.signal == "node_lost" else None)
+    assert pipe.handle(node_lost(), at(90)) == p.PUBLISHED
+    assert pipe.handle(pod_exit(), at(100)) == p.ABSORBED
+    assert len(fake.sent) == 1
