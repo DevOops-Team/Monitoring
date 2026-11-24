@@ -184,3 +184,32 @@ tests:
       - eval_time: 15m15s
         alertname: FailoverSiteDown
         exp_alerts: []
+
+  # 7) eks-a · eks-b 둘 다 5분에 끊긴다. eks-b는 OFF 절차로 펜싱돼 있어(fenced="true") 빠지고 eks-a만 울린다.
+  #    펜싱 지표는 관리 클러스터 KSM이 내므로 cluster="onprem-manager"다(name이 EKS 이름)
+  - name: 펜싱된 EKS는 수집이 끊겨도 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="eks-a", instance="localhost:9090"}'
+        values: '1x20'
+      - series: 'up{job="prometheus-agent", cluster="eks-b", instance="localhost:9090"}'
+        values: '1x20'
+      - series: 'kube_customresource_multikueuecluster_info{job="kube-state-metrics", cluster="onprem-manager", customresource_kind="MultiKueueCluster", name="eks-a"}'
+        values: '1x80'
+      - series: 'kube_customresource_multikueuecluster_info{job="kube-state-metrics", cluster="onprem-manager", customresource_kind="MultiKueueCluster", name="eks-b", fenced="true"}'
+        values: '1x80'
+    alert_rule_test:
+      - eval_time: 7m15s
+        alertname: FailoverSiteDown
+        exp_alerts: *site
+
+  # 8) 대상(eks-a · b · c) 밖의 이름은 끊겨도 울리지 않는다
+  - name: eks-a · b · c가 아닌 클러스터는 대상이 아니다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="eks-test", instance="localhost:9090"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 7m15s
+        alertname: FailoverSiteDown
+        exp_alerts: []

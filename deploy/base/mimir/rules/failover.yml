@@ -58,13 +58,20 @@ groups:
           summary: '학습 Pod 종료({{ $labels.reason }}): {{ $labels.cluster }} {{ $labels.pod }}'
 
       # EKS 클러스터의 Agent 지표가 10분 안에는 왔는데 최근 2분 동안 하나도 없다. 마지막 샘플 뒤 2분~10분 사이에 울린다.
-      # 클러스터 이름을 적지 않는다: EKS는 켰다 껐다 하므로 「있다가 사라진 것」만 본다.
-      # 한계: 일부러 내린 클러스터와 Agent 하나만 죽은 경우도 울린다. VPN 단절 · 사이트 장애 구분은 복구 컨트롤러 몫이다(fault-event.md 4절)
+      # EKS는 켰다 껐다 하므로 「있다가 사라진 것」만 본다. 대상은 eks-a · b · c(3개 고정). 복구 컨트롤러가 다른 이름을 받으면 소비가 멈춘다.
+      # 일부러 내린 클러스터는 뺀다: EKS OFF 절차가 내리기 전에 관리 클러스터 MultiKueueCluster에 devoops/fenced=true를 붙인다
+      #   (지표는 deploy/agents/overlays/onprem/ksm-custom-resources.yaml). 진짜 사고 뒤 relocator가 같은 라벨을 붙이면 알람이 풀린다(사건은 이미 나감).
+      # 한계: 관리 클러스터 KSM 지표가 없으면 거르지 못하고 울린다(놓치는 것보다 낫다). Agent 하나만 죽은 경우도 울린다.
+      #   VPN 단절 · 사이트 장애 구분은 복구 컨트롤러 몫이다(fault-event.md 4절)
       - alert: FailoverSiteDown
         expr: >
-          count by (cluster) (last_over_time(up{job="prometheus-agent", cluster=~"eks-.+"}[10m]))
-          unless
-          count by (cluster) (last_over_time(up{job="prometheus-agent", cluster=~"eks-.+"}[2m]))
+          (
+            count by (cluster) (last_over_time(up{job="prometheus-agent", cluster=~"eks-(a|b|c)"}[10m]))
+            unless
+            count by (cluster) (last_over_time(up{job="prometheus-agent", cluster=~"eks-(a|b|c)"}[2m]))
+          )
+          unless on (cluster)
+          label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
         labels:
           pipeline: failover
           signal: site
