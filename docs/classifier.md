@@ -94,7 +94,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | signal | 조건 | category | suggested_action | confidence | 근거 |
 |---|---|---|---|---|---|
 | `spot` | 회수 예고 | `infra` | `evacuate_preemptive` | 1.0 | ADR-36. 예시 05 |
-| `site` | 클러스터 수집 끊김 | `site` | `fence_evacuate` | 0.7 | **그때 돌던 작업마다 1건**(컨트롤러가 사건 1건 = 작업 1개로 대피). `job.lifecycle`로 펜싱 · 중단 · 옛 세대인 작업은 뺀다. VPN 단절과 구분은 컨트롤러가 한다(fault-event.md 4절). 예시 06. `node` · `gpu_uuid`는 null |
+| `site` | 클러스터 수집 끊김 | `site` | `fence_evacuate` | 0.7 | **그때 돌던 작업마다 1건**(컨트롤러가 사건 1건 = 작업 1개로 대피). `job.lifecycle`로 펜싱 · 중단 · 옛 세대인 작업은 뺀다(못 읽으면 작업마다 `hold`). VPN 단절과 구분은 컨트롤러가 한다(fault-event.md 4절). 예시 06. `node` · `gpu_uuid`는 null |
 | `pod_exit` | 종료 사유가 `Completed`가 아님, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | 같은 오류 반복은 컨트롤러가 `refuse`로 올린다 |
 
 ## 4. 의도된 종료 거르기

@@ -276,3 +276,12 @@ def test_site_partial_publish_failure_is_retried():
     fake.retried = True
     assert pipe.handle(site(), at(165)) == p.PUBLISHED
     assert [m["payload"]["job_id"] for m in fake.sent] == [JOB, OTHER]
+
+
+def test_site_holds_when_lifecycle_is_unreadable():
+    """펜싱 · 중단 기록을 못 읽으면 취소된 작업인지 모른다 → 작업마다 내되 hold (Pod 종료와 같은 기준)."""
+    pipe, fake, life = site_pipe(((JOB, GEN), (OTHER, 1)))
+    life.healthy = False
+    assert pipe.handle(site(), at(150)) == p.PUBLISHED
+    assert [(m["type"], m["payload"]["job_id"], m["payload"]["suggested_action"]) for m in fake.sent] == [
+        ("fault.held", JOB, "hold"), ("fault.held", OTHER, "hold")]

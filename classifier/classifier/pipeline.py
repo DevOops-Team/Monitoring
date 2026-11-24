@@ -157,7 +157,10 @@ class Pipeline:
         if not jobs:
             log("site.no_jobs", cluster=s.cluster, found=len(ctx.jobs))
             return NO_JOBS
-        outcomes = [self._emit(s, replace(ctx, job_id=job, generation=gen, jobs=None), now) for job, gen in jobs]
+        # job.lifecycle을 못 읽으면 위 거르기가 비어 있다 → 취소된 작업을 되살리지 않게 hold (Pod 종료와 같은 기준)
+        hold = not self.lifecycle.healthy
+        outcomes = [self._emit(s, replace(ctx, job_id=job, generation=gen, jobs=None), now, hold=hold)
+                    for job, gen in jobs]
         # 하나라도 못 냈으면 Alertmanager가 다시 보내게 한다. 이미 낸 작업은 그때 duplicate로 걸러진다
         for outcome in (PUBLISH_FAILED, PUBLISHED):
             if outcome in outcomes:
