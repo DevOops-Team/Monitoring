@@ -20,6 +20,8 @@ class Context:
     job_id: str | None = None
     generation: int | None = None
     gpu_uuid: str | None = None     # 커널 로그 경로는 PCI 주소만 알아서 dcgm-exporter 라벨로 찾은 값
+    # site 전용: 끊기기 직전까지 그 클러스터에서 Running이던 (작업, 세대). 조회가 실패하면 None
+    jobs: tuple[tuple[str, int | None], ...] | None = None
 
 
 def iso_z(ts: datetime) -> str:
@@ -27,7 +29,10 @@ def iso_z(ts: datetime) -> str:
 
 
 def dedup_target(s: Signal, ctx: Context) -> str:
-    """대상 = gpu_uuid, 없으면 node, site는 cluster. Pod 종료는 그 Pod(같은 노드의 다른 Pod가 끝난 것은 다른 사건)."""
+    """대상 = gpu_uuid, 없으면 node, site는 cluster/작업(작업을 못 찾으면 cluster).
+    Pod 종료는 그 Pod(같은 노드의 다른 Pod가 끝난 것은 다른 사건)."""
+    if s.signal == "site" and ctx.job_id:
+        return f"{s.cluster}/{ctx.job_id}"     # 사이트 1건이 작업마다 사건이 된다. 키가 같으면 두 번째 작업부터 중복으로 버려진다
     return s.pod or s.gpu_uuid or ctx.gpu_uuid or s.node or s.cluster
 
 

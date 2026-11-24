@@ -63,6 +63,10 @@ def test_dedup_target_and_code():
     site = make(signal(signal="site", source="site", xid=None, gpu_uuid=None, node=None),
                 Context(az="us-east-2a", collector_healthy=False))
     assert site["dedup_key"].startswith("eks-a|site|") and site["gpu_uuid"] is None
+    job = make(signal(signal="site", source="site", xid=None, gpu_uuid=None, node=None),
+               Context(az="unknown", collector_healthy=False, job_id="3f9a1c2e", generation=3))
+    assert job["dedup_key"].startswith("eks-a/3f9a1c2e|site|")     # 작업마다 다른 사건
+    validate(job)
 
 
 def test_dcgm_fills_metric():

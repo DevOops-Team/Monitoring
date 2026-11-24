@@ -52,8 +52,8 @@ class Enricher:
         self.query = query
 
     def __call__(self, s: Signal) -> Context:
-        if s.signal == "site":      # 클러스터가 통째로 안 보이는 신호. 물어볼 지표가 없다
-            return Context(az=UNKNOWN_AZ, collector_healthy=False)
+        if s.signal == "site":      # 클러스터가 통째로 안 보인다. 끊기기 전 마지막 지표로 그때 돌던 작업만 찾는다
+            return Context(az=UNKNOWN_AZ, collector_healthy=False, jobs=self._cluster_jobs(s))
         job_id, generation = self._job(s)
         return Context(
             az=self._az(s),
@@ -96,6 +96,21 @@ class Enricher:
             return None, None
         generations = [int(g) for r in rows if (g := r.get("label_devoops_generation", "")).isdigit()]
         return jobs.pop(), max(generations) if generations else None
+
+    def _cluster_jobs(self, s: Signal) -> tuple[tuple[str, int | None], ...] | None:
+        """신호 시각(마지막 샘플)에 그 클러스터에서 Running이던 학습 Pod의 (작업, 가장 큰 세대). 끝난 Pod는 뺀다."""
+        c = _q(s.cluster)
+        rows = self._try("cluster_jobs", s,
+                         f'last_over_time(kube_pod_labels{{cluster="{c}", label_devoops_job_id!=""}}[5m])'
+                         f' and on (namespace, pod)'
+                         f' (last_over_time(kube_pod_status_phase{{cluster="{c}", phase="Running"}}[5m]) == 1)', s.ts)
+        if rows is None:
+            return None
+        generations: dict[str, list[int]] = {}
+        for r in rows:
+            g = r.get("label_devoops_generation", "")
+            generations.setdefault(r["label_devoops_job_id"], []).extend([int(g)] if g.isdigit() else [])
+        return tuple((job, max(gens) if gens else None) for job, gens in sorted(generations.items()))
 
     def _az(self, s: Signal) -> str:
         # TODO(EKS overlay): KSM --metric-labels-allowlist에 nodes=[topology.kubernetes.io/zone]을 넣어야 값이 나온다
