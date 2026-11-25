@@ -49,7 +49,7 @@
     {
       "type": "stat",
       "title": "대기",
-      "description": "쿼터를 못 받아 기다리는 Workload 수(전체 큐 합)",
+      "description": "쿼터를 못 받아 기다리는 Workload 수(전체 큐 합). 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -61,7 +61,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(max by (cluster, cluster_queue, status) (kueue_pending_workloads{cluster=~\"$cluster\", replica_role=\"leader\"})) or vector(0)"
+          "expr": "sum(max by (cluster, cluster_queue, status) (kueue_pending_workloads{cluster=\"onprem-manager\", replica_role=\"leader\"})) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -108,14 +108,14 @@
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       }
     },
     {
       "type": "stat",
       "title": "입장 불가",
-      "description": "대기 중에서도 지금 조건으로는 들어갈 수 없다고 판정된 Workload 수(inadmissible). 쿼터 · 자원 요청을 봐야 한다",
+      "description": "대기 중에서도 지금 조건으로는 들어갈 수 없다고 판정된 Workload 수(inadmissible). 쿼터 · 자원 요청을 봐야 한다. 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -127,7 +127,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(max by (cluster, cluster_queue) (kueue_pending_workloads{cluster=~\"$cluster\", replica_role=\"leader\", status=\"inadmissible\"})) or vector(0)"
+          "expr": "sum(max by (cluster, cluster_queue) (kueue_pending_workloads{cluster=\"onprem-manager\", replica_role=\"leader\", status=\"inadmissible\"})) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -172,7 +172,7 @@
       },
       "id": 2,
       "gridPos": {
-        "x": 4,
+        "x": 3,
         "y": 0,
         "w": 4,
         "h": 4
@@ -181,7 +181,7 @@
     {
       "type": "stat",
       "title": "입장",
-      "description": "쿼터를 받아 실행 중인 Workload 수(전체 큐 합)",
+      "description": "쿼터를 받아 실행 중인 Workload 수(전체 큐 합). 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -193,7 +193,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(max by (cluster, cluster_queue) (kueue_admitted_active_workloads{cluster=~\"$cluster\", replica_role=\"leader\"})) or vector(0)"
+          "expr": "sum(max by (cluster, cluster_queue) (kueue_admitted_active_workloads{cluster=\"onprem-manager\", replica_role=\"leader\"})) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -234,16 +234,16 @@
       },
       "id": 3,
       "gridPos": {
-        "x": 8,
+        "x": 7,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       }
     },
     {
       "type": "stat",
       "title": "GPU 사용",
-      "description": "쓰고 있는 GPU 쿼터 ÷ 전체 nominal 쿼터",
+      "description": "학습 큐(cq-heavy · cq-light)가 쓰는 GPU ÷ 학습 큐 nominal 쿼터 합. 복구 큐(cq-recovery)는 빌려주지 않으므로(lendingLimit 0) 분모에서 뺀다 → 옆 「복구 큐」. 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -255,7 +255,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(max by (cluster, cluster_queue) (kueue_cluster_queue_resource_usage{cluster=~\"$cluster\", replica_role=\"leader\", resource=\"nvidia.com/gpu\"})) / sum(max by (cluster, cluster_queue) (kueue_cluster_queue_nominal_quota{cluster=~\"$cluster\", replica_role=\"leader\", resource=\"nvidia.com/gpu\"}))"
+          "expr": "sum(max by (cluster_queue) (kueue_cluster_queue_resource_usage{cluster=\"onprem-manager\", replica_role=\"leader\", resource=\"nvidia.com/gpu\", cluster_queue!=\"cq-recovery\"})) / sum(max by (cluster_queue) (kueue_cluster_queue_nominal_quota{cluster=\"onprem-manager\", replica_role=\"leader\", resource=\"nvidia.com/gpu\", cluster_queue!=\"cq-recovery\"}))"
         }
       ],
       "fieldConfig": {
@@ -300,7 +300,7 @@
       },
       "id": 4,
       "gridPos": {
-        "x": 12,
+        "x": 10,
         "y": 0,
         "w": 4,
         "h": 4
@@ -308,8 +308,8 @@
     },
     {
       "type": "stat",
-      "title": "입장 대기",
-      "description": "Workload가 만들어진 뒤 입장까지 걸린 시간 평균(선택한 시간 범위 안에서 입장한 것)",
+      "title": "복구 큐",
+      "description": "복구 큐(cq-recovery)가 지금 쓰는 GPU 수. 평소 0, 복구 작업이 돌 때만 오른다. 관리 클러스터 기준",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -321,7 +321,69 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(kueue_admission_wait_time_seconds_sum{cluster=~\"$cluster\", replica_role=\"leader\"}[$__range])) / sum(increase(kueue_admission_wait_time_seconds_count{cluster=~\"$cluster\", replica_role=\"leader\"}[$__range]))"
+          "expr": "sum(max by (cluster_queue) (kueue_cluster_queue_resource_usage{cluster=\"onprem-manager\", replica_role=\"leader\", resource=\"nvidia.com/gpu\", cluster_queue=\"cq-recovery\"})) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 23,
+      "gridPos": {
+        "x": 14,
+        "y": 0,
+        "w": 3,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "입장 대기",
+      "description": "Workload가 만들어진 뒤 입장까지 걸린 시간 평균(선택한 시간 범위 안에서 입장한 것). 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(kueue_admission_wait_time_seconds_sum{cluster=\"onprem-manager\", replica_role=\"leader\"}[$__range])) / sum(increase(kueue_admission_wait_time_seconds_count{cluster=\"onprem-manager\", replica_role=\"leader\"}[$__range]))"
         }
       ],
       "fieldConfig": {
@@ -362,7 +424,7 @@
       },
       "id": 5,
       "gridPos": {
-        "x": 16,
+        "x": 17,
         "y": 0,
         "w": 4,
         "h": 4
@@ -371,7 +433,7 @@
     {
       "type": "stat",
       "title": "멈춘 큐",
-      "description": "active가 아닌 ClusterQueue 수(pending · terminating). 멈춘 큐는 Workload를 입장시키지 않는다",
+      "description": "active가 아닌 ClusterQueue 수(pending · terminating). 멈춘 큐는 Workload를 입장시키지 않는다. 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -383,7 +445,7 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "count(max by (cluster, cluster_queue) (kueue_cluster_queue_status{cluster=~\"$cluster\", replica_role=\"leader\", status!=\"active\"}) == 1) or vector(0)"
+          "expr": "count(max by (cluster, cluster_queue) (kueue_cluster_queue_status{cluster=\"onprem-manager\", replica_role=\"leader\", status!=\"active\"}) == 1) or vector(0)"
         }
       ],
       "fieldConfig": {
@@ -428,9 +490,9 @@
       },
       "id": 6,
       "gridPos": {
-        "x": 20,
+        "x": 21,
         "y": 0,
-        "w": 4,
+        "w": 3,
         "h": 4
       }
     },
@@ -1087,8 +1149,8 @@
     },
     {
       "type": "timeseries",
-      "title": "입장 대기 시간 (평균)",
-      "description": "만들어진 뒤 입장까지(30분 창 평균). 입장이 없던 구간은 비어 있다",
+      "title": "입장 대기 시간 (평균 · p90 · p99)",
+      "description": "만들어진 뒤 입장까지(30분 창 평균). 입장이 없던 구간은 비어 있다. p90 · p99는 30분 창 히스토그램(버킷 경계로 근사). 굶주림(일부만 오래 기다림)은 평균에 묻히므로 p99를 같이 본다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1101,7 +1163,25 @@
             "uid": "prometheus"
           },
           "expr": "sum by (cluster, cluster_queue) (increase(kueue_admission_wait_time_seconds_sum{cluster=~\"$cluster\", replica_role=\"leader\"}[30m])) / sum by (cluster, cluster_queue) (increase(kueue_admission_wait_time_seconds_count{cluster=~\"$cluster\", replica_role=\"leader\"}[30m]) > 0)",
-          "legendFormat": "{{cluster}} {{cluster_queue}}"
+          "legendFormat": "평균 {{cluster}} {{cluster_queue}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, cluster, cluster_queue) (rate(kueue_admission_wait_time_seconds_bucket{cluster=~\"$cluster\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "p90 {{cluster}} {{cluster_queue}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, cluster, cluster_queue) (rate(kueue_admission_wait_time_seconds_bucket{cluster=~\"$cluster\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "p99 {{cluster}} {{cluster_queue}}"
         }
       ],
       "fieldConfig": {
@@ -1158,8 +1238,8 @@
     },
     {
       "type": "timeseries",
-      "title": "실행 시간 (평균)",
-      "description": "입장부터 끝날 때까지(30분 창 평균). 끝난 Workload가 없던 구간은 비어 있다",
+      "title": "실행 시간 (평균 · p90 · p99)",
+      "description": "입장부터 끝날 때까지(30분 창 평균). 끝난 Workload가 없던 구간은 비어 있다. p90 · p99는 30분 창 히스토그램(버킷 경계로 근사). 굶주림(일부만 오래 기다림)은 평균에 묻히므로 p99를 같이 본다",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1172,7 +1252,25 @@
             "uid": "prometheus"
           },
           "expr": "sum by (cluster, cluster_queue) (increase(kueue_execution_time_seconds_sum{cluster=~\"$cluster\", replica_role=\"leader\"}[30m])) / sum by (cluster, cluster_queue) (increase(kueue_execution_time_seconds_count{cluster=~\"$cluster\", replica_role=\"leader\"}[30m]) > 0)",
-          "legendFormat": "{{cluster}} {{cluster_queue}}"
+          "legendFormat": "평균 {{cluster}} {{cluster_queue}}"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, cluster, cluster_queue) (rate(kueue_execution_time_seconds_bucket{cluster=~\"$cluster\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "p90 {{cluster}} {{cluster_queue}}"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.99, sum by (le, cluster, cluster_queue) (rate(kueue_execution_time_seconds_bucket{cluster=~\"$cluster\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "p99 {{cluster}} {{cluster_queue}}"
         }
       ],
       "fieldConfig": {
@@ -1228,6 +1326,188 @@
       }
     },
     {
+      "type": "timeseries",
+      "title": "단계별 대기 (p50 · p90)",
+      "description": "관리 클러스터에서 단계마다 걸린 시간: 쿼터 확보(만들어진 뒤 쿼터 예약까지) → 배정 확인(MultiKueue가 EKS에 배정하고 admission check가 통과할 때까지). 30분 창 히스토그램. 어느 단계에서 막히는지 본다. 그다음 단계(Pod Ready)는 오른쪽",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, cluster) (rate(kueue_quota_reserved_wait_time_seconds_bucket{cluster=\"onprem-manager\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "쿼터 확보 p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, cluster) (rate(kueue_quota_reserved_wait_time_seconds_bucket{cluster=\"onprem-manager\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "쿼터 확보 p90"
+        },
+        {
+          "refId": "C",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, cluster) (rate(kueue_admission_checks_wait_time_seconds_bucket{cluster=\"onprem-manager\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "배정 확인 p50"
+        },
+        {
+          "refId": "D",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, cluster) (rate(kueue_admission_checks_wait_time_seconds_bucket{cluster=\"onprem-manager\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "배정 확인 p90"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "points",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "always",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 24,
+      "gridPos": {
+        "x": 0,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Pod Ready 대기 (p50 · p90)",
+      "description": "입장한 뒤 학습 Pod가 모두 Ready가 될 때까지(관리 클러스터, 30분 창 히스토그램). 점선 20분 = Kueue waitForPodsReady 타임아웃: 넘으면 Workload가 내려가므로(evict) 선과의 거리가 남은 여유다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.5, sum by (le, cluster) (rate(kueue_admitted_until_ready_wait_time_seconds_bucket{cluster=\"onprem-manager\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "Pod Ready p50"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "histogram_quantile(0.9, sum by (le, cluster) (rate(kueue_admitted_until_ready_wait_time_seconds_bucket{cluster=\"onprem-manager\", replica_role=\"leader\"}[30m])))",
+          "legendFormat": "Pod Ready p90"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "points",
+            "lineWidth": 1,
+            "fillOpacity": 10,
+            "showPoints": "always",
+            "spanNulls": false,
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "transparent",
+                "value": null
+              },
+              {
+                "color": "#F2495C",
+                "value": 1200
+              }
+            ]
+          },
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "id": 25,
+      "gridPos": {
+        "x": 12,
+        "y": 48,
+        "w": 12,
+        "h": 8
+      }
+    },
+    {
       "type": "row",
       "title": "LocalQueue",
       "collapsed": false,
@@ -1235,7 +1515,7 @@
       "id": 20,
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 56,
         "w": 24,
         "h": 1
       }
@@ -1306,7 +1586,7 @@
       "id": 21,
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 57,
         "w": 12,
         "h": 8
       }
@@ -1377,7 +1657,7 @@
       "id": 22,
       "gridPos": {
         "x": 12,
-        "y": 49,
+        "y": 57,
         "w": 12,
         "h": 8
       }
