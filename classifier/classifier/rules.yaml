@@ -3,20 +3,26 @@
 
 # 이벤트를 만들지 않는 신호
 ignore:
-  xid: [45]            # 앞선 오류의 뒤처리. 컨트롤러 조치가 만드는 Xid라 루프 방지
+  xid: [45, 174]       # 45 = 앞선 오류의 뒤처리, 174 = 프로세스가 죽었다는 정보. 둘 다 컨트롤러 조치가 만드는 Xid라 루프 방지
   exit_code: [0]       # 정상 완료. 종료 코드는 알람에 있을 때만 본다. 펜싱 종료는 job.lifecycle로 거른다(ADR-43)
   reason: [Completed]  # 정상 완료 (종료 코드 0과 같은 뜻)
 
 # 위에서부터 먼저 맞는 행
-# 64 · 94 · 95 · 119 근거 = NVIDIA Xid 카탈로그(Xid-Catalog.xlsx, XIDs 시트 즉시 조치 열, 11/25 확인) · docs/classifier.md 3.2절
+# 64 · 94 · 95 · 119와 그 뒤 추가분 근거 = NVIDIA Xid 카탈로그(Xid-Catalog.xlsx, XIDs 시트 즉시 조치 열, 11/25 확인) · docs/classifier.md 3.2절
+# T4에서 날 수 있는 번호 = 카탈로그 A100 열 YES이고 T4에 없는 기능(NVLink · C2C · vGPU · 오류 격리 · 없는 엔진 등)이 아닌 것
 xid:
   - {xids: [13, 31, 43, 68, 109], category: app, action: restart_in_place, confidence: 0.8}
   - {xids: [94], category: hw, action: restart_in_place, confidence: 0.8}      # 격리된 메모리 오류: RESTART_APP. A100부터, T4엔 없음
+  - {xids: [11, 25, 32, 69, 83], category: app, action: restart_in_place, confidence: 0.7}  # 푸시 버퍼 · PBDMA · 클래스 오류 · NVDEC1: RESTART_APP
+  - {xids: [8, 60, 70, 71, 72, 75, 76, 77, 85, 183], category: driver, action: restart_in_place, confidence: 0.6}  # 처리 멈춤 · SEC2 · 복사 엔진 CE3~9 · GSP 메모리 부족: RESTART_APP
   - {xids: [48], category: hw, action: reset_then_migrate, confidence: 0.9}
-  - {xids: [64, 95], category: hw, action: reset_then_migrate, confidence: 0.85}  # 페이지 폐기 기록 실패 · 격리 안 된 오류: RESET_GPU (95는 T4엔 없음)
-  - {xids: [119], category: driver, action: reset_then_migrate, confidence: 0.5}  # GSP RPC 타임아웃: RESET_GPU. 원인 후보 6가지라 낮게
+  - {xids: [64, 95, 140, 175], category: hw, action: reset_then_migrate, confidence: 0.85}  # 페이지 폐기 기록 실패 · 격리 안 된 오류 · 복구 못 한 ECC · 메모리 부분 정지: RESET_GPU (95는 T4엔 없음)
+  - {xids: [62, 158], category: hw, action: reset_then_migrate, confidence: 0.7}  # PMU 정지 · GPU 치명 타임아웃: RESET_GPU
+  - {xids: [119, 120, 184], category: driver, action: reset_then_migrate, confidence: 0.5}  # GSP RPC 타임아웃 · GSP 오류 · BAD_TSG: RESET_GPU. 원인 후보가 넓어 낮게
   - {xids: [79], category: hw, action: isolate_migrate, confidence: 0.95}
   - {xids: [63, 92], category: hw_warn, action: none, confidence: 0.9}
+  - {xids: [37, 38, 44, 66, 67, 154], category: driver, action: none, confidence: 0.9}  # 드라이버 펌웨어 오류(IGNORE) · 154 복구 힌트(조치는 같이 난 Xid가 정함). 기록만
+  - {xids: [171, 172], category: hw, action: none, confidence: 0.9}  # 48의 DRAM/SRAM 구분 보조 정보. 조치는 48이 함
 
 signal:
   spot: {category: infra, action: evacuate_preemptive, confidence: 1.0}

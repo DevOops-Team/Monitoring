@@ -73,7 +73,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 
 | 조건 | 결과 | 근거 |
 |---|---|---|
-| Xid 45 | 이벤트 없음(버림) | 앞선 오류의 뒤처리이고 컨트롤러 조치가 만드는 Xid라 루프가 된다 ([worker-agents.md](worker-agents.md)) |
+| Xid 45 · 174 | 이벤트 없음(버림) | 45 = 앞선 오류의 뒤처리, 174 = 프로세스가 죽었다는 정보(카탈로그 `IGNORE`). 둘 다 컨트롤러 조치(Pod 종료)가 만드는 Xid라 사건을 내면 루프가 된다 ([worker-agents.md](worker-agents.md)) |
 | 종료 사유 `Completed`, 종료 코드 0(코드가 있을 때) | 이벤트 없음 | 정상 완료. 펜싱 종료는 아래 「의도된 종료」로 걸러진다(ADR-43, 옛 종료 코드 75는 11/25 GPU-223에서 무시 목록에서 뺌) |
 | 의도된 종료(4절) | 이벤트 없음 | 김현수 답 2026-11-18 (GPU-120) |
 | `collector_healthy=false`이고 site가 아님 | 표의 `category`는 그대로, `suggested_action=hold` · `confidence` 0.5 | 스키마 강제 규칙. 예시 08 |
@@ -84,14 +84,24 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 |---|---|---|---|---|
 | 13 · 31 · 43 · 68 · 109 | `app` | `restart_in_place` | 0.8 | NVIDIA device plugin이 「앱 오류」로 보고 GPU 건강 검사에서 빼는 목록. 예시 03 |
 | 94 | `hw` | `restart_in_place` | 0.8 | 격리된 메모리 오류: 그 앱만 영향, 다른 앱은 그대로. 카탈로그 즉시 조치 `RESTART_APP`(GPU 리셋은 편할 때). 오류 격리는 A100부터라 **T4에선 안 나옴** |
+| 11 · 25 · 32 · 69 · 83 | `app` | `restart_in_place` | 0.7 | 푸시 버퍼 오류(11 · 25) · PBDMA 오류(32) · 그래픽 클래스 오류(69) · NVDEC1(83, 68과 같은 종류). 카탈로그 즉시 조치 `RESTART_APP`. 32는 카탈로그 「XID Parsing Policy」가 31과 함께 User-App으로 분류 |
+| 8 · 60 · 70 · 71 · 72 · 75 · 76 · 77 · 85 · 183 | `driver` | `restart_in_place` | 0.6 | GPU 처리 멈춤(8) · SEC2(60) · 복사 엔진 CE3~CE9 · GSP 메모리 부족(183). 카탈로그 `RESTART_APP`. 앱 탓이라 단정할 근거가 없어 `driver` · 낮은 confidence |
 | 48 | `hw` | `reset_then_migrate` | 0.9 | 고칠 수 없는 2비트 ECC 오류. 예시 02 |
-| 64 · 95 | `hw` | `reset_then_migrate` | 0.85 | 64 = 메모리 페이지 폐기(T4) · 행 리매핑(Ampere 이후) 기록 실패, 95 = 격리 안 된 메모리 오류(여러 앱 영향, A100부터라 **T4에선 안 나옴**). 둘 다 카탈로그 즉시 조치 `RESET_GPU` |
-| 119 | `driver` | `reset_then_migrate` | 0.5 | GSP RPC 타임아웃. 카탈로그 즉시 조치 `RESET_GPU`, 조사 조치 `REPORT_ISSUE`. 원인 후보가 HW · 드라이버 · 메모리 · 버스 · 열 · FB로 넓어 confidence를 낮게. 3번 연속이면 드라이버가 Xid 154를 함께 낸다 |
+| 64 · 95 · 140 · 175 | `hw` | `reset_then_migrate` | 0.85 | 64 = 메모리 페이지 폐기(T4) · 행 리매핑(Ampere 이후) 기록 실패, 95 = 격리 안 된 메모리 오류(여러 앱 영향, A100부터라 **T4에선 안 나옴**), 140 = 복구 못 한 ECC, 175 = 메모리 부분 정지. 모두 카탈로그 즉시 조치 `RESET_GPU` |
+| 62 · 158 | `hw` | `reset_then_migrate` | 0.7 | PMU(내부 마이크로컨트롤러) 정지 · GPU 치명 타임아웃. 카탈로그 `RESET_GPU` |
+| 119 · 120 · 184 | `driver` | `reset_then_migrate` | 0.5 | GSP RPC 타임아웃 · GSP 오류(119 짝) · BAD_TSG(리셋 전까지 새 GPU 컨텍스트 못 만듦). 카탈로그 `RESET_GPU`, 119 · 120 조사 조치 `REPORT_ISSUE`. 원인 후보가 HW · 드라이버 · 메모리 · 버스 · 열 · FB로 넓어 confidence를 낮게. 119가 3번 연속이면 드라이버가 Xid 154를 함께 낸다 |
 | 79 | `hw` | `isolate_migrate` | 0.95 | GPU가 버스에서 떨어짐. 예시 01 |
 | 63 · 92 | `hw_warn` | `none` | 0.9 | 페이지 폐기 기록 · 1비트 오류 빈발. 전조라 기록만 (fault-event.md 3절, MON-STD-03) |
+| 37 · 38 · 44 · 66 · 67 · 154 | `driver` | `none` | 0.9 | 드라이버 펌웨어 오류(카탈로그 `IGNORE`) · 154 = 드라이버가 복구 조치 힌트를 바꿈. 기록만. 154는 다른 Xid와 함께 나고 조치는 그 Xid가 정한다. 힌트 문구(리셋 · 재부팅 등)는 dcgm 경로로 안 와서 커널 로그 경로(GPU-218)가 생기면 다시 본다 |
+| 171 · 172 | `hw` | `none` | 0.9 | 48의 보조 정보(DRAM · SRAM 구분). 조치는 48이 한다 |
 | 그 밖 | `hw` | `hold` | 0.3 | 표에 없는 번호는 사람이 본다. 5절 |
 
 64 · 94 · 95 · 119 근거(11/25, GPU-225): NVIDIA Xid 카탈로그 `Xid-Catalog.xlsx`(https://docs.nvidia.com/deploy/xid-errors/analyzing-xid-catalog.html 에서 받음)의 XIDs 시트 「Tenant In-Operation Action」(즉시 조치) 열과 Guidance Classes 시트 정의, 그리고 옛 판 원문(https://docs.nvidia.com/deploy/xid-errors/archive/index.html 4.7 · 4.11 · 4.13절). `reset_then_migrate`는 컨트롤러에서 「격리 + 예비로 이전, GPU 리셋은 나중에 사람이」다(fault-event.md 3.1). 우리 GPU = Tesla T4 · 드라이버 580.178.04(11/25 dcgm 라벨).
+
+나머지 번호(11/25, GPU-225 2차, 사용자 결정 「T4에서 날 수 있으면 웬만하면 다」): 카탈로그에는 T4 열이 없어서 **A100 열이 YES이고 T4에 없는 기능에 붙은 번호가 아닌 것**을 넣었다. 실제로 T4에서 안 나는 번호가 섞여도 판정이 안 쓰일 뿐 해는 없다. 즉시 조치 → 우리 조치는 `RESET_GPU` → `reset_then_migrate`, `RESTART_APP` → `restart_in_place`, `IGNORE` → `none`(기록만).
+
+- **뺀 번호**(표에 없음 = `hold`): A100 열이 NO인 번호(Hopper 이후) · 46(Windows 전용) · 78(vGPU) · 82 · 86 · 84 · 88 · 89(T4에 없는 NVJPG · OFA · NVDEC2~4) · 106 · 107(SMBPBI 시험 메시지) · 108 · 137(NVLink) · 178(오류 격리 계열, A100부터) · 168(ECC가 꺼졌을 때만)
+- **카탈로그와 다르게 둔 기존 행**: 43 = 카탈로그 `IGNORE`인데 우리는 `restart_in_place`(device plugin 앱 오류 목록, 그 앱은 이미 죽음) · 109 = 카탈로그 `XID_154_EVAL` · 79 = `CONTACT_SUPPORT`(`isolate_migrate`가 같은 뜻) · 63 = `RESET_GPU_DEFERRED`(작업이 끝난 뒤 리셋) → 학습을 멈출 일이 아니라 `none` 유지
 
 ### 3.3 Xid가 아닌 신호
 
@@ -193,7 +203,7 @@ Pod 2개가 서로 다른 노드에 뜨고, 쿠버네티스 Lease `classifier`�
 ## 8. 확인 필요
 
 - [x] (나) Xid 64 · 94 · 95 · 119를 NVIDIA 문서 원문과 대조해 3.2절에 추가 (11/25, GPU-225)
-- [ ] (나) 카탈로그가 바뀐 번호 검토: 63은 즉시 조치가 `RESET_GPU_DEFERRED`(작업 뒤 리셋)로 바뀜 — 지금 `none`. 79는 `CONTACT_SUPPORT`로 바뀜 — `isolate_migrate` 그대로 맞음
+- [x] (나) 카탈로그가 바뀐 번호 검토(11/25, GPU-225): 63 `RESET_GPU_DEFERRED`(작업 뒤 리셋) → `none` 유지, 79 `CONTACT_SUPPORT` → `isolate_migrate` 그대로 맞음. 같은 날 T4에서 날 수 있는 나머지 Xid 29개 추가(3.2절)
 - [x] dcgm-exporter 지표의 라벨 이름(`node` · `UUID`) 확인 — 11/19 EKS(T4 · 4.8.4)에서 둘 다 그대로 나온다. 수정 없음. (원래 걱정: 다르면 커널 로그 경로와 DCGM 경로의 `dedup_key` 대상이 달라져 같은 Xid가 두 건으로 나간다)
 - [x] (나, EKS overlay) KSM `--metric-labels-allowlist`에 `nodes=[topology.kubernetes.io/zone]` 추가 — `deploy/agents/overlays/eks`(11/18). kind에서 `az`가 채워지는 것 확인. EKS가 아닌 클러스터는 `az`가 `unknown`
 - [x] 분류기용 Alertmanager 라우트(`pipeline=failover`)는 `group_wait` 0초 · `repeat_interval` 1분 — `deploy/values/alertmanager.yaml`(11/18). 기본 4시간이면 분류기가 놓친 알람(재시작으로 사라진 대기 신호 · Kafka 전달 실패)이 다시 오지 않는다. 다시 온 알람은 중복 제거로 걸러진다
