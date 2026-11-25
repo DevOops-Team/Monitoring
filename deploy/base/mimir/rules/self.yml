@@ -86,3 +86,79 @@ groups:
         annotations:
           summary: '모니터링 {{ $labels.workload }} Ready 0개 — 그 기능이 멈췄다'
           standard: MON-STD-22
+
+      # 수집 자체가 죽은 경우 (MON-STD-15). Agent가 전부 죽으면 그 클러스터의 지표가 0이 되는 것이 아니라 통째로 사라진다
+      # → up == 0도, Pod 수 룰도, HOLD · 컨트롤러 알람도 같이 조용해진다. 그래서 「없음」을 직접 본다.
+      # absent()가 아니라 absent_over_time([2m]): 죽은 Agent의 마지막 값이 조회에 5분 남아 absent()는 5분 뒤에야 참이 된다.
+      # Agent는 2개이고 하나가 죽으면 30초 안에 다른 쪽 것이 저장되므로 2분 빈칸은 둘 다 죽었을 때만 생긴다.
+      # EKS는 여기서 보지 않는다(Agent 지표 끊김 = FailoverSiteDown이 분류기로 보낸다)
+      - alert: MonitoringAgentAbsent
+        expr: >
+          absent_over_time(up{job="prometheus-agent", cluster="monitoring"}[2m])
+          or
+          absent_over_time(up{job="prometheus-agent", cluster="onprem-manager"}[2m])
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.cluster }} 클러스터의 Prometheus Agent 지표가 2분째 없다 — 그 클러스터를 보는 알람(Pod 수 · HOLD · 복구 컨트롤러 등)이 전부 꺼져 있다'
+          standard: MON-STD-15
+
+      # Agent는 살아 있는데 kube-state-metrics가 없거나 응답하지 않는다. Pod 수 룰(MonitoringReplicas* · Workload*) ·
+      # FailoverPodExit · FailoverGpuNodeLost · FailoverJobFailed · 하트비트 알람이 모두 이 지표에 기대므로, 없으면 그 알람들이 조용해진다.
+      # 대상 클러스터를 적어 둔다(kind 시험 클러스터가 같은 Mimir에 보낼 때가 있다). 일부러 내리는 EKS(펜싱됨)는 뺀다
+      # 펜싱 제외는 관리 클러스터가 낸 EKS 이름에만 건다: 이름이 monitoring · onprem-manager인 항목이 생겨도 그 클러스터의 알람이 꺼지지 않게
+      - alert: MonitoringKsmAbsent
+        expr: >
+          (
+            count by (cluster) (up{job="prometheus-agent", cluster=~"monitoring|onprem-manager|eks-(a|b|c)"})
+            unless on (cluster)
+            (up{job="kube-state-metrics"} == 1)
+          )
+          unless on (cluster)
+          label_replace(kube_customresource_multikueuecluster_info{cluster="onprem-manager", fenced="true", name=~"eks-(a|b|c)"}, "cluster", "$1", "name", "(.+)")
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.cluster }} 클러스터의 kube-state-metrics가 5분째 없거나 응답하지 않는다 — Pod 수 · Pod 종료 · 노드 소실 알람이 그 클러스터에서 꺼져 있다'
+          standard: MON-STD-15
+
+      # 로그 경로 (MON-STD-32): Fluent Bit → (관리 클러스터 · EKS는 OTel 게이트웨이) → Loki. 지표 경로와 따로라서 지표가 멀쩡해도 로그만 끊길 수 있다.
+      # Fluent Bit Pod가 전부 죽은 것은 WorkloadDown · EksWorkloadDown 몫이다(그때는 아래 지표 자체가 없다)
+
+      # 1) Fluent Bit이 로그를 버렸다: 재시도 한도를 넘겨 포기했거나(retries_failed) 버렸다(dropped). 평소 둘 다 0이다
+      - alert: LogShippingDropping
+        expr: >
+          (
+            sum by (cluster) (increase(fluentbit_output_dropped_records_total[10m]))
+            + sum by (cluster) (increase(fluentbit_output_retries_failed_total[10m]))
+          ) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.cluster }} Fluent Bit이 로그를 버리고 있다 — 받는 쪽(Loki · OTel 게이트웨이)이 못 받는 중. 그 구간 로그는 Loki에 없다'
+          standard: MON-STD-32
+
+      # 2) Fluent Bit은 떠 있는데 10분째 한 줄도 못 내보냈다(평소 관리 클러스터 약 26줄/초, 모니터링 약 6줄/초, 3일 최저 3줄/초).
+      # 일부러 내리는 EKS(펜싱됨)는 뺀다
+      - alert: LogShippingStopped
+        expr: >
+          (sum by (cluster) (rate(fluentbit_output_proc_records_total{cluster=~"monitoring|onprem-manager|eks-(a|b|c)"}[10m])) == 0)
+          unless on (cluster)
+          label_replace(kube_customresource_multikueuecluster_info{cluster="onprem-manager", fenced="true", name=~"eks-(a|b|c)"}, "cluster", "$1", "name", "(.+)")
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.cluster }} Fluent Bit이 20분째 로그를 한 줄도 못 내보냈다 — 입력(로그 파일 · journald) 또는 출력이 막혔다'
+          standard: MON-STD-32
+
+      # 3) Loki에 아무 로그도 안 들어온다(평소 약 37줄/초, 3일 최저 1.8줄/초). 모든 클러스터의 로그가 끊긴 것
+      - alert: LokiIngestStopped
+        expr: sum(rate(loki_distributor_lines_received_total{cluster="monitoring"}[10m])) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Loki에 20분째 로그가 한 줄도 안 들어왔다 — 모든 클러스터의 로그 수집이 끊겼다(Loki 수신 · 서비스 VIP 172.30.0.35:3100 확인)'
+          standard: MON-STD-32

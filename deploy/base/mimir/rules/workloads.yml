@@ -1,0 +1,81 @@
+# 워크로드 Pod 수 (MON-STD-31). 사람용(Slack)이고 분류기 입력이 아니다.
+# MonitoringTargetDown(up == 0)은 대상이 남아 있는데 응답이 없을 때만 운다. Pod가 지워지거나 0개가 되면 시계열이 사라져 울지 않는다.
+# 그래서 kube-state-metrics가 내는 「원하는 수 · Ready 수」를 직접 비교한다. 지표를 안 긁는 워크로드(dispatcher · relocator · collector 등)도 잡힌다.
+# 모니터링 클러스터 monitoring 네임스페이스의 Deployment · StatefulSet은 self.yml의 MonitoringReplicas*가 이미 보므로 뺀다.
+groups:
+  - name: workloads
+    rules:
+      # 원하는 수보다 적다. 10분 = 하나씩 교체하는 배포 동안 울리지 않게(self.yml과 같은 기준).
+      # DaemonSet은 여기서 보지 않는다: 노드 하나가 죽으면 DaemonSet마다 하나씩 울고, 그 경우는 MonitoringTargetDown(kubelet · node-exporter)이 알린다
+      - alert: WorkloadReplicasDegraded
+        expr: >
+          label_replace(
+            (kube_deployment_status_replicas_available{cluster=~"monitoring|onprem-manager"}
+              < kube_deployment_spec_replicas{cluster=~"monitoring|onprem-manager"})
+            unless kube_deployment_spec_replicas{cluster="monitoring", namespace="monitoring"},
+            "workload", "$1", "deployment", "(.+)")
+          or
+          label_replace(
+            (kube_statefulset_status_replicas_ready{cluster=~"monitoring|onprem-manager"}
+              < kube_statefulset_replicas{cluster=~"monitoring|onprem-manager"})
+            unless kube_statefulset_replicas{cluster="monitoring", namespace="monitoring"},
+            "workload", "$1", "statefulset", "(.+)")
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.cluster }} · {{ $labels.namespace }}/{{ $labels.workload }} Ready {{ $value }}개 — 원하는 개수보다 적다'
+          standard: MON-STD-31
+
+      # 하나도 Ready가 아니다 = 그 기능이 멈췄다. DaemonSet도 본다(전부 0개일 때만).
+      # 복구 컨트롤러는 RecoveryControllerDown이 따로 알리므로 뺀다
+      - alert: WorkloadDown
+        expr: >
+          label_replace(
+            ((kube_deployment_status_replicas_available{cluster=~"monitoring|onprem-manager"} == 0)
+              and (kube_deployment_spec_replicas{cluster=~"monitoring|onprem-manager"} > 0))
+            unless kube_deployment_spec_replicas{cluster="monitoring", namespace="monitoring"}
+            unless kube_deployment_spec_replicas{cluster="onprem-manager", namespace="platform", deployment="recovery-controller"},
+            "workload", "$1", "deployment", "(.+)")
+          or
+          label_replace(
+            ((kube_statefulset_status_replicas_ready{cluster=~"monitoring|onprem-manager"} == 0)
+              and (kube_statefulset_replicas{cluster=~"monitoring|onprem-manager"} > 0))
+            unless kube_statefulset_replicas{cluster="monitoring", namespace="monitoring"},
+            "workload", "$1", "statefulset", "(.+)")
+          or
+          label_replace(
+            (kube_daemonset_status_number_ready{cluster=~"monitoring|onprem-manager"} == 0)
+              and (kube_daemonset_status_desired_number_scheduled{cluster=~"monitoring|onprem-manager"} > 0),
+            "workload", "$1", "daemonset", "(.+)")
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.cluster }} · {{ $labels.namespace }}/{{ $labels.workload }} Ready 0개 — 그 기능이 멈췄다'
+          standard: MON-STD-31
+
+      # EKS는 0개일 때만 본다(Kueue · JobSet · KSM · Agent · dcgm-exporter · device plugin 등).
+      # 「적다」는 보지 않는다: 스팟 노드가 드나들 때마다 DaemonSet이 잠깐 모자라고, 노드가 죽은 것은 FailoverGpuNodeLost가 알린다.
+      # 일부러 내리는 EKS(펜싱됨)는 뺀다. 5분 = 켠 직후 Pod가 뜨는 동안 울리지 않게
+      - alert: EksWorkloadDown
+        expr: >
+          (
+            label_replace(
+              (kube_deployment_status_replicas_available{cluster=~"eks-(a|b|c)"} == 0)
+                and (kube_deployment_spec_replicas{cluster=~"eks-(a|b|c)"} > 0),
+              "workload", "$1", "deployment", "(.+)")
+            or
+            label_replace(
+              (kube_daemonset_status_number_ready{cluster=~"eks-(a|b|c)"} == 0)
+                and (kube_daemonset_status_desired_number_scheduled{cluster=~"eks-(a|b|c)"} > 0),
+              "workload", "$1", "daemonset", "(.+)")
+          )
+          unless on (cluster)
+          label_replace(kube_customresource_multikueuecluster_info{cluster="onprem-manager", fenced="true", name=~"eks-(a|b|c)"}, "cluster", "$1", "name", "(.+)")
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.cluster }} · {{ $labels.namespace }}/{{ $labels.workload }} Ready 0개 — 그 EKS에서 그 기능이 멈췄다'
+          standard: MON-STD-31
