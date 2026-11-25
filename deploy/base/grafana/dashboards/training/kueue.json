@@ -108,7 +108,7 @@
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 3,
+        "w": 6,
         "h": 4
       }
     },
@@ -172,9 +172,9 @@
       },
       "id": 2,
       "gridPos": {
-        "x": 3,
+        "x": 6,
         "y": 0,
-        "w": 4,
+        "w": 6,
         "h": 4
       }
     },
@@ -234,199 +234,9 @@
       },
       "id": 3,
       "gridPos": {
-        "x": 7,
+        "x": 12,
         "y": 0,
-        "w": 3,
-        "h": 4
-      }
-    },
-    {
-      "type": "stat",
-      "title": "GPU 사용",
-      "description": "학습 큐(cq-heavy · cq-light)가 쓰는 GPU ÷ 학습 큐 nominal 쿼터 합. 복구 큐(cq-recovery)는 빌려주지 않으므로(lendingLimit 0) 분모에서 뺀다 → 옆 「복구 큐」. 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(max by (cluster_queue) (kueue_cluster_queue_resource_usage{cluster=\"onprem-manager\", replica_role=\"leader\", resource=\"nvidia.com/gpu\", cluster_queue!=\"cq-recovery\"})) / sum(max by (cluster_queue) (kueue_cluster_queue_nominal_quota{cluster=\"onprem-manager\", replica_role=\"leader\", resource=\"nvidia.com/gpu\", cluster_queue!=\"cq-recovery\"}))"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percentunit",
-          "color": {
-            "mode": "thresholds"
-          },
-          "noValue": "-",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#73BF69",
-                "value": null
-              },
-              {
-                "color": "#FF9830",
-                "value": 0.9
-              }
-            ]
-          },
-          "mappings": []
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "textMode": "auto",
-        "justifyMode": "auto",
-        "text": {
-          "valueSize": 36
-        }
-      },
-      "id": 4,
-      "gridPos": {
-        "x": 10,
-        "y": 0,
-        "w": 4,
-        "h": 4
-      }
-    },
-    {
-      "type": "stat",
-      "title": "복구 큐",
-      "description": "복구 큐(cq-recovery)가 지금 쓰는 GPU 수. 평소 0, 복구 작업이 돌 때만 오른다. 관리 클러스터 기준",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(max by (cluster_queue) (kueue_cluster_queue_resource_usage{cluster=\"onprem-manager\", replica_role=\"leader\", resource=\"nvidia.com/gpu\", cluster_queue=\"cq-recovery\"})) or vector(0)"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "short",
-          "color": {
-            "mode": "thresholds"
-          },
-          "noValue": "-",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#73BF69",
-                "value": null
-              }
-            ]
-          },
-          "mappings": []
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "textMode": "auto",
-        "justifyMode": "auto",
-        "text": {
-          "valueSize": 36
-        }
-      },
-      "id": 23,
-      "gridPos": {
-        "x": 14,
-        "y": 0,
-        "w": 3,
-        "h": 4
-      }
-    },
-    {
-      "type": "stat",
-      "title": "입장 대기",
-      "description": "Workload가 만들어진 뒤 입장까지 걸린 시간 평균(선택한 시간 범위 안에서 입장한 것). 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
-      "datasource": {
-        "type": "prometheus",
-        "uid": "prometheus"
-      },
-      "targets": [
-        {
-          "refId": "A",
-          "datasource": {
-            "type": "prometheus",
-            "uid": "prometheus"
-          },
-          "expr": "sum(increase(kueue_admission_wait_time_seconds_sum{cluster=\"onprem-manager\", replica_role=\"leader\"}[$__range])) / sum(increase(kueue_admission_wait_time_seconds_count{cluster=\"onprem-manager\", replica_role=\"leader\"}[$__range]))"
-        }
-      ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "s",
-          "color": {
-            "mode": "thresholds"
-          },
-          "noValue": "-",
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "#73BF69",
-                "value": null
-              }
-            ]
-          },
-          "mappings": []
-        },
-        "overrides": []
-      },
-      "options": {
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "colorMode": "value",
-        "graphMode": "area",
-        "textMode": "auto",
-        "justifyMode": "auto",
-        "text": {
-          "valueSize": 36
-        }
-      },
-      "id": 5,
-      "gridPos": {
-        "x": 17,
-        "y": 0,
-        "w": 4,
+        "w": 6,
         "h": 4
       }
     },
@@ -490,9 +300,199 @@
       },
       "id": 6,
       "gridPos": {
-        "x": 21,
+        "x": 18,
         "y": 0,
-        "w": 3,
+        "w": 6,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "GPU 사용",
+      "description": "학습 큐(cq-heavy · cq-light)가 쓰는 GPU ÷ 학습 큐 nominal 쿼터 합. 복구 큐(cq-recovery)는 빌려주지 않으므로(lendingLimit 0) 분모에서 뺀다 → 옆 「복구 큐」. 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(max by (cluster_queue) (kueue_cluster_queue_resource_usage{cluster=\"onprem-manager\", replica_role=\"leader\", resource=\"nvidia.com/gpu\", cluster_queue!=\"cq-recovery\"})) / sum(max by (cluster_queue) (kueue_cluster_queue_nominal_quota{cluster=\"onprem-manager\", replica_role=\"leader\", resource=\"nvidia.com/gpu\", cluster_queue!=\"cq-recovery\"}))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              },
+              {
+                "color": "#FF9830",
+                "value": 0.9
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 4,
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 8,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "복구 큐",
+      "description": "복구 큐(cq-recovery)가 지금 쓰는 GPU 수. 평소 0, 복구 작업이 돌 때만 오른다. 관리 클러스터 기준",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(max by (cluster_queue) (kueue_cluster_queue_resource_usage{cluster=\"onprem-manager\", replica_role=\"leader\", resource=\"nvidia.com/gpu\", cluster_queue=\"cq-recovery\"})) or vector(0)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 23,
+      "gridPos": {
+        "x": 8,
+        "y": 4,
+        "w": 8,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "입장 대기",
+      "description": "Workload가 만들어진 뒤 입장까지 걸린 시간 평균(선택한 시간 범위 안에서 입장한 것). 관리 클러스터 기준(위 cluster 변수와 상관없음): 워커(EKS)의 Workload는 관리 클러스터 것의 복제라 합치면 두 번 센다",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(kueue_admission_wait_time_seconds_sum{cluster=\"onprem-manager\", replica_role=\"leader\"}[$__range])) / sum(increase(kueue_admission_wait_time_seconds_count{cluster=\"onprem-manager\", replica_role=\"leader\"}[$__range]))"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 5,
+      "gridPos": {
+        "x": 16,
+        "y": 4,
+        "w": 8,
         "h": 4
       }
     },
@@ -504,7 +504,7 @@
       "id": 7,
       "gridPos": {
         "x": 0,
-        "y": 4,
+        "y": 8,
         "w": 24,
         "h": 1
       }
@@ -629,7 +629,7 @@
       "id": 8,
       "gridPos": {
         "x": 0,
-        "y": 5,
+        "y": 9,
         "w": 24,
         "h": 8
       }
@@ -642,7 +642,7 @@
       "id": 9,
       "gridPos": {
         "x": 0,
-        "y": 13,
+        "y": 17,
         "w": 24,
         "h": 1
       }
@@ -713,7 +713,7 @@
       "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 14,
+        "y": 18,
         "w": 12,
         "h": 8
       }
@@ -784,7 +784,7 @@
       "id": 11,
       "gridPos": {
         "x": 12,
-        "y": 14,
+        "y": 18,
         "w": 12,
         "h": 8
       }
@@ -855,7 +855,7 @@
       "id": 12,
       "gridPos": {
         "x": 0,
-        "y": 22,
+        "y": 26,
         "w": 12,
         "h": 8
       }
@@ -935,7 +935,7 @@
       "id": 13,
       "gridPos": {
         "x": 12,
-        "y": 22,
+        "y": 26,
         "w": 12,
         "h": 8
       }
@@ -948,7 +948,7 @@
       "id": 14,
       "gridPos": {
         "x": 0,
-        "y": 30,
+        "y": 34,
         "w": 24,
         "h": 1
       }
@@ -1058,7 +1058,7 @@
       "id": 15,
       "gridPos": {
         "x": 0,
-        "y": 31,
+        "y": 35,
         "w": 12,
         "h": 8
       }
@@ -1129,7 +1129,7 @@
       "id": 16,
       "gridPos": {
         "x": 12,
-        "y": 31,
+        "y": 35,
         "w": 12,
         "h": 8
       }
@@ -1142,7 +1142,7 @@
       "id": 17,
       "gridPos": {
         "x": 0,
-        "y": 39,
+        "y": 43,
         "w": 24,
         "h": 1
       }
@@ -1231,7 +1231,7 @@
       "id": 18,
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 44,
         "w": 12,
         "h": 8
       }
@@ -1320,7 +1320,7 @@
       "id": 19,
       "gridPos": {
         "x": 12,
-        "y": 40,
+        "y": 44,
         "w": 12,
         "h": 8
       }
@@ -1418,7 +1418,7 @@
       "id": 24,
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 52,
         "w": 12,
         "h": 8
       }
@@ -1502,7 +1502,7 @@
       "id": 25,
       "gridPos": {
         "x": 12,
-        "y": 48,
+        "y": 52,
         "w": 12,
         "h": 8
       }
@@ -1515,7 +1515,7 @@
       "id": 20,
       "gridPos": {
         "x": 0,
-        "y": 56,
+        "y": 60,
         "w": 24,
         "h": 1
       }
@@ -1586,7 +1586,7 @@
       "id": 21,
       "gridPos": {
         "x": 0,
-        "y": 57,
+        "y": 61,
         "w": 12,
         "h": 8
       }
@@ -1657,7 +1657,7 @@
       "id": 22,
       "gridPos": {
         "x": 12,
-        "y": 57,
+        "y": 61,
         "w": 12,
         "h": 8
       }
