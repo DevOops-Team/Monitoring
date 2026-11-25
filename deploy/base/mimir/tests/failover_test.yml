@@ -502,3 +502,79 @@ tests:
       - eval_time: 6m15s
         alertname: FailoverGpuNodeLost
         exp_alerts: []
+
+  # 18) 작업 3f9a1c2e 세대 1의 JobSet이 5분 5초에 Failed가 됐다(지표에는 5분 15초부터). 죽은 Pod는 바로 지워져 종료 사유 지표가 없다
+  #     실패 시각부터 3분 동안만 울리고 event_ts = 실패 시각, cluster = 그 작업 Pod가 있던 EKS
+  - name: JobSet이 실패하면 Pod가 지워졌어도 실패 시각으로 울린다
+    interval: 15s
+    input_series:
+      - series: 'kube_customresource_jobset_failed_time{job="kube-state-metrics", cluster="onprem-manager", namespace="training", name="job-3f9a1c2e-g0001", job_id="3f9a1c2e", generation="1"}'
+        values: '_x21 305x60'
+      - series: 'kube_pod_labels{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-0", label_devoops_job_id="3f9a1c2e", label_devoops_generation="1"}'
+        values: '1x20 stale'
+      - series: 'kube_pod_labels{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-3f9a1c2e-g0001-workers-0-1", label_devoops_job_id="3f9a1c2e", label_devoops_generation="1"}'
+        values: '1x20 stale'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FailoverJobFailed
+        exp_alerts: []
+      - eval_time: 5m15s
+        alertname: FailoverJobFailed
+        exp_alerts: &jobfailed
+          - exp_labels: {pipeline: failover, signal: job_failed, cluster: eks-a, job_id: 3f9a1c2e, generation: "1"}
+            exp_annotations:
+              event_ts: '1970-01-01T00:05:05Z'
+              log_line: 'jobset failed: job-3f9a1c2e generation 1'
+              summary: '학습 작업 실패: eks-a 3f9a1c2e 세대 1'
+      - eval_time: 8m
+        alertname: FailoverJobFailed
+        exp_alerts: *jobfailed
+      - eval_time: 8m15s
+        alertname: FailoverJobFailed
+        exp_alerts: []
+
+  # 19) 울리지 않는 경우: 오래전에 실패해 남아 있는 JobSet(old), EKS에 Pod가 뜬 적 없는 작업(nopod),
+  #     대상 밖 클러스터(kind-test)에서 돌던 작업(kind), 실패하지 않은 작업(지표 없음)
+  - name: 오래된 실패 · Pod가 없던 작업 · 대상 밖 클러스터는 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'kube_customresource_jobset_failed_time{job="kube-state-metrics", cluster="onprem-manager", namespace="training", name="job-0000000a-g0001", job_id="0000000a", generation="1"}'
+        values: '10x60'
+      - series: 'kube_pod_labels{job="kube-state-metrics", cluster="eks-a", namespace="training", pod="job-0000000a-g0001-workers-0-0", label_devoops_job_id="0000000a", label_devoops_generation="1"}'
+        values: '1x60'
+      - series: 'kube_customresource_jobset_failed_time{job="kube-state-metrics", cluster="onprem-manager", namespace="training", name="job-0000000b-g0001", job_id="0000000b", generation="1"}'
+        values: '_x21 305x60'
+      - series: 'kube_customresource_jobset_failed_time{job="kube-state-metrics", cluster="onprem-manager", namespace="training", name="job-0000000c-g0001", job_id="0000000c", generation="1"}'
+        values: '_x21 305x60'
+      - series: 'kube_pod_labels{job="kube-state-metrics", cluster="kind-test", namespace="training", pod="job-0000000c-g0001-workers-0-0", label_devoops_job_id="0000000c", label_devoops_generation="1"}'
+        values: '1x60'
+      - series: 'kube_pod_labels{job="kube-state-metrics", cluster="eks-b", namespace="training", pod="job-0000000d-g0001-workers-0-0", label_devoops_job_id="0000000d", label_devoops_generation="1"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FailoverJobFailed
+        exp_alerts: []
+      - eval_time: 5m30s
+        alertname: FailoverJobFailed
+        exp_alerts: []
+
+  # 20) 복구로 세대 2가 떴다가 그것도 실패하면 세대마다 따로 울린다(세대 1의 옛 실패는 창 밖)
+  - name: 다음 세대가 실패하면 그 세대로 다시 울린다
+    interval: 15s
+    input_series:
+      - series: 'kube_customresource_jobset_failed_time{job="kube-state-metrics", cluster="onprem-manager", namespace="training", name="job-3f9a1c2e-g0001", job_id="3f9a1c2e", generation="1"}'
+        values: '10x60'
+      - series: 'kube_customresource_jobset_failed_time{job="kube-state-metrics", cluster="onprem-manager", namespace="training", name="job-3f9a1c2e-g0002", job_id="3f9a1c2e", generation="2"}'
+        values: '_x21 305x60'
+      - series: 'kube_pod_labels{job="kube-state-metrics", cluster="eks-b", namespace="training", pod="job-3f9a1c2e-g0002-workers-0-0", label_devoops_job_id="3f9a1c2e", label_devoops_generation="2"}'
+        values: '1x20 stale'
+    alert_rule_test:
+      - eval_time: 5m15s
+        alertname: FailoverJobFailed
+        exp_alerts:
+          - exp_labels: {pipeline: failover, signal: job_failed, cluster: eks-b, job_id: 3f9a1c2e, generation: "2"}
+            exp_annotations:
+              event_ts: '1970-01-01T00:05:05Z'
+              log_line: 'jobset failed: job-3f9a1c2e generation 2'
+              summary: '학습 작업 실패: eks-b 3f9a1c2e 세대 2'
+
