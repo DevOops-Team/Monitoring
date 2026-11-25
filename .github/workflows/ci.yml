@@ -23,6 +23,7 @@
 #   - 배포 봇은 2026-11-19에 연결됐다(Variable DEPLOY_APP_ID · Environment gitops-deploy). 변수가 없으면 deploy를 건너뛴다
 #
 # main 필수 검사로 등록할 이름: "classifier · test" · "classifier · image" · "release-notes / release notes"
+#   (필수는 아니지만 PR에서 도는 것: "rules · test" = 알람 룰 문법 · 단위 테스트)
 name: CI
 
 on:
@@ -99,6 +100,26 @@ jobs:
       - name: test
         working-directory: classifier
         run: python -m pytest -q          # schemas/examples와 같은 판정이 나오는지, 낸 이벤트가 v1 스키마를 통과하는지 포함
+
+  # 알람 룰 검사 (GPU-284). 룰 문법 · 단위 테스트(deploy/base/mimir/tests)와 「룰 파일이 ConfigMap에 등록됐는지」를 본다.
+  #   로컬의 scripts/deploy-k8s.sh --lint-only가 하던 것 중 룰 부분이다. 이미지 태그는 그 스크립트의 PROMETHEUS_IMAGE와 같게 둔다
+  rules:
+    name: rules · test
+    if: github.event_name != 'push'      # main push는 develop → main PR에서 검사한 트리 (GPU-282)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: promtool check · test
+        run: |
+          docker run --rm -v "$PWD/deploy/base/mimir:/mimir:ro" --entrypoint sh prom/prometheus:v3.15.1 -c \
+            'promtool check rules /mimir/rules/*.yml && promtool test rules /mimir/tests/*.yml'
+      - name: 룰 파일이 mimir-rules ConfigMap에 등록됐는지
+        run: |
+          missing=0
+          for f in deploy/base/mimir/rules/*.yml; do
+            grep -q "mimir/rules/$(basename "$f")" deploy/base/kustomization.yaml || { echo "::error file=$f::deploy/base/kustomization.yaml의 mimir-rules에 없다 — 클러스터에 실리지 않는다"; missing=1; }
+          done
+          exit $missing
 
   image:
     name: classifier · image
