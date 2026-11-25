@@ -48,21 +48,22 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 종류 | 이름 | 필수 | 뜻 |
 |---|---|---|---|
 | 라벨 | `pipeline` | 모든 알람 | 값 `failover` |
-| 라벨 | `signal` | 모든 알람 | `xid` · `pod_exit` · `spot` · `site` · `node_lost`(이벤트 `source: node`) |
+| 라벨 | `signal` | 모든 알람 | `xid` · `pod_exit` · `job_failed`(이벤트 `source: pod`) · `spot` · `site` · `node_lost`(이벤트 `source: node`) |
 | 라벨 | `source` | `xid`만 | `dmesg`(커널 로그 경로) 또는 `dcgm`(dcgm-exporter 지표 경로: 필드 230 마지막 번호 + Xid 번호별 횟수). 나머지 신호는 `signal`에서 정해진다 |
 | 라벨 | `cluster` | 모든 알람 | 예 `eks-a` |
-| 라벨 | `node` | `site` 제외 | 노드 이름 |
+| 라벨 | `node` | `site` · `job_failed` 제외 | 노드 이름 |
 | 라벨 | `gpu_uuid` | `xid`(알 수 있을 때) | `GPU-…`. 커널 로그 경로는 PCI 주소만 알므로 비워 두면 분류기가 dcgm-exporter 라벨로 찾는다 |
 | 라벨 | `xid` | `xid` | 번호 |
 | 라벨 | `pod` · `reason` | `pod_exit` | 학습 컨테이너(`trainer`)가 끝난 Pod와 종료 사유(`Error` · `OOMKilled` …) |
+| 라벨 | `job_id` · `generation` | `job_failed` | 실패한 학습 작업과 세대(관리 클러스터 JobSet 라벨 `devoops/job-id` · `devoops/generation`). 이 신호만 알람이 작업을 직접 준다 |
 | 라벨 | `exit_code` | `pod_exit`(알 수 있을 때) | 종료 코드. kube-state-metrics는 재시작하지 않는 컨테이너의 종료 코드를 내지 않아 지금 룰은 비워 보낸다(2026-11-18 kind 확인). 종료 원인은 코드가 아니라 사유와 `job.lifecycle`로 가린다(ADR-43) |
 | annotation | `event_ts` | 모든 알람 | **원본 신호 발생 시각**(UTC). 룰 평가 시각이 아니다 |
 | annotation | `log_line` | 있으면 | 근거가 된 로그 한 줄 |
 
 - 필수 값이 빠진 알람은 이벤트를 만들지 않고 카운터 `classifier_signals_rejected_total`만 올린다.
-- 분류기는 env `ENABLED_SIGNALS`에 적힌 종류만 받는다(기본 `xid,pod_exit`). 그 밖의 `signal`은 계약에 맞아도 이벤트를 만들지 않는다(`outcome="disabled"`). Alertmanager 라우팅이 틀리거나 누가 알람을 직접 넣어도 `site`의 `fence_evacuate`가 나가지 않게 하는 두 번째 잠금이다. `site` · `spot` · `node_lost`를 켤 때는 라우트와 이 값을 같이 바꾼다(`node_lost` 라우트는 2026-11-24에 미리 열어 둠).
-- 룰은 `deploy/base/mimir/rules/failover.yml`에 있다(2026-11-18): `FailoverXidDcgm`(`xid` · `dcgm`) · `FailoverPodExit`(`pod_exit`) · `FailoverSiteDown`(`site`) · `FailoverGpuNodeLost`(`node_lost`, 2026-11-24: GPU 노드만 사라지고 클러스터 지표는 계속 올 때). 커널 로그 경로 Xid와 `spot`은 아직 없다(8절).
-- 룰은 사건 직후 1~2분만 울리고(사이트는 8분), 그동안 `event_ts`가 바뀌지 않게 쓴다. `event_ts`가 평가할 때마다 밀리면 중복 제거 창(±45초)을 벗어나 같은 고장이 여러 번 나간다.
+- 분류기는 env `ENABLED_SIGNALS`에 적힌 종류만 받는다(기본 `xid,pod_exit`). 그 밖의 `signal`은 계약에 맞아도 이벤트를 만들지 않는다(`outcome="disabled"`). Alertmanager 라우팅이 틀리거나 누가 알람을 직접 넣어도 `site`의 `fence_evacuate`가 나가지 않게 하는 두 번째 잠금이다. `site` · `spot` · `node_lost` · `job_failed`를 켤 때는 라우트와 이 값을 같이 바꾼다(`node_lost` 라우트는 2026-11-24에 미리 열어 둠).
+- 룰은 `deploy/base/mimir/rules/failover.yml`에 있다(2026-11-18): `FailoverXidDcgm`(`xid` · `dcgm`) · `FailoverPodExit`(`pod_exit`) · `FailoverSiteDown`(`site`) · `FailoverGpuNodeLost`(`node_lost`, 2026-11-24: GPU 노드만 사라지고 클러스터 지표는 계속 올 때) · `FailoverJobFailed`(`job_failed`, 2026-11-25: 관리 클러스터 JobSet이 실패로 끝남). 커널 로그 경로 Xid와 `spot`은 아직 없다(8절).
+- 룰은 사건 직후 1~3분만 울리고(사이트는 8분), 그동안 `event_ts`가 바뀌지 않게 쓴다. `event_ts`가 평가할 때마다 밀리면 중복 제거 창(±45초)을 벗어나 같은 고장이 여러 번 나간다.
 - `ckpt-init` 종료는 `pod_exit`로 보내지 않는다. 복구 컨트롤러가 `job.init_failed`를 직접 구독한다.
 
 ## 3. 판정 표 (초안, 값은 전부 가설)
@@ -111,6 +112,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `site` | 클러스터 수집 끊김 | `site` | `fence_evacuate` | 0.7 | **그때 돌던 작업마다 1건**(컨트롤러가 사건 1건 = 작업 1개로 대피). `job.lifecycle`로 펜싱 · 중단 · 옛 세대인 작업은 뺀다(못 읽으면 작업마다 `hold`). VPN 단절과 구분은 컨트롤러가 한다(fault-event.md 4절). 예시 06. `node` · `gpu_uuid`는 null |
 | `node_lost` | GPU 노드가 NotReady · 삭제(클러스터 지표는 계속 옴) | `infra` | `isolate_migrate` | 0.8 | **노드마다 1건, 그 노드에서 돌던 작업만**. 같은 작업의 다른 노드도 사라지면 노드마다 나가고 둘째 건부터는 컨트롤러가 이미 복구 중이라 닫는다. 자리가 없으면 디스패처가 다른 클러스터로(ADR-38). `job.lifecycle`로 펜싱 · 중단 · 옛 세대인 작업은 뺀다(못 읽으면 `hold`). 예시 10 |
 | `pod_exit` | 종료 사유가 `Completed`가 아님, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | 같은 오류 반복은 컨트롤러가 `refuse`로 올린다 |
+| `job_failed` | 관리 클러스터 JobSet이 실패로 끝남, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | **작업 · 세대마다 1건.** `pod_exit`와 같은 일을 다른 곳에서 본다: JobSet이 Failed가 되면 MultiKueue가 EKS 쪽 JobSet을 바로 지워 죽은 Pod가 약 14초만 보이고, 수집 15초에 한 번도 안 잡히면 `pod_exit`가 안 온다(11/25 주입에서 워커 `kill -9`를 놓침). 관리 클러스터 JobSet은 Failed로 남아 놓치지 않는다. `node`는 null(어느 랭크 · 노드가 죽었는지는 trainer 로그 `Root Cause … rank : N`에 남는다 — 사건에 채우는 것은 아직 안 함). 같은 (job_id, generation)에 `pod_exit` 사건과 겹치면 먼저 낸 쪽만 사건 |
 
 ## 4. 의도된 종료 거르기
 
@@ -120,7 +122,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
   - (job_id, generation)별로 `job.fenced` · `job.cancelled`가 왔는가
   - 작업별 최신 세대(`job.submitted` · `job.resumed` 등에서 본 가장 큰 generation)
 - **`job.failed`는 의도된 종료로 보지 않는다.** 장애로 JobSet이 먼저 Failed가 되면 그 세대의 끝 사건은 `job.failed` 하나뿐이라, 이것을 거르면 진짜 장애가 가려진다.
-- `pod_exit` 신호는 **신호 발생 시각(`event_ts`) + 30초(임시값)** 까지 기다렸다가 판정한다. 알람이 이미 30초 넘게 늦게 왔으면 바로 판정한다. 기다리는 동안 웹훅 응답은 `deferred`이고, 1초마다 도는 타이머가 기한이 된 신호를 판정한다.
+- `pod_exit` · `job_failed` 신호는 **신호 발생 시각(`event_ts`) + 30초(임시값)** 까지 기다렸다가 판정한다. 알람이 이미 30초 넘게 늦게 왔으면 바로 판정한다. 기다리는 동안 웹훅 응답은 `deferred`이고, 1초마다 도는 타이머가 기한이 된 신호를 판정한다.
 
 기한이 되면 위에서부터 본다.
 
@@ -130,14 +132,15 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 같은 (job_id, generation)의 `job.fenced` · `job.cancelled`를 봄 | 버림 (`intended`) |
 | 신호의 generation < 그 작업의 최신 세대 | 버림 (`stale_generation`, 옛 세대의 뒤늦은 종료) |
 | 같은 (job_id, generation)에 원인 사건을 이미 냄 | 버림 (`absorbed`) |
+| 같은 (job_id, generation)에 다른 종류의 종료 사건(`pod_exit` ↔ `job_failed`)을 이미 냄 | 버림 (`absorbed`). 같은 종류끼리는 그대로다(여러 랭크의 `pod_exit`는 Pod마다 나간다) |
 | `job.lifecycle` 읽기가 끊겨 있음 | `hold`로 낸다 (확인할 수 없음) |
-| 위에 해당 없음 | 3.3절 `pod_exit` 행으로 낸다 |
+| 위에 해당 없음 | 3.3절 `pod_exit`(또는 `job_failed`) 행으로 낸다 |
 
 **원인 사건에 묶기.** 한 고장으로 다른 랭크가 줄줄이 죽을 때 `restart_in_place`가 따로 나가지 않게 한다.
 
 - 원인 사건 = `xid` · `spot` · `site` · `node_lost` 신호로 낸 이벤트 중 action이 `hold` · `none`이 아닌 것. Xid 63처럼 기록만 하는 사건은 원인으로 치지 않는다(그 뒤의 Pod 종료는 따로 판정해야 함).
 - 원인 사건을 낼 때 같은 (job_id, generation)의 `pod_exit`가 기다리고 있으면 그 이벤트의 `correlated`에 넣고 대기에서 뺀다.
-- 원인 사건을 낸 뒤에 오는 같은 (job_id, generation)의 `pod_exit`도 버린다. 그 세대는 이미 복구 대상이라 새 사건이 아니다.
+- 원인 사건을 낸 뒤에 오는 같은 (job_id, generation)의 `pod_exit` · `job_failed`도 버린다. 그 세대는 이미 복구 대상이라 새 사건이 아니다.
 - `site` 사건도 작업마다 원인 사건으로 기억한다. 다만 클러스터가 안 보이는 상황이라 그 클러스터의 `pod_exit` 알람은 보통 오지 않는다.
 
 **알아 둘 것**

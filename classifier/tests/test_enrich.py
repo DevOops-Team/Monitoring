@@ -152,3 +152,13 @@ def test_node_lost_no_jobs_only_if_ksm_was_up():
     assert Enricher(FakeMimir(**{"kube-state-metrics": [up]}))(node_lost()).jobs == ()
     assert Enricher(FakeMimir())(node_lost()).jobs is None
     assert Enricher(FakeMimir(kube_pod_labels=RuntimeError("down")))(node_lost()).jobs is None
+
+
+def test_job_failed_takes_job_from_the_alert_and_checks_cluster_collectors_only():
+    """작업 실패 신호는 노드가 없다. 작업 · 세대는 알람 값 그대로, 수집 경로는 클러스터 것만 본다."""
+    s = signal(signal="job_failed", source="pod", node=None, xid=None, job_id="3f9a1c2e", generation=3)
+    mimir = FakeMimir(up=UP[:2])
+    ctx = Enricher(mimir)(s)
+    assert (ctx.job_id, ctx.generation, ctx.collector_healthy, ctx.az) == ("3f9a1c2e", 3, True, "unknown")
+    assert all("fluent-bit" not in e and "kube_pod_labels" not in e for e, _ in mimir.calls)
+    assert Enricher(FakeMimir(up=UP[:1]))(s).collector_healthy is False

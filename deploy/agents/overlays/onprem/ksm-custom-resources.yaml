@@ -3,6 +3,10 @@
 #   객체는 Gitops에 있어 EKS를 지워도 남는다 → 사이트 알람(FailoverSiteDown)이 「펜싱된 클러스터」를 거르는 근거.
 #   결과: 객체마다 한 줄 kube_customresource_multikueuecluster_info{name="eks-a", fenced="true"} 1. 라벨이 없으면 fenced 라벨만 빠진다
 #   fenced를 info 안에 두면 라벨 없는 객체는 줄 자체가 안 나온다 → 「안 붙음」과 「수집 안 됨」을 못 가려서 리소스 수준에 둔다 (11/24 kind 확인)
+# JobSet: 학습 작업이 실패로 끝난 시각. 실패한 JobSet은 EKS 쪽에서는 MultiKueue가 바로 지우지만(죽은 Pod가 약 14초만 보임, 11/25 주입에서
+#   FailoverPodExit이 못 봄) 관리 클러스터에는 Failed로 남는다 → 원인 알람 FailoverJobFailed의 근거 (GPU-220).
+#   결과: 실패한 JobSet만 한 줄 kube_customresource_jobset_failed_time{name, namespace, job_id, generation} <Failed 조건 시각(초)>.
+#   실패하지 않은 JobSet은 경로가 없어 줄이 안 나온다. 그때 KSM이 매번 남기는 오류 로그는 errorLogV로 낮춘다 (11/25 관리 클러스터 JobSet으로 확인)
 kind: CustomResourceStateMetrics
 spec:
   resources:
@@ -17,3 +21,17 @@ spec:
             info:
               labelsFromPath:
                 name: [metadata, name]
+    - groupVersionKind: {group: jobset.x-k8s.io, version: v1alpha2, kind: JobSet}
+      labelsFromPath:
+        name: [metadata, name]
+        namespace: [metadata, namespace]
+        job_id: [metadata, labels, devoops/job-id]
+        generation: [metadata, labels, devoops/generation]
+      metrics:
+        - name: jobset_failed_time
+          help: JobSet이 Failed가 된 시각(초). 실패한 JobSet만 나온다
+          errorLogV: 5
+          each:
+            type: Gauge
+            gauge:
+              path: [status, conditions, "[type=Failed]", lastTransitionTime]
