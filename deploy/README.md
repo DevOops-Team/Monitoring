@@ -33,6 +33,7 @@
 `base/mimir/rules/records.yml` 레코딩 룰 7개: 대시보드용(OOM kill · OTel 거절 · dcgm 감속 시간 · ECC SBE · PCIe 재시도). `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
 `base/mimir/rules/infra.yml` 4개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `base/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 `base/mimir/rules/classifier.yml` 2개(MON-STD-27): 분류기가 없거나 안 긁힘 · `job.lifecycle`을 못 읽음. 단위 테스트는 `base/mimir/tests/classifier_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
+`base/mimir/rules/training.yml` 1개(MON-STD-30): `TrainingStalled` = trainer는 떠 있는데 step이 10분째 안 늘거나 지표가 없음. 단위 테스트는 `base/mimir/tests/training_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 
 `base/mimir/rules/failover.yml` 5개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown` · `FailoverGpuNodeLost` · `FailoverJobFailed`). `FailoverJobFailed`(11/25, GPU-220)는 관리 클러스터 JobSet이 실패로 끝난 것을 본다: 죽은 Pod가 MultiKueue 정리로 약 14초 만에 지워져 `FailoverPodExit`이 못 보는 경우를 잡는다. 라우트와 분류기 `ENABLED_SIGNALS`에 `job_failed`가 들어가 11/25부터 사건으로 나간다(작업 · 세대마다 `restart_in_place` 1건). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료 · GPU 노드 소실 · 사이트는 분류기 웹훅(수신자 `classifier`, 사이트는 11/25부터). 펜싱 안 된 EKS가 사라지면 실제 대피가 나가므로 EKS를 끌 때는 fence부터. 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
@@ -83,7 +84,7 @@ kubectl -n monitoring port-forward svc/prometheus-agent 9090   # Agent 대상 �
 ```
 Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`에 Watchdog. Grafana `http://172.30.0.35:3000` 로그인 후 데이터소스 Mimir · Loki · Tempo.
 
-## 알람이 울리면 (`infra.yml` 11/18 · `classifier.yml` 11/19 · `recovery.yml` 하트비트 11/20 · 컨트롤러 11/25)
+## 알람이 울리면 (`infra.yml` 11/18 · `classifier.yml` 11/19 · `recovery.yml` 하트비트 11/20 · 컨트롤러 11/25 · `training.yml` 11/25)
 
 | 알람 | 뜻 | 먼저 볼 것 |
 |---|---|---|
@@ -98,6 +99,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `RecoveryControllerDown` (critical) | 복구 컨트롤러(관리 클러스터 `platform/recovery-controller`) Ready가 2분째 0개다. `gpu.fault`가 나가도 자동 복구가 시작되지 않는다 | `kubectl -n platform get pod -l app.kubernetes.io/name=recovery-controller`(관리 클러스터)로 상태 → CrashLoopBackOff면 `logs <Pod> -c controller --previous`의 마지막 오류(11/25는 Gitops `config.json`에 없어진 설정 블록이 남아 시작을 거부했다) → 컨트롤러 담당(한송이). 그동안 난 장애는 사람이 본다 |
 | `RecoveryControllerRestarting` (warning) | 컨트롤러 Pod 3개의 재시작이 15분 동안 합쳐 3번 이상이다. 사이사이 Ready로 보여도 같은 사건을 읽을 때마다 죽고 있을 수 있다(11/24 밤 17시간) | `kubectl -n platform logs <Pod> -c controller --previous \| tail`의 오류와 그 직전에 읽은 `event_id` → 아래 `RecoveryControllerStuck`이 같이 울리면 그 사건이 원인이다 → 사건 내용(`gpu.fault`의 그 오프셋)과 함께 컨트롤러 담당. 시험 사건을 보낸 직후라면 그것부터 의심 |
 | `RecoveryControllerStuck` (critical) | 컨트롤러가 `gpu.fault`에 안 읽은 사건을 5분째 남겨 두고 있다(평소 0, 사건 하나는 몇 초). 그 사건과 뒤에 오는 사건의 복구가 모두 멈춰 있다 | 「Kubernetes 워크로드」 cluster = onprem-manager · namespace = platform에서 컨트롤러 Pod가 살아 있는지 · 재시작하는지 → 로그에서 같은 `event_id`가 되풀이되는지(11/25 17:00 `node`가 없는 사건에서 19분) → 컨트롤러 담당. 분류기가 새 종류의 사건을 내기 시작한 직후라면 그 신호를 끌지 사용자와 정한다 |
+| `TrainingStalled` (warning) | trainer가 Running인 작업 · 세대인데 `train_current_step`이 10분째 한 번도 안 늘었거나 지표가 아예 안 들어온다. 복구 뒤 새 세대라면 「Pod는 떴는데 학습은 안 도는」 상태다(11/25 세대 2) | 「학습 작업」에서 그 job_id · 세대를 골라 현재 step이 보이는지 → **아예 안 보이면** 「Kubernetes 워크로드」(그 EKS · training)에서 trainer 재시작 · 종료 사유와 trainer 로그(랭크끼리 주소를 못 찾아 기다리는지 — 11/25는 재제출본에 옛 세대 Pod 주소가 남았다) → 스케줄링 담당(김성모) / **보이는데 멈췄으면** 단계가 저장(checkpoint)인지 · 「GPU」에서 그 노드 사용률이 0인지 · 같은 작업에 Xid · 하트비트 알람이 같이 왔는지 → 데이터 담당(김현수). 자동 복구는 걸리지 않으므로 다시 돌릴지는 사람이 정한다 |
 
 ## 대시보드 (Grafana 폴더 「인프라」 · 「GPU」 · 「학습」)
 

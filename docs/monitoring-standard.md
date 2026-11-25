@@ -69,6 +69,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-09 | 학습 Job | 체크포인트 저장 시간 · 마지막 저장 경과 (학습 Pod 계측) | | | | 경고 저장 주기 × 1.5 · 위험 × 3 | 기준선 (김현수 체크포인트 모듈) | 손실 스텝 상한 런북 | 가설 |
 | MON-STD-20 | 학습 Job | Pod 종료 코드 `kube_pod_container_status_last_terminated_reason` · `_exitcode`. exit 0 · 펜싱 · 사용자 취소는 제외. 펜싱 · 취소는 종료 코드가 아니라 `job.lifecycle`로 구분 (ADR-43, 옛 exit 75는 없어짐) | | | | | 운영 경험 (kube-state-metrics 문서) | 분류기 입력 (`restart_in_place` vs `refuse` 구분) | 비움 |
 | MON-STD-28 | 학습 Job (ckpt-sidecar 펜싱 하트비트, ADR-44) | 경과 `recovery_fencing_heartbeat_age_seconds{job_id, generation}` · 조회 상태 `recovery_fencing_heartbeat_scrape_success` (복구 컨트롤러 :8080. Pod 3개가 각자 30초마다 `devoops-prod-fencing`을 Scan. 조회 실패 · 60초 넘은 스냅샷이면 success 0이고 age를 내지 않는다). 하트비트는 **rank 0 Pod의 사이드카만** 10초마다 쓴다 → rank 1 ~ 3 노드 장애는 이 지표로 못 본다(Pod 종료 · Xid 몫). **찍기와 읽기는 경로가 다르다**: 찍기 = EKS → DynamoDB Gateway 엔드포인트(AWS 안), 읽기 = 온프레 → pfSense WAN 인터넷 → 온프레 인터넷 장애는 「못 읽음」이지 「멈춤」이 아니다. 학습 중 판정 = trainer가 Running인 Pod의 `label_devoops_job_id` · `label_devoops_generation` (끝난 작업 · 옛 세대 항목은 테이블에 남아도 제외) | | | | 경고 경과 > 60초가 1분 (룰 `RecoveryHeartbeatStale`. 60초 = 하트비트 10초 × 6, 정상도 10초 + Scan 30초로 최대 약 40초) · 경고 컨트롤러 전부 조회 실패 10분 (룰 `RecoveryHeartbeatReadFailing`. 이 동안 멈춤 알람이 꺼져 있다) | ADR-44 (교체 예정: EKS 정상 구간 경과 실측 · 조회 실패 간격 `read_errors_total`) | 하트비트 멈춤 = 데이터 (김현수) · 조회 실패 = 컨트롤러 (한송이) 호출 런북. `gpu.fault`에는 연결하지 않는다 (ADR-44) | 가설 |
+| MON-STD-30 | 학습 Job (진행) | 현재 step `train_current_step{job_id, generation, rank}` (trainer :8000)이 늘고 있는가. 대상 = trainer가 Running인 Pod의 `label_devoops_job_id` · `label_devoops_generation` (MON-STD-28과 같은 판정). 랭크 하나라도 늘면 진행으로 본다. 지표가 아예 안 들어오는 것도 「진행 없음」이다 (복구 뒤 Pod는 전부 Ready인데 학습은 안 도는 경우). **한계**: EKS 수집이 통째로 끊기면(VPN · Agent) 대상도 같이 사라져 안 울린다(사이트 알람 몫) | trainer 시작 뒤 15 ~ 30초 안에 첫 step 증가 · 도중 정체 0초 (2026-11-25 정상 작업 5개, 15초 간격으로 봄) | 진행 없음 10분 (룰 `TrainingStalled`. 「최근 2분 안에 step 변화 없음」이 10분 이어짐) | | 10분 → 5분으로 줄일 수 있는지: 큰 모델 로딩 · 체크포인트 저장이 긴 작업에서 정체가 얼마나 가는지 실측 뒤 | 운영 경험 (2026-11-25 주입 뒤 세대 2 두 개: trainer는 8 ~ 10분 Running인데 step 지표 0건) + 기준선 1회 (같은 날 정상 작업 5개) | 사람 확인 (Slack). `gpu.fault`에는 연결하지 않는다. 볼 것은 `deploy/README.md` 「알람이 울리면」 | 가설 |
 
 ### 4.4 수집 파이프라인
 
@@ -139,6 +140,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/base/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 분류기, 그래프 받은 알람 · 발행한 사건 · 버린 것 · 상태 | 2026-11-20 |
 | MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 하트비트 경과(60초 선) · 하트비트 조회 | 2026-11-20 |
 | MON-STD-29 | `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 컨트롤러 · 소비 지연, 그래프 Ready · 재시작 · 소비 지연 | 2026-11-25 |
+| MON-STD-30 | `TrainingStalled` (`deploy/base/mimir/rules/training.yml`, 테스트 `tests/training_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「학습 작업」 타일 정체 작업(지표가 들어오는 작업만 센다), 그래프 현재 step · 체크포인트 step · 진행 속도 | 2026-11-25 |
 | MON-STD-01 | | | 「GPU」 타일 온도 여유, 그래프 GPU 온도(한계 3단 점선) | 2026-11-20 |
 | MON-STD-02 | | | 「GPU」 타일 감속 GPU, 그래프 감속 사유 · 감속 시간 비율 · SM 클럭 | 2026-11-20 |
 | MON-STD-03 | | | 「GPU」 타일 ECC DBE · 폐기 대기, 그래프 ECC SBE 증가 · 페이지 폐기 | 2026-11-20 |
@@ -158,6 +160,6 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | 5 SLO (5~6주) | SLO 행 목표 |
 | 6 검증 (6주) | 추적표 전 행, 상태 `측정 못 함` 정리 |
 
-- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 30).
+- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 31).
 - 값을 바꾸면 근거 링크를 같이 바꾼다. 근거 없는 변경은 가설 열로만.
 - 룰 annotation `standard` 값이 이 표에 없으면 CI에서 실패시킨다 (2단계에서 promtool 테스트에 추가).
