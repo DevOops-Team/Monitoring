@@ -86,9 +86,9 @@
 
 | suggested_action | 뜻 | 컨트롤러가 실제로 하는 일 |
 |---|---|---|
-| `restart_in_place` | GPU 멀쩡, 프로그램만 문제 | 세대 +1 → 옛 JobSet 정리 · 중단 확인 → **원래 클러스터를 먼저 보는**(같은 노드는 보장 안 함. 빈 GPU가 잡 크기보다 적으면 디스패처가 다른 클러스터로 보낸다, ADR-38) 새 JobSet 재제출 → 승인 체크포인트에서 이어 감. Pod 재시작이 아니다: torchrun · Job · JobSet · Kueue 자동 재시작은 전부 꺼져 있고 재시작 주체는 컨트롤러뿐 (ADR-12) |
+| `restart_in_place` | GPU 멀쩡, 프로그램만 문제 (Xid 13 · 31 · 43 · 94, Pod 종료) | 세대 +1 → 옛 JobSet 정리 · 중단 확인 → **원래 클러스터를 먼저 보는**(같은 노드는 보장 안 함. 빈 GPU가 잡 크기보다 적으면 디스패처가 다른 클러스터로 보낸다, ADR-38) 새 JobSet 재제출 → 승인 체크포인트에서 이어 감. Pod 재시작이 아니다: torchrun · Job · JobSet · Kueue 자동 재시작은 전부 꺼져 있고 재시작 주체는 컨트롤러뿐 (ADR-12) |
 | `isolate_migrate` | 이 GPU 못 씀 (Xid 79 · GPU 노드가 사라짐) | 노드 cordon + taint `devoops/faulty` → 세대 +1 → 옛 JobSet 정리 · 중단 확인 → 같은 클러스터 예비 GPU(taint `devoops/spare`)로 새 JobSet (자리가 모자라면 디스패처가 다른 클러스터로, ADR-38) |
-| `reset_then_migrate` | 이 GPU 리셋 필요 | 먼저 다른 노드로 이전 → 빈 노드에서 GPU 리셋 → 성공하면 예비로 복귀, 실패하면 폐기 |
+| `reset_then_migrate` | 이 GPU 리셋 필요 (Xid 48 · 64 · 95 · 119) | 먼저 다른 노드로 이전 → 빈 노드에서 GPU 리셋 → 성공하면 예비로 복귀, 실패하면 폐기 |
 | `evacuate_preemptive` | 곧 죽거나 느려짐 (스팟 2분 통보, 스트래글러) | 노드 격리 → 세대 +1 → 옛 실행 종료 확인 → 같은 클러스터 예비 GPU로 새 JobSet, **마지막 승인본에서 재개**. 스팟 회수 예고 때도 마지막 저장을 기다리지 않는다(ADR-36, 11/13. ADR-28의 120초 마지막 저장은 폐기) |
 | `fence_evacuate` | 클러스터 전체가 사라짐 (AZ 장애) | 클러스터 펜싱(`devoops/fenced=true`) → 세대 +1 (옛 Job이 살아 있어도 승인 못 하게) → 옛 실행 중단을 확인할 수 없으므로 확인 어노테이션을 기다렸다가 다른 AZ 클러스터에서 재개 |
 | `refuse` | 같은 Job이 같은 버그로 반복 사망 | 재시도 중단, 사용자에게 실패 알림 |

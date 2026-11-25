@@ -57,6 +57,17 @@ def test_pod_exit(kw):
     assert (v.category, v.action) == ("app", "restart_in_place")
 
 
+@pytest.mark.parametrize("xid, expected", [
+    (64, ("hw", "reset_then_migrate", 0.85)),       # NVIDIA 카탈로그 즉시 조치 RESET_GPU
+    (94, ("hw", "restart_in_place", 0.8)),          # RESTART_APP
+    (95, ("hw", "reset_then_migrate", 0.85)),       # RESET_GPU
+    (119, ("driver", "reset_then_migrate", 0.5)),   # RESET_GPU, 원인 후보가 넓어 confidence 낮음
+])
+def test_xid_catalog_rows(xid, expected):
+    v = rules.judge(signal(xid=xid), True)
+    assert (v.category, v.action, v.confidence) == expected and v.matched
+
+
 def test_unknown_xid_holds():
     v = rules.judge(signal(xid=999), True)
     assert (v.category, v.action, v.matched) == ("hw", "hold", False)
