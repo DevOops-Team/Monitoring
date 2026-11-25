@@ -84,6 +84,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-11 | 알람 | 감지 지연 (주입 → 컨트롤러의 Kafka `gpu.fault` 소비, Tempo span) | | | | 경고 p95 측정값 × 1.5 | 실험 (4주 감지 지연 표) | 룰 `for` · Alertmanager `group_wait` 조정 | 가설 |
 | MON-STD-21 | 매니저 | Kueue 대기 Workload 수 `kueue_pending_workloads` · 컨트롤러 결정 지연 (`decide` span) | | | | | 기준선 + 트레이스 (Tempo) | 스케줄링 (김성모) · 컨트롤러 (한송이) 호출 런북 | 비움 |
 | MON-STD-25 | 복구 컨트롤러 | HOLD 판정 수 `recovery_hold_total{job_id, reason}` (platform/recovery-controller :8080, 새 HOLD 1회당 +1, 전역 Watchdog HOLD는 `job_id=""`). 첫 HOLD는 시계열이 값 1로 태어나 `increase()`가 0 → 룰은 증가 **또는** 새 시계열(직전 1시간 샘플 없음) **또는** 최근 1시간 안에 재시작한 프로세스(`process_start_time_seconds`)의 새 시계열. **한계**: HOLD 뒤 수집 주기(15초) 안에 컨트롤러가 죽으면 알람 없음(지표 방식의 한계, 기록은 DynamoDB · Kafka `recovery.held`에 남음) · 알람은 발생만 알리고 미처리 건수는 모름 → 둘 다 Grafana HOLD 목록 패널로 보완 | | | | 위험 새 HOLD 1건 (`for` 없음, 약 5분 발화. 꺼짐 = 해결 아님 → resolved 알림 안 보냄) | 운영 경험 (11/11 회의 결정: HOLD는 전부 사람 확인) | 컨트롤러 (한송이) 호출 런북. `reason`별 대응은 컨트롤러 문서 | 가설 |
+| MON-STD-29 | 복구 컨트롤러 자체 (관리 클러스터 `platform/recovery-controller`, Pod ×3) | Ready 수 `kube_deployment_status_replicas_available` (KSM) · 재시작 `kube_pod_container_status_restarts_total` (Pod 3개의 15분 증가 합) · `gpu.fault` 소비 지연 `kafka_consumergroup_lag{consumergroup="recovery-controller-v1", topic="gpu.fault"}` (kafka_exporter, 커밋한 적 없는 파티션의 -1은 제외). **한계**: 소비 지연은 kafka_exporter가 죽으면 같이 안 보인다(`MonitoringTargetDown` 몫) | Ready 3 · 재시작 0 · 소비 지연 0 (2026-11-25, 사건 하나는 몇 초 안에 읽는다) | 15분 동안 재시작 합계 3번 이상 (룰 `RecoveryControllerRestarting`. 3 = Pod 3개가 한 바퀴. 버전 교체는 새 Pod라 안 는다) | Ready 0개 2분 (룰 `RecoveryControllerDown`) · `gpu.fault` 소비 지연 > 0이 5분 (룰 `RecoveryControllerStuck`) | 5분 · 3번은 사고 기록에 맞춘 값 → 실제 복구가 도는 동안의 소비 지연 · 재시작을 본 뒤 조정 | 운영 경험 (2026-11-24 ~ 25 사고 기록: 못 읽는 사건 하나로 17시간 동안 15분마다 재시작 6 ~ 9번 · 소비 지연 1 · 11/25 11:00 CrashLoop로 Ready 0. 세 경우 모두 알람이 없었다) | 컨트롤러 (한송이) 호출 런북 `deploy/README.md` 「알람이 울리면」. 컨트롤러가 멈추면 `gpu.fault`가 나가도 복구가 시작되지 않는다 | 가설 |
 
 ### 4.6 네트워크 · 사이트
 
@@ -137,6 +138,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | 「장애 복구」 타일 HOLD 누적, HOLD 목록(PostgreSQL 뷰 `data.v_recovery_held`) · HOLD 누적 (지표) | 2026-11-20 |
 | MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/base/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 분류기, 그래프 받은 알람 · 발행한 사건 · 버린 것 · 상태 | 2026-11-20 |
 | MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 하트비트 경과(60초 선) · 하트비트 조회 | 2026-11-20 |
+| MON-STD-29 | `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | | 2026-11-25 |
 | MON-STD-01 | | | 「GPU」 타일 온도 여유, 그래프 GPU 온도(한계 3단 점선) | 2026-11-20 |
 | MON-STD-02 | | | 「GPU」 타일 감속 GPU, 그래프 감속 사유 · 감속 시간 비율 · SM 클럭 | 2026-11-20 |
 | MON-STD-03 | | | 「GPU」 타일 ECC DBE · 폐기 대기, 그래프 ECC SBE 증가 · 페이지 폐기 | 2026-11-20 |
@@ -156,6 +158,6 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | 5 SLO (5~6주) | SLO 행 목표 |
 | 6 검증 (6주) | 추적표 전 행, 상태 `측정 못 함` 정리 |
 
-- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 29).
+- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 30).
 - 값을 바꾸면 근거 링크를 같이 바꾼다. 근거 없는 변경은 가설 열로만.
 - 룰 annotation `standard` 값이 이 표에 없으면 CI에서 실패시킨다 (2단계에서 promtool 테스트에 추가).

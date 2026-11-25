@@ -29,7 +29,7 @@
 
 수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`) · Kafka · DB VM 4대(`job="vm-host"`) · kafka_exporter · postgres_exporter(아래 「Kafka · DB VM 수집」) · pfSense 2대(`job="pfsense-host"`, 아래 「pfSense 수집」) · 분류기(`job="classifier"`, Pod를 찾아 긁는다).
 룰: `base/mimir/rules/self.yml` 4개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown), Mimir ruler가 15초마다 평가.
-`base/mimir/rules/recovery.yml` 3개(MON-STD-25 · 28): `RecoveryHold` = 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화 · `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` = 펜싱 하트비트 멈춤 · 조회 실패(울렸을 때 볼 것은 아래 「알람이 울리면」). 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
+`base/mimir/rules/recovery.yml` 6개(MON-STD-25 · 28 · 29): `RecoveryHold` = 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화 · `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` = 펜싱 하트비트 멈춤 · 조회 실패 · `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` = 복구 컨트롤러 자체가 없음 · 재시작 반복 · `gpu.fault`를 못 읽음(울렸을 때 볼 것은 아래 「알람이 울리면」). 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
 `base/mimir/rules/records.yml` 레코딩 룰 7개: 대시보드용(OOM kill · OTel 거절 · dcgm 감속 시간 · ECC SBE · PCIe 재시도). `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
 `base/mimir/rules/infra.yml` 4개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `base/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 `base/mimir/rules/classifier.yml` 2개(MON-STD-27): 분류기가 없거나 안 긁힘 · `job.lifecycle`을 못 읽음. 단위 테스트는 `base/mimir/tests/classifier_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
@@ -83,7 +83,7 @@ kubectl -n monitoring port-forward svc/prometheus-agent 9090   # Agent 대상 �
 ```
 Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`에 Watchdog. Grafana `http://172.30.0.35:3000` 로그인 후 데이터소스 Mimir · Loki · Tempo.
 
-## 알람이 울리면 (`infra.yml` 11/18 · `classifier.yml` 11/19 · `recovery.yml` 하트비트 11/20)
+## 알람이 울리면 (`infra.yml` 11/18 · `classifier.yml` 11/19 · `recovery.yml` 하트비트 11/20 · 컨트롤러 11/25)
 
 | 알람 | 뜻 | 먼저 볼 것 |
 |---|---|---|
@@ -95,6 +95,9 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `ClassifierLifecycleUnhealthy` (critical) | 대장 분류기가 `job.lifecycle`을 2분째 못 읽는다(대기 쪽은 원래 읽지 않는다). 그동안 Pod 종료 신호는 전부 `hold`로 나가 사람이 봐야 한다(`RecoveryHold`가 따라 울릴 수 있다) | 알람의 `pod` 라벨이 대장이다. `kubectl -n monitoring logs <그 Pod> \| grep kafka.health_changed`의 `reason` → 브로커 문제면 「Kafka 브로커」에서 복구를 기다린다(돌아오면 알람이 꺼진다). 브로커가 멀쩡한데 안 꺼지면(메시지 반영 실패는 재시작 전까지 0으로 남는다) `kubectl -n monitoring rollout restart deploy/classifier` |
 | `RecoveryHeartbeatStale` (warning) | 학습 중인 작업의 rank 0 사이드카가 DynamoDB 펜싱 하트비트를 60초 넘게(그 상태 1분) 안 찍었다. 그동안 새 체크포인트가 승인되지 않아, 장애가 나면 옛 승인본부터 다시 한다 | 같은 작업에 Xid · Pod 종료 · 사이트 알람이 같이 왔는지(노드 · 사이트 장애) → 없으면 사이드카: `kube_pod_container_status_restarts_total{container="ckpt-sidecar"}`(liveness probe가 300초 멈춤에 재시작) · Loki `{k8s_container_name="ckpt-sidecar"}` → 데이터 담당(김현수). 자동 복구와는 연결돼 있지 않다(ADR-44) |
 | `RecoveryHeartbeatReadFailing` (warning) | 복구 컨트롤러 Pod 전부가 10분째 펜싱 테이블을 못 읽는다. 하트비트가 멈춰도 위 알람이 울리지 않는 상태 | `recovery_fencing_heartbeat_read_errors_total`이 30초마다 느는지 → 온프레 인터넷(「모니터링 스택」 ping · pfSense) → 멀쩡하면 IAM(IaC `recovery-data-access`의 펜싱 테이블 `dynamodb:Scan`) · 인증 사이드카 `aws-auth` 로그 → 컨트롤러 담당(한송이). 실패 이유는 컨트롤러 로그에 남지 않는다(11/20 기준) |
+| `RecoveryControllerDown` (critical) | 복구 컨트롤러(관리 클러스터 `platform/recovery-controller`) Ready가 2분째 0개다. `gpu.fault`가 나가도 자동 복구가 시작되지 않는다 | `kubectl -n platform get pod -l app.kubernetes.io/name=recovery-controller`(관리 클러스터)로 상태 → CrashLoopBackOff면 `logs <Pod> -c controller --previous`의 마지막 오류(11/25는 Gitops `config.json`에 없어진 설정 블록이 남아 시작을 거부했다) → 컨트롤러 담당(한송이). 그동안 난 장애는 사람이 본다 |
+| `RecoveryControllerRestarting` (warning) | 컨트롤러 Pod 3개의 재시작이 15분 동안 합쳐 3번 이상이다. 사이사이 Ready로 보여도 같은 사건을 읽을 때마다 죽고 있을 수 있다(11/24 밤 17시간) | `kubectl -n platform logs <Pod> -c controller --previous \| tail`의 오류와 그 직전에 읽은 `event_id` → 아래 `RecoveryControllerStuck`이 같이 울리면 그 사건이 원인이다 → 사건 내용(`gpu.fault`의 그 오프셋)과 함께 컨트롤러 담당. 시험 사건을 보낸 직후라면 그것부터 의심 |
+| `RecoveryControllerStuck` (critical) | 컨트롤러가 `gpu.fault`에 안 읽은 사건을 5분째 남겨 두고 있다(평소 0, 사건 하나는 몇 초). 그 사건과 뒤에 오는 사건의 복구가 모두 멈춰 있다 | 「Kubernetes 워크로드」 cluster = onprem-manager · namespace = platform에서 컨트롤러 Pod가 살아 있는지 · 재시작하는지 → 로그에서 같은 `event_id`가 되풀이되는지(11/25 17:00 `node`가 없는 사건에서 19분) → 컨트롤러 담당. 분류기가 새 종류의 사건을 내기 시작한 직후라면 그 신호를 끌지 사용자와 정한다 |
 
 ## 대시보드 (Grafana 폴더 「인프라」 · 「GPU」 · 「학습」)
 
