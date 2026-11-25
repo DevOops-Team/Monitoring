@@ -135,7 +135,7 @@ prometheus.io/path: "/metrics"
 
 - Pushgateway · TensorBoard · W&B 안 씀. 오래 사는 Pod라 pull이 맞음
 - `injected` phase 라벨 안 넣음 (2절)
-- 종료 코드 75(STOP)로 끝날 때 지표 쪽 특별 처리 없음. 분류기가 장애로 안 셈 (fault-event.md 3절)
+- 펜싱으로 멈출 때(STOP) 지표 쪽 특별 처리 없음. 분류기는 `job.lifecycle`로 장애에서 뺀다 (fault-event.md 3절, ADR-43)
 - 매 step CUDA 이벤트 측정 안 함. 랭크별 계산 시간은 프로파일러 샘플링(3-1절)으로 대신. 상시 프로파일러도 안 함(2배 느려짐)
 
 ## 7. 계측 비용 확인 (기준선 실험 때)

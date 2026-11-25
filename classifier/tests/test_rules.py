@@ -37,9 +37,14 @@ def test_xid45_ignored():
     assert rules.judge(signal(xid=45), True) is None
 
 
-@pytest.mark.parametrize("code", [0, 75])
-def test_exit_code_ignored(code):
-    assert rules.judge(signal(signal="pod_exit", source="pod", exit_code=code, pod="p"), True) is None
+def test_exit_code_0_ignored():
+    assert rules.judge(signal(signal="pod_exit", source="pod", exit_code=0, pod="p"), True) is None
+
+
+def test_exit_code_75_is_failure():
+    # ADR-43: 75(옛 STOP)는 더 이상 뜻이 없다. 펜싱 종료는 job.lifecycle로 거르고, 75는 일반 Pod 종료로 본다
+    v = rules.judge(signal(signal="pod_exit", source="pod", reason="Error", exit_code=75, pod="p"), True)
+    assert (v.category, v.action) == ("app", "restart_in_place")
 
 
 def test_completed_ignored():

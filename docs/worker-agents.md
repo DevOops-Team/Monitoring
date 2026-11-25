@@ -66,7 +66,7 @@ Loki ──ruler 알람──▶ Alertmanager :9093 ──webhook(pipeline=failo
 
 | 신호 | 왜 |
 |---|---|
-| 학습 컨테이너 exit 75 | STOP. 사이드카가 세대 불일치 · 승인 거부로 멈춘 것. 펜싱 정상 동작 (ADR-12) |
+| 펜싱 STOP · 사용자 중단 | 사이드카가 세대 불일치 · 승인 거부로 멈춘 것(펜싱 정상 동작) · 사용자가 멈춘 것. 종료 코드가 아니라 `job.lifecycle`로 구분 (ADR-43) |
 | exit 0 · 사용자 취소 | 정상 종료 |
 | Xid 45 | 앞선 오류의 뒤처리. 컨트롤러 조치가 만드는 Xid라 루프 방지 |
 | Kueue 재큐 · MultiKueue 재디스패치 | 둘 다 꺼져 있음(ADR-12). 생기면 감시기(김현수)가 `job.failed`로 올리고 컨트롤러가 처리 |
