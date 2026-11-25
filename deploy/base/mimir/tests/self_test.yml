@@ -73,3 +73,35 @@ tests:
       - eval_time: 15m
         alertname: MonitoringReplicasAllDown
         exp_alerts: []
+
+  # 3) 대상 다운 문구: Pod 대상은 네임스페이스/Pod (노드), 호스트 대상은 job host, 그 밖은 클러스터 · job (노드). 5분 이어져야 울린다
+  - name: MonitoringTargetDown 문구에 무엇이 죽었는지 나온다
+    interval: 1m
+    input_series:
+      - series: 'up{cluster="onprem-manager", instance="10.233.83.58:8080", job="annotated-pods", namespace="platform", node="worker3", pod="recovery-controller-76f7698ff4-w6q46"}'
+        values: '0x10'
+      - series: 'up{host="pve4", instance="172.30.0.14:9100", job="pve-host"}'
+        values: '0x10'
+      - series: 'up{cluster="monitoring", instance="172.30.0.31:9100", job="node-exporter", node="monitoring1"}'
+        values: '0x10'
+      - series: 'up{cluster="monitoring", instance="kafka-exporter:9308", job="kafka-exporter"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: MonitoringTargetDown
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MonitoringTargetDown
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: onprem-manager, instance: '10.233.83.58:8080', job: annotated-pods, namespace: platform, node: worker3, pod: recovery-controller-76f7698ff4-w6q46}
+            exp_annotations:
+              summary: '스크레이프 대상 다운: onprem-manager · platform/recovery-controller-76f7698ff4-w6q46 (노드 worker3)'
+              standard: MON-STD-22
+          - exp_labels: {severity: warning, host: pve4, instance: '172.30.0.14:9100', job: pve-host}
+            exp_annotations:
+              summary: '스크레이프 대상 다운: pve-host pve4'
+              standard: MON-STD-22
+          - exp_labels: {severity: warning, cluster: monitoring, instance: '172.30.0.31:9100', job: node-exporter, node: monitoring1}
+            exp_annotations:
+              summary: '스크레이프 대상 다운: monitoring · node-exporter (노드 monitoring1)'
+              standard: MON-STD-22
