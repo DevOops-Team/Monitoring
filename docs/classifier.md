@@ -208,7 +208,7 @@ Pod 2개가 서로 다른 노드에 뜨고, 쿠버네티스 Lease `classifier`�
 - [x] (나, EKS overlay) KSM `--metric-labels-allowlist`에 `nodes=[topology.kubernetes.io/zone]` 추가 — `deploy/agents/overlays/eks`(11/18). kind에서 `az`가 채워지는 것 확인. EKS가 아닌 클러스터는 `az`가 `unknown`
 - [x] 분류기용 Alertmanager 라우트(`pipeline=failover`)는 `group_wait` 0초 · `repeat_interval` 1분 — `deploy/values/alertmanager.yaml`(11/18). 기본 4시간이면 분류기가 놓친 알람(재시작으로 사라진 대기 신호 · Kafka 전달 실패)이 다시 오지 않는다. 다시 온 알람은 중복 제거로 걸러진다
 - [x] 분류기 실 클러스터 배포와 웹훅 연결(11/18): Gitops `monitoring/onprem/classifier`, Alertmanager 수신자 `classifier`. Xid · Pod 종료만 보낸다
-- [ ] (나) 사이트 알람을 분류기로 보내기. 일부러 내린 EKS를 구분할 수 있게 된 뒤에(아래 `FailoverSiteDown` 항목). 지금은 수신자 `classifier-pending`(받는 곳 없음)
+- [x] (나) 사이트 알람을 분류기로 보내기(11/25, GPU-220): 펜싱된 EKS를 룰에서 빼게 된 뒤 AM 라우트 `xid|pod_exit|node_lost|site` + 분류기 `ENABLED_SIGNALS`에 site(Gitops #109)
 - [ ] (나, EKS 테스트 뒤) 커널 로그 경로 Xid 룰. Loki에 룰 파일을 넣는 길(ConfigMap 마운트)부터 만들어야 한다. `dcgmi` 주입은 커널 로그를 남기지 않으므로 진짜 Xid 로그 줄(`NVRM: Xid`)이 생기면 원문을 보관해 그것에 맞춘다
 - [ ] (박기현 · 김성모) 스팟 회수 예고가 어디로 나오는지(관리형 노드그룹). 정해지면 `spot` 룰을 쓴다
 - [x] (나) `FailoverXidDcgm`이 같은 번호 재발을 못 보던 것(11/24, GPU-221): `DCGM_EXP_XID_ERRORS_COUNT`(Xid 번호별 최근 10분 횟수, 11/23 EKS 주입에서 값 확인)가 1분 전보다 늘었거나 1분 전엔 없었으면 울린다. 창은 dcgm-exporter env로 5분 → 10분. 번호 경로는 횟수 지표가 없을 때를 위해 남겼다(같은 GPU면 알람 하나). **한계**: 앞 Xid가 창에서 빠진 뒤 수집 주기(15초) 안에 같은 번호가 다시 나면(간격 10분 ~ 10분 15초) 빈 순간이 기록되지 않아 못 본다. 수집 주기를 줄여도 exporter 계산 주기(5초)가 남아 0은 안 된다. 지금 Xid 신호는 이 dcgm 경로 하나뿐이고, 빈틈 없이 막는 것은 커널 로그 경로(위 항목, GPU-218 — 줄마다 사건 하나)다
