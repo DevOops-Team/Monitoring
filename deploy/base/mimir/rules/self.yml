@@ -37,13 +37,15 @@ groups:
           summary: '{{ $labels.cluster }} 노드 {{ $labels.node }} 디스크 {{ $labels.mountpoint }} 90% 초과. 모니터링 노드면 Mimir·Loki PVC와 보존 설정, EKS면 체크포인트 · 이미지 확인'
           standard: MON-STD-22
 
+      # 문구는 대상이 무엇인지 알 수 있게: Pod 대상이면 네임스페이스/Pod, 호스트 대상(pve · vm · pfSense · Kafka JMX)이면 host,
+      # 그 밖은 job. node 라벨이 있으면 노드도. IP:포트(instance)는 Slack 템플릿이 뒤에 붙인다(deploy/values/alertmanager.yaml)
       - alert: MonitoringTargetDown
         expr: up == 0
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: '스크레이프 대상 다운: {{ $labels.job }} {{ $labels.instance }}'
+          summary: '스크레이프 대상 다운: {{ with $labels.host }}{{ $labels.job }} {{ . }}{{ else }}{{ with $labels.cluster }}{{ . }} · {{ end }}{{ with $labels.pod }}{{ $labels.namespace }}/{{ . }}{{ else }}{{ $labels.job }}{{ end }}{{ with $labels.node }} (노드 {{ . }}){{ end }}{{ end }}'
           standard: MON-STD-22
 
       # 모니터링 클러스터 워크로드의 Ready 수가 원하는 개수보다 적다(이중화 GPU-227). 개수를 적지 않고 spec과 비교해서
