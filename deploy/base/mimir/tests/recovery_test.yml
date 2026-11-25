@@ -257,3 +257,108 @@ tests:
       - eval_time: 12m
         alertname: RecoveryHeartbeatReadFailing
         exp_alerts: []
+
+  # --- 복구 컨트롤러 자체 (MON-STD-29) ---
+  - name: Ready 0개가 2분 이어지면 울린다
+    interval: 15s
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{cluster="onprem-manager", namespace="platform", deployment="recovery-controller"}'
+        values: '3x8 0x20'
+      - series: 'kube_deployment_spec_replicas{cluster="onprem-manager", namespace="platform", deployment="recovery-controller"}'
+        values: '3x28'
+      # 다른 워크로드는 0이어도 이 알람이 아니다
+      - series: 'kube_deployment_status_replicas_available{cluster="onprem-manager", namespace="platform", deployment="relocator"}'
+        values: '0x28'
+      - series: 'kube_deployment_spec_replicas{cluster="onprem-manager", namespace="platform", deployment="relocator"}'
+        values: '3x28'
+    alert_rule_test:
+      - eval_time: 3m30s
+        alertname: RecoveryControllerDown
+        exp_alerts: []
+      - eval_time: 4m30s
+        alertname: RecoveryControllerDown
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: onprem-manager, namespace: platform, deployment: recovery-controller}
+            exp_annotations:
+              summary: '복구 컨트롤러 Ready 0개 — gpu.fault가 나가도 자동 복구가 시작되지 않는다'
+              standard: MON-STD-29
+
+  - name: 일부러 0개로 줄인 것은 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{cluster="onprem-manager", namespace="platform", deployment="recovery-controller"}'
+        values: '0x28'
+      - series: 'kube_deployment_spec_replicas{cluster="onprem-manager", namespace="platform", deployment="recovery-controller"}'
+        values: '0x28'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: RecoveryControllerDown
+        exp_alerts: []
+
+  # Pod 3개가 5분마다 한 번씩 재시작(11/24 밤과 비슷한 빈도) → 15분 합계가 3을 넘는다
+  - name: 재시작을 되풀이하면 울린다
+    interval: 15s
+    input_series:
+      - series: 'kube_pod_container_status_restarts_total{cluster="onprem-manager", namespace="platform", pod="recovery-controller-aaa-1", container="controller"}'
+        values: '0x20 1x20 2x20 3x20'
+      - series: 'kube_pod_container_status_restarts_total{cluster="onprem-manager", namespace="platform", pod="recovery-controller-aaa-2", container="controller"}'
+        values: '0x20 1x20 2x20 3x20'
+      - series: 'kube_pod_container_status_restarts_total{cluster="onprem-manager", namespace="platform", pod="recovery-controller-aaa-3", container="controller"}'
+        values: '0x20 1x20 2x20 3x20'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: RecoveryControllerRestarting
+        exp_alerts: []
+      - eval_time: 16m
+        alertname: RecoveryControllerRestarting
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: onprem-manager, namespace: platform}
+            exp_annotations:
+              summary: '복구 컨트롤러가 15분 동안 9번 재시작 — 같은 사건에서 계속 죽고 있을 수 있다. 로그의 마지막 오류와 gpu.fault 소비 지연 확인'
+              standard: MON-STD-29
+
+  # Pod 하나가 한 번 재시작한 것(노드 재부팅 등)과 다른 워크로드의 재시작은 울리지 않는다
+  - name: 한 번 재시작과 다른 워크로드는 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'kube_pod_container_status_restarts_total{cluster="onprem-manager", namespace="platform", pod="recovery-controller-aaa-1", container="controller"}'
+        values: '0x20 1x60'
+      - series: 'kube_pod_container_status_restarts_total{cluster="onprem-manager", namespace="platform", pod="relocator-bbb-1", container="relocator"}'
+        values: '0+1x80'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: RecoveryControllerRestarting
+        exp_alerts: []
+
+  # 지연 1이 5분 넘게 남는다(파티션 하나는 커밋한 적 없어 -1)
+  - name: gpu.fault를 5분째 못 읽으면 울린다
+    interval: 15s
+    input_series:
+      - series: 'kafka_consumergroup_lag{job="kafka-exporter", cluster="monitoring", consumergroup="recovery-controller-v1", topic="gpu.fault", partition="0"}'
+        values: '0x8 1x40'
+      - series: 'kafka_consumergroup_lag{job="kafka-exporter", cluster="monitoring", consumergroup="recovery-controller-v1", topic="gpu.fault", partition="1"}'
+        values: '-1x48'
+      - series: 'kafka_consumergroup_lag{job="kafka-exporter", cluster="monitoring", consumergroup="recovery-controller-v1", topic="job.lifecycle", partition="0"}'
+        values: '5x48'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: RecoveryControllerStuck
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: RecoveryControllerStuck
+        exp_alerts:
+          - exp_labels: {severity: critical, consumergroup: recovery-controller-v1, topic: gpu.fault}
+            exp_annotations:
+              summary: '복구 컨트롤러가 gpu.fault 1건을 5분째 못 읽는다 — 그 사건과 뒤따르는 사건의 복구가 멈춰 있다'
+              standard: MON-STD-29
+
+  # 사건을 읽는 몇 초 동안 잠깐 1이 되는 것은 울리지 않는다
+  - name: 곧 읽은 사건은 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'kafka_consumergroup_lag{job="kafka-exporter", cluster="monitoring", consumergroup="recovery-controller-v1", topic="gpu.fault", partition="0"}'
+        values: '0x8 1x4 0x40'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: RecoveryControllerStuck
+        exp_alerts: []
