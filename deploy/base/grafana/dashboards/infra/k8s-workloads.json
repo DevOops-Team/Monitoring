@@ -819,7 +819,7 @@
     {
       "type": "table",
       "title": "마지막 종료",
-      "description": "MON-STD-20. 한 번이라도 종료된 적 있는 컨테이너의 마지막 종료 사유 · 코드. exit 75 = STOP(세대 불일치로 스스로 멈춤, 펜싱 정상 동작) · 137 = SIGKILL(OOMKilled면 메모리 초과) · 0 = 정상 종료",
+      "description": "MON-STD-20. 한 번이라도 종료된 적 있는 컨테이너의 마지막 종료 사유 · 코드. 137 = SIGKILL(OOMKilled면 메모리 초과) · 0 = 정상 종료. 펜싱 · 사용자 중단은 종료 코드로 구분되지 않는다(job.lifecycle, ADR-43)",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -881,13 +881,9 @@
                   {
                     "type": "value",
                     "options": {
-                      "75": {
-                        "text": "75 (STOP)",
-                        "index": 0
-                      },
                       "137": {
                         "text": "137 (SIGKILL)",
-                        "index": 1
+                        "index": 0
                       }
                     }
                   }

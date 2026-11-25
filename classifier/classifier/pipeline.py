@@ -32,7 +32,7 @@ NO_RECOVERY = ("hold", "none")              # 복구를 부르지 않는 action.
 # 처리 결과. classifier_alerts_total의 outcome 라벨 값
 RESOLVED = "resolved"               # 꺼짐 알림
 REJECTED = "rejected"               # 라벨 계약 위반
-IGNORED = "ignored"                 # 이벤트를 만들지 않는 신호 (Xid 45, 종료 코드 0 · 75)
+IGNORED = "ignored"                 # 이벤트를 만들지 않는 신호 (Xid 45, 종료 코드 0)
 DISABLED = "disabled"               # 받지 않기로 한 종류의 신호 (ENABLED_SIGNALS)
 DUPLICATE = "duplicate"             # 이미 낸 사건
 PUBLISHED = "published"

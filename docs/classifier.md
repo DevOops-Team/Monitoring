@@ -74,7 +74,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 조건 | 결과 | 근거 |
 |---|---|---|
 | Xid 45 | 이벤트 없음(버림) | 앞선 오류의 뒤처리이고 컨트롤러 조치가 만드는 Xid라 루프가 된다 ([worker-agents.md](worker-agents.md)) |
-| 종료 사유 `Completed`, 종료 코드 0 · 75(코드가 있을 때) | 이벤트 없음 | 정상 완료 · 펜싱 정상 동작 (fault-event.md 3절). 코드 없이 온 펜싱 종료는 아래 「의도된 종료」로 걸러진다 |
+| 종료 사유 `Completed`, 종료 코드 0(코드가 있을 때) | 이벤트 없음 | 정상 완료. 펜싱 종료는 아래 「의도된 종료」로 걸러진다(ADR-43, 옛 종료 코드 75는 11/25 GPU-223에서 무시 목록에서 뺌) |
 | 의도된 종료(4절) | 이벤트 없음 | 김현수 답 2026-11-18 (GPU-120) |
 | `collector_healthy=false`이고 site가 아님 | 표의 `category`는 그대로, `suggested_action=hold` · `confidence` 0.5 | 스키마 강제 규칙. 예시 08 |
 
@@ -101,7 +101,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 
 ## 4. 의도된 종료 거르기
 
-펜싱 · 사용자 중단으로 지워진 Pod도 종료 코드를 남긴다. 종료 코드 75가 없어지면 143 · 137이라 숫자로는 장애와 구분할 수 없다. 그래서 Kafka `job.lifecycle`로 구분한다.
+펜싱 · 사용자 중단으로 지워진 Pod도 종료 코드를 남긴다. 펜싱 STOP을 뜻하던 종료 코드 75는 없어졌고(ADR-43, trainer GPU-244), 남는 코드는 1 · 143 · 137이라 숫자로는 장애와 구분할 수 없다. 그래서 Kafka `job.lifecycle`로 구분한다.
 
 - 분류기는 `job.lifecycle`을 직접 읽어 두 가지를 기억한다.
   - (job_id, generation)별로 `job.fenced` · `job.cancelled`가 왔는가
@@ -205,4 +205,4 @@ Pod 2개가 서로 다른 노드에 뜨고, 쿠버네티스 Lease `classifier`�
 - [x] `classifier_lifecycle_healthy == 0`이 이어지면 Slack으로 알리는 룰 — `ClassifierLifecycleUnhealthy`(2분), 분류기가 없거나 안 긁히면 `ClassifierDown`(3분). `deploy/base/mimir/rules/classifier.yml`(11/19, MON-STD-27). 0인 동안 `pod_exit`는 전부 `hold`이고, 메시지 반영 실패로 0이 되면 재시작 전까지 돌아오지 않는다
 - [ ] (나 · 한송이) `pod_exit` 대기 30초를 E2E 실측으로 조정
 - [ ] (김현수) `job.lifecycle` 토픽 보존 기간, rank별 종료 사유 `job.trainer_exited` 도입 여부
-- [ ] (나) 종료 코드 75가 실제로 없어지면 3.1절과 fault-event.md 「이벤트를 만들지 않는 종료」를 같이 고침
+- [x] (나) 종료 코드 75 무시 삭제(11/25, GPU-223): trainer(GPU-244) · Backend jobspec에서 75가 없어져 판정 표 `ignore.exit_code`를 `[0]`으로, 3.1절 · fault-event.md 「이벤트를 만들지 않는 종료」도 고침
