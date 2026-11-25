@@ -34,7 +34,7 @@
 `base/mimir/rules/infra.yml` 4개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `base/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 `base/mimir/rules/classifier.yml` 2개(MON-STD-27): 분류기가 없거나 안 긁힘 · `job.lifecycle`을 못 읽음. 단위 테스트는 `base/mimir/tests/classifier_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 
-`base/mimir/rules/failover.yml` 5개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown` · `FailoverGpuNodeLost` · `FailoverJobFailed`). `FailoverJobFailed`(11/25, GPU-220)는 관리 클러스터 JobSet이 실패로 끝난 것을 본다: 죽은 Pod가 MultiKueue 정리로 약 14초 만에 지워져 `FailoverPodExit`이 못 보는 경우를 잡는다. 라우트와 분류기 `ENABLED_SIGNALS`에 `job_failed`를 넣기 전까지는 Alertmanager 화면에서만 보인다. Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료 · GPU 노드 소실 · 사이트는 분류기 웹훅(수신자 `classifier`, 사이트는 11/25부터). 펜싱 안 된 EKS가 사라지면 실제 대피가 나가므로 EKS를 끌 때는 fence부터. 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
+`base/mimir/rules/failover.yml` 5개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown` · `FailoverGpuNodeLost` · `FailoverJobFailed`). `FailoverJobFailed`(11/25, GPU-220)는 관리 클러스터 JobSet이 실패로 끝난 것을 본다: 죽은 Pod가 MultiKueue 정리로 약 14초 만에 지워져 `FailoverPodExit`이 못 보는 경우를 잡는다. 라우트와 분류기 `ENABLED_SIGNALS`에 `job_failed`가 들어가 11/25부터 사건으로 나간다(작업 · 세대마다 `restart_in_place` 1건). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료 · GPU 노드 소실 · 사이트는 분류기 웹훅(수신자 `classifier`, 사이트는 11/25부터). 펜싱 안 된 EKS가 사라지면 실제 대피가 나가므로 EKS를 끌 때는 fence부터. 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
 `recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 복구 컨트롤러 Pod의 수집 어노테이션은 11/19에 들어갔다(Gitops `onprem/controllers/recovery-controller`, 그 전까지는 `recovery_hold_total`이 수집되지 않아 울릴 수 없었다). 확인: `up{cluster="onprem-manager", namespace="platform"}` 3. HOLD가 한 번도 없으면 `recovery_hold_total` 시계열 자체가 없다.
 
@@ -235,7 +235,7 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
   | jq 'del(.metadata.namespace,.metadata.uid,.metadata.resourceVersion,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.managedFields,.metadata.annotations)' \
   | kubectl --kubeconfig <모니터링 클러스터 admin.conf> -n monitoring apply -f -
   ```
-- **알람이 들어오는 길**: Alertmanager 라우트 `pipeline=failover` + `signal=~"xid|pod_exit|node_lost|site"` → 웹훅 `http://classifier.monitoring.svc:8080/alerts`. 분류기 `ENABLED_SIGNALS`(Gitops)에 없는 신호는 받아서 버린다
+- **알람이 들어오는 길**: Alertmanager 라우트 `pipeline=failover` + `signal=~"xid|pod_exit|node_lost|site|job_failed"` → 웹훅 `http://classifier.monitoring.svc:8080/alerts`. 분류기 `ENABLED_SIGNALS`(Gitops)에 없는 신호는 받아서 버린다
 - **받는 신호**: Gitops overlay의 `ENABLED_SIGNALS=xid,pod_exit,node_lost`(11/24 19:07부터, Gitops #101). 라우트와 이 값이 둘 다 있어야 그 신호로 사건이 나간다. 복구 컨트롤러가 실행 모드라 `node_lost`는 GPU 노드가 1분 넘게 NotReady이거나 사라지면 그 노드 작업을 실제로 옮긴다. 사이트를 켤 때는 `xid,pod_exit,node_lost,site`
 - **확인**: `kubectl -n monitoring get deploy classifier`(2/2) · `kubectl -n monitoring get lease classifier`(`HOLDER` = 지금 대장) · `kubectl -n monitoring logs <대장 Pod>` · 아래 지표
 - **2개 중 하나만 처리한다**(대장, `docs/classifier.md` 7.1절). 대기 쪽은 받은 웹훅을 대장에게 넘기므로 `svc/classifier`로 보내면 어느 Pod에 닿든 대장이 처리한다. 로그 `event.published`는 대장에만 남는다
