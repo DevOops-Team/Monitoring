@@ -105,3 +105,172 @@ tests:
             exp_annotations:
               summary: '스크레이프 대상 다운: monitoring · node-exporter (노드 monitoring1)'
               standard: MON-STD-22
+
+  # --- 수집 자체가 죽은 경우 (MON-STD-15) ---
+  # 관리 클러스터 Agent 둘 다 4분에 멈춤(마지막 샘플 3m45s) → 2분 창이 비는 5m45s 뒤부터 운다. 모니터링 클러스터는 계속 보내므로 안 운다
+  - name: Agent 지표가 2분 동안 없으면 그 클러스터만 울린다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-0"}'
+        values: '1x15 _x40'
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-1"}'
+        values: '1x15 _x40'
+      - series: 'up{job="prometheus-agent", cluster="monitoring", pod="prometheus-agent-0"}'
+        values: '1x55'
+    alert_rule_test:
+      - eval_time: 5m30s
+        alertname: MonitoringAgentAbsent
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MonitoringAgentAbsent
+        exp_alerts:
+          - exp_labels: {severity: critical, job: prometheus-agent, cluster: onprem-manager}
+            exp_annotations:
+              summary: 'onprem-manager 클러스터의 Prometheus Agent 지표가 2분째 없다 — 그 클러스터를 보는 알람(Pod 수 · HOLD · 복구 컨트롤러 등)이 전부 꺼져 있다'
+              standard: MON-STD-15
+
+  # Agent 하나만 죽으면 다른 쪽 지표가 이어지므로 안 운다
+  - name: Agent 하나만 죽은 것은 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-0"}'
+        values: '1x15 _x40'
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-1"}'
+        values: '1x55'
+      - series: 'up{job="prometheus-agent", cluster="monitoring", pod="prometheus-agent-0"}'
+        values: '1x55'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: MonitoringAgentAbsent
+        exp_alerts: []
+
+  # KSM: 관리 클러스터는 Pod가 사라짐(시계열 없음), eks-a는 응답 없음(0) → 둘 다 5분 뒤.
+  # 펜싱된 eks-b와 시험 클러스터(kind-test)는 KSM이 없어도 안 운다. 모니터링 클러스터는 정상
+  - name: Agent는 있는데 KSM이 없거나 응답이 없으면 5분 뒤 울린다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-0"}'
+        values: '1x60'
+      - series: 'up{job="kube-state-metrics", cluster="onprem-manager"}'
+        values: '1x8 _x52'
+      - series: 'up{job="prometheus-agent", cluster="eks-a", pod="prometheus-agent-x"}'
+        values: '1x60'
+      - series: 'up{job="kube-state-metrics", cluster="eks-a"}'
+        values: '1x8 0x52'
+      - series: 'up{job="prometheus-agent", cluster="eks-b", pod="prometheus-agent-y"}'
+        values: '1x60'
+      - series: 'kube_customresource_multikueuecluster_info{cluster="onprem-manager", name="eks-b", fenced="true"}'
+        values: '1x60'
+      - series: 'up{job="prometheus-agent", cluster="kind-test", pod="prometheus-agent-z"}'
+        values: '1x60'
+      # 펜싱 항목의 이름이 EKS가 아니면 제외에 쓰이지 않는다(관리 클러스터 알람이 꺼지면 안 된다)
+      - series: 'kube_customresource_multikueuecluster_info{cluster="onprem-manager", name="onprem-manager", fenced="true"}'
+        values: '1x60'
+      - series: 'up{job="prometheus-agent", cluster="monitoring", pod="prometheus-agent-0"}'
+        values: '1x60'
+      - series: 'up{job="kube-state-metrics", cluster="monitoring"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: MonitoringKsmAbsent
+        exp_alerts: []
+      # eks-a(0으로 응답 없음)는 2m15s부터 5분 = 7m15s. 관리 클러스터(사라짐)는 마지막 값이 5분 남아 7m부터 5분 = 12m
+      - eval_time: 8m
+        alertname: MonitoringKsmAbsent
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: eks-a}
+            exp_annotations:
+              summary: 'eks-a 클러스터의 kube-state-metrics가 5분째 없거나 응답하지 않는다 — Pod 수 · Pod 종료 · 노드 소실 알람이 그 클러스터에서 꺼져 있다'
+              standard: MON-STD-15
+      - eval_time: 13m
+        alertname: MonitoringKsmAbsent
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: eks-a}
+            exp_annotations:
+              summary: 'eks-a 클러스터의 kube-state-metrics가 5분째 없거나 응답하지 않는다 — Pod 수 · Pod 종료 · 노드 소실 알람이 그 클러스터에서 꺼져 있다'
+              standard: MON-STD-15
+          - exp_labels: {severity: critical, cluster: onprem-manager}
+            exp_annotations:
+              summary: 'onprem-manager 클러스터의 kube-state-metrics가 5분째 없거나 응답하지 않는다 — Pod 수 · Pod 종료 · 노드 소실 알람이 그 클러스터에서 꺼져 있다'
+              standard: MON-STD-15
+
+  # --- 로그 경로 (MON-STD-32) ---
+  # 관리 클러스터 Fluent Bit 하나가 5분부터 재시도를 포기하기 시작. 모니터링 클러스터는 0 그대로
+  - name: Fluent Bit이 로그를 버리면 울린다
+    interval: 15s
+    input_series:
+      - series: 'fluentbit_output_dropped_records_total{cluster="onprem-manager", pod="fluent-bit-a", name="opentelemetry.0"}'
+        values: '0x60'
+      - series: 'fluentbit_output_retries_failed_total{cluster="onprem-manager", pod="fluent-bit-a", name="opentelemetry.0"}'
+        values: '0x20 0+1x40'
+      - series: 'fluentbit_output_dropped_records_total{cluster="monitoring", pod="fluent-bit-b", name="opentelemetry.0"}'
+        values: '0x60'
+      - series: 'fluentbit_output_retries_failed_total{cluster="monitoring", pod="fluent-bit-b", name="opentelemetry.0"}'
+        values: '0x60'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: LogShippingDropping
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: LogShippingDropping
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: onprem-manager}
+            exp_annotations:
+              summary: 'onprem-manager Fluent Bit이 로그를 버리고 있다 — 받는 쪽(Loki · OTel 게이트웨이)이 못 받는 중. 그 구간 로그는 Loki에 없다'
+              standard: MON-STD-32
+
+  # 관리 클러스터는 2분부터 전송량이 멈춘다 → 10분 창이 0이 되는 12분 + 10분 = 22분쯤. 계속 보내는 모니터링 · 펜싱된 eks-b는 안 운다
+  - name: Fluent Bit이 한 줄도 못 내보내면 울린다 · 펜싱된 EKS는 제외
+    interval: 1m
+    input_series:
+      - series: 'fluentbit_output_proc_records_total{cluster="onprem-manager", pod="fluent-bit-a", name="opentelemetry.0"}'
+        values: '0 1000 2000x40'
+      - series: 'fluentbit_output_proc_records_total{cluster="monitoring", pod="fluent-bit-b", name="opentelemetry.0"}'
+        values: '0+300x42'
+      - series: 'fluentbit_output_proc_records_total{cluster="eks-b", pod="fluent-bit-c", name="opentelemetry.0"}'
+        values: '500x42'
+      - series: 'kube_customresource_multikueuecluster_info{cluster="onprem-manager", name="eks-b", fenced="true"}'
+        values: '1x42'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: LogShippingStopped
+        exp_alerts: []
+      - eval_time: 24m
+        alertname: LogShippingStopped
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: onprem-manager}
+            exp_annotations:
+              summary: 'onprem-manager Fluent Bit이 20분째 로그를 한 줄도 못 내보냈다 — 입력(로그 파일 · journald) 또는 출력이 막혔다'
+              standard: MON-STD-32
+
+  - name: Loki에 아무것도 안 들어오면 울린다
+    interval: 1m
+    input_series:
+      - series: 'loki_distributor_lines_received_total{cluster="monitoring", pod="loki-0", tenant="fake"}'
+        values: '0 1000 2000x40'
+      - series: 'loki_distributor_lines_received_total{cluster="monitoring", pod="loki-1", tenant="fake"}'
+        values: '0 500 900x40'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: LokiIngestStopped
+        exp_alerts: []
+      - eval_time: 24m
+        alertname: LokiIngestStopped
+        exp_alerts:
+          - exp_labels: {severity: critical}
+            exp_annotations:
+              summary: 'Loki에 20분째 로그가 한 줄도 안 들어왔다 — 모든 클러스터의 로그 수집이 끊겼다(Loki 수신 · 서비스 VIP 172.30.0.35:3100 확인)'
+              standard: MON-STD-32
+
+  # Loki Pod 하나만 받고 있어도 수신 중이다
+  - name: Loki 한 Pod라도 받으면 울리지 않는다
+    interval: 1m
+    input_series:
+      - series: 'loki_distributor_lines_received_total{cluster="monitoring", pod="loki-0", tenant="fake"}'
+        values: '2000x42'
+      - series: 'loki_distributor_lines_received_total{cluster="monitoring", pod="loki-1", tenant="fake"}'
+        values: '0+60x42'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: LokiIngestStopped
+        exp_alerts: []

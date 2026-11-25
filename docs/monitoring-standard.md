@@ -76,7 +76,8 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-10 | 수집 | Agent remote_write 큐 · 샘플 누락 `prometheus_remote_storage_*` · Loki ingestion 지연 | | | | 정상 0 누락 · 경고 큐 지연 30s · 위험 5분 | 실험 (VPN 단절) | VPN 점검 런북 · `collector_healthy=false` → `hold` | 가설 |
-| MON-STD-15 | 수집 | 클러스터별 Agent 생존 `absent_over_time(up{job="prometheus-agent", cluster="<c>"}[2m])`, 클러스터마다 룰 1개. `absent()`는 Agent 사망 시 stale 마커가 없어 lookback 5분 뒤에야 참(A5 테스트 9m15s vs 6m15s) → 쓰지 않음 | | | | 경고 2분 (= 범위 2m, `for` 없음) | 운영 경험 (교체 예정: 실험) | 수집 중단 판정 → 해당 클러스터 `collector_healthy=false` | 가설 |
+| MON-STD-15 | 수집 (수집 자체가 죽은 경우) | Agent 지표의 부재 `absent_over_time(up{job="prometheus-agent", cluster="<c>"}[2m])` (모니터링 · 관리 클러스터. Agent ×2 중 하나가 죽으면 30초 안에 다른 쪽 것이 저장돼 2분 빈칸은 둘 다 죽었을 때만 생긴다. `absent()`는 Agent 사망 시 stale 마커가 없어 lookback 5분 뒤에야 참(A5 테스트 9m15s vs 6m15s) → 쓰지 않음. EKS는 `FailoverSiteDown`이 본다) · kube-state-metrics 생존 = Agent는 있는데 `up{job="kube-state-metrics"} == 1`이 없음 (모니터링 · 관리 · EKS, 펜싱된 EKS 제외). **왜**: 둘 중 하나가 죽으면 지표가 0이 아니라 사라져 Pod 수 · Pod 종료 · 노드 소실 · HOLD 알람이 같이 조용해진다 | Agent 지표 빈칸 0초 · KSM 빈칸 60초 미만 (2026-11-23 ~ 25, 3일) | | Agent 지표 없음 2분 (= 범위 2m, `for` 없음. 룰 `MonitoringAgentAbsent`) · KSM 없음 · 무응답 5분 (룰 `MonitoringKsmAbsent`) | | 운영 경험 + 기준선 1회 (3일 이력에 식을 돌려 오발화 0건. 교체 예정: 실험) | 모니터링 담당 호출 런북 `deploy/README.md` 「알람이 울리면」. 수집 중단 판정 → 해당 클러스터 `collector_healthy=false` | 가설 |
+| MON-STD-32 | 수집 (로그 경로: Fluent Bit → OTel 게이트웨이 → Loki) | Fluent Bit 출력 `fluentbit_output_proc_records_total`(보낸 줄) · `fluentbit_output_dropped_records_total` · `fluentbit_output_retries_failed_total`(버림 · 재시도 포기) · Loki 수신 `loki_distributor_lines_received_total`. 지표 경로와 따로라서 지표가 멀쩡해도 로그만 끊길 수 있다. Fluent Bit Pod가 전부 죽으면 지표 자체가 없다 → MON-STD-31 | 버림 · 재시도 포기 0 · 보낸 줄 관리 약 26줄/초 · 모니터링 약 6줄/초 (3일 최저 12 · 3줄/초) · Loki 수신 약 37줄/초 (3일 최저 1.8줄/초) (2026-11-23 ~ 25) | 버림 또는 재시도 포기 > 0 (10분 증가, 룰 `LogShippingDropping`) · 보낸 줄 10분 평균 0이 10분 (룰 `LogShippingStopped`. 펜싱된 EKS 제외. 끊긴 뒤 약 20분에 운다) | Loki 수신 10분 평균 0이 10분 (룰 `LokiIngestStopped`) | 20분 → 더 짧게: 로그가 드문 시간대(새벽 · EKS 유휴)의 최저 유입을 더 본 뒤 | 기준선 1회 (3일 이력에 식을 돌려 오발화 0건. 펜싱 제외가 없으면 EKS를 끌 때 7 ~ 8분 0이 된다) | 모니터링 담당 호출 런북 `deploy/README.md` 「알람이 울리면」. `gpu.fault`에는 연결하지 않는다 | 가설 |
 
 ### 4.5 알람 · 분류
 
@@ -102,6 +103,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-13 | PostgreSQL (DB VM 172.30.0.50, 데이터베이스 `gpuf_data`) | `pg_up` · 연결 수 `pg_stat_activity_count` ÷ `pg_settings_max_connections` (postgres_exporter, 모니터링 클러스터 Pod ×1, `job="postgres-exporter"`). VM 디스크는 MON-STD-26 | | | | 위험 `pg_up == 0` 2분 (룰 `PostgresDown`) · 경고 연결 80% (룰 없음, 대시보드 타일 색만) | 운영 경험 (postgres_exporter 기본값) + 기준선 | DB 런북 (김현수) | 가설 |
 | MON-STD-14 | 결과 제공 | 결과물 업로드 실패 · 다운로드 오류 (학습 Job 카운터 · Backend 로그) | | | | 경고 1회 · 위험 연속 3회 | 운영 경험 | S3 권한 · 네트워크 점검 런북 | 가설 |
 | MON-STD-23 | Kafka (브로커 3대 172.30.0.40 ~ .42, KRaft 컨트롤러 겸함, 2주차 도입 ADR-7 · 8) | 브로커 지표 JMX Exporter(김현수, :7071, `job="kafka-jmx"`) + consumer lag `kafka_consumergroup_lag` (kafka_exporter, 모니터링 클러스터 Pod ×1). 그룹: 복구 컨트롤러 · 수집기 `data-collector` | | | | 경고 `data-collector` 토픽별 lag 합 > 1000 10분 (룰 `CollectorLagHigh`. 1000은 임시값, 2026-11-18 평소 0 → 실험에서 평소 lag을 본 뒤 조정. 커밋한 적 없는 파티션의 -1은 제외) · 위험 브로커 `up==0` 1분 (2026-11-12 확인: 브로커 3대 · 파티션 복제 3벌. 「브로커 1대, 복제 없음」 전제로 정한 값이라 재검토 필요) | 운영 경험 (kafka_exporter 기본 룰) | 데이터 담당 호출 런북. 컨트롤러 lag 증가 = 복구 지연 | 가설 |
+| MON-STD-31 | 워크로드 Pod 수 (관리 · 모니터링 클러스터 전체, EKS) | 원하는 수 대 Ready 수 (KSM): Deployment `kube_deployment_status_replicas_available` ÷ `_spec_replicas` · StatefulSet `kube_statefulset_status_replicas_ready` ÷ `_replicas` · DaemonSet `kube_daemonset_status_number_ready` ÷ `_desired_number_scheduled`. **왜 따로 보나**: `up == 0`(`MonitoringTargetDown`)은 Pod가 지워지거나 0개가 되면 시계열이 사라져 울지 않고, dispatcher · relocator · collector · job-watcher · jobset-controller · backend는 지표를 긁지도 않는다. 모니터링 클러스터 `monitoring` 네임스페이스는 MON-STD-22 룰, 복구 컨트롤러 0개는 MON-STD-29 룰이 본다 | 전부 원하는 수 (2026-11-25) | 원하는 수보다 적음 10분 (룰 `WorkloadReplicasDegraded`. 관리 · 모니터링 클러스터의 Deployment · StatefulSet. DaemonSet · EKS는 「적음」을 안 본다: 노드 하나가 빠지면 DaemonSet마다 울고 그 경우는 `MonitoringTargetDown` · `FailoverGpuNodeLost` 몫) | Ready 0개 2분 (룰 `WorkloadDown`. DaemonSet 포함) · EKS Ready 0개 5분 (룰 `EksWorkloadDown`. 펜싱된 EKS 제외, 5분 = 켠 직후 Pod가 뜨는 시간) | | 운영 경험 (MON-STD-22와 같은 기준) + 기준선 1회 (2026-11-23 ~ 25 이력에 식을 돌리면 복구 컨트롤러 사고 2번만 걸리고 배포 · EKS 켜고 끄기는 안 걸림) | 그 워크로드 담당 호출 (platform = 서비스 · 스케줄링 · 복구, data-system = 데이터, 그 밖 = 인프라) 런북 `deploy/README.md` 「알람이 울리면」 | 가설 |
 
 ### 4.8 모니터링 서버 자체
 
@@ -127,7 +129,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 |---|---|---|---|---|
 | MON-STD-06 · 07 | | | 「Kubernetes 노드」 CPU · 메모리 · 루트 디스크 · 네트워크 (지금은 온프레 노드만, EKS GPU 노드는 overlay 연결 뒤) | 2026-11-13 |
 | MON-STD-10 | | | 「수집 파이프라인」 타일 전송 실패 · 전송 지연, 그래프 실패 샘플 · 전송 지연(30초 선) · 대기 샘플 | 2026-11-13 |
-| MON-STD-15 | (`absent_over_time` 룰 미구현) | | 「수집 파이프라인」 타일 Agent | 2026-11-13 |
+| MON-STD-15 | `MonitoringAgentAbsent` · `MonitoringKsmAbsent` (`deploy/base/mimir/rules/self.yml`, 테스트 `tests/self_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「수집 파이프라인」 타일 Agent | 2026-11-25 |
 | MON-STD-16 | | | 「수집 파이프라인」 WAL 크기 | 2026-11-13 |
 | MON-STD-18 | | | 「모니터링 스택」 ping 성공 여부 · 응답 시간 (pfSense · 인터넷만, VPN 대상은 AWS 재구축 뒤) | 2026-11-13 |
 | MON-STD-20 | | | 「Kubernetes 워크로드」 마지막 종료 · 학습 Pod | 2026-11-13 |
@@ -141,6 +143,8 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 하트비트 경과(60초 선) · 하트비트 조회 | 2026-11-20 |
 | MON-STD-29 | `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 컨트롤러 · 소비 지연, 그래프 Ready · 재시작 · 소비 지연 | 2026-11-25 |
 | MON-STD-30 | `TrainingStalled` (`deploy/base/mimir/rules/training.yml`, 테스트 `tests/training_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「학습 작업」 타일 정체 작업(지표가 들어오는 작업만 센다), 그래프 현재 step · 체크포인트 step · 진행 속도 | 2026-11-25 |
+| MON-STD-31 | `WorkloadReplicasDegraded` · `WorkloadDown` · `EksWorkloadDown` (`deploy/base/mimir/rules/workloads.yml`, 테스트 `tests/workloads_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kubernetes 워크로드」 타일 복제 부족, 표 워크로드 복제 (cluster · namespace 선택) | 2026-11-25 |
+| MON-STD-32 | `LogShippingDropping` · `LogShippingStopped` · `LokiIngestStopped` (`deploy/base/mimir/rules/self.yml`, 테스트 `tests/self_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「수집 파이프라인」 타일 버린 로그, 그래프 출력 오류 · 버림 · 처리한 로그 · Loki로 보낸 로그 | 2026-11-25 |
 | MON-STD-01 | | | 「GPU」 타일 온도 여유, 그래프 GPU 온도(한계 3단 점선) | 2026-11-20 |
 | MON-STD-02 | | | 「GPU」 타일 감속 GPU, 그래프 감속 사유 · 감속 시간 비율 · SM 클럭 | 2026-11-20 |
 | MON-STD-03 | | | 「GPU」 타일 ECC DBE · 폐기 대기, 그래프 ECC SBE 증가 · 페이지 폐기 | 2026-11-20 |
@@ -160,6 +164,6 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | 5 SLO (5~6주) | SLO 행 목표 |
 | 6 검증 (6주) | 추적표 전 행, 상태 `측정 못 함` 정리 |
 
-- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 31).
+- 번호는 재사용 · 재배열하지 않는다. 행 추가는 다음 번호(현재 33).
 - 값을 바꾸면 근거 링크를 같이 바꾼다. 근거 없는 변경은 가설 열로만.
 - 룰 annotation `standard` 값이 이 표에 없으면 CI에서 실패시킨다 (2단계에서 promtool 테스트에 추가).
