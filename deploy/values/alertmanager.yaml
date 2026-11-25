@@ -53,16 +53,15 @@ config:
         group_wait: 0s
         group_interval: 1m
         repeat_interval: 1m      # healthchecks.io 체크 period 1m · grace 4m → 미수신 5m에 알림
-      # 원인 알람은 사람이 아니라 분류기가 읽는다 (docs/classifier.md 2절). Xid · Pod 종료 · GPU 노드 소실만 분류기로 보낸다.
-      # node_lost는 분류기 ENABLED_SIGNALS에 넣기 전까지 분류기가 받아서 버린다(outcome="disabled")
-      - matchers: ["pipeline = failover", 'signal =~ "xid|pod_exit|node_lost"']
+      # 원인 알람은 사람이 아니라 분류기가 읽는다 (docs/classifier.md 2절). Xid · Pod 종료 · GPU 노드 소실 · 사이트를 분류기로 보낸다.
+      # 사이트(GPU-220, 11/25 켬): 펜싱된(일부러 끈) EKS는 룰에서 빠진다. 분류기 ENABLED_SIGNALS(Gitops)에 없는 신호는 분류기가 받아서 버린다(outcome="disabled")
+      - matchers: ["pipeline = failover", 'signal =~ "xid|pod_exit|node_lost|site"']
         receiver: classifier
         group_by: [alertname, cluster, node, pod, gpu_uuid]   # 사건 하나 = 알림 하나
         group_wait: 0s           # 원인 알람은 약 30초만 발화한다. 기다리면 그 사이 꺼져서 못 보낸다
         group_interval: 1m
         repeat_interval: 1m      # 분류기가 503을 주면 다시 보낸다. 중복은 분류기가 거른다 (docs/classifier.md 8절)
-      # 그 밖의 원인 알람(사이트)은 아직 분류기로 보내지 않는다: FailoverSiteDown은 일부러 내린 EKS에도 울려서,
-      # 그대로 보내면 테스트를 끝낼 때마다 fence_evacuate 이벤트가 나간다. Alertmanager 화면에서만 보인다
+      # 그 밖의 원인 알람(스팟 등 아직 분류기가 안 받는 것)은 Alertmanager 화면에서만 보인다
       - matchers: ["pipeline = failover"]
         receiver: classifier-pending
       # HOLD는 "일어난 사건"이라 룰이 약 5분 발화하고 꺼진다. 꺼짐 = 해결이 아니므로 resolved를 보내지 않는 수신자로.
