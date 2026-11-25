@@ -138,7 +138,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | 「장애 복구」 타일 HOLD 누적, HOLD 목록(PostgreSQL 뷰 `data.v_recovery_held`) · HOLD 누적 (지표) | 2026-11-20 |
 | MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/base/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 분류기, 그래프 받은 알람 · 발행한 사건 · 버린 것 · 상태 | 2026-11-20 |
 | MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 하트비트 경과(60초 선) · 하트비트 조회 | 2026-11-20 |
-| MON-STD-29 | `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | | 2026-11-25 |
+| MON-STD-29 | `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 컨트롤러 · 소비 지연, 그래프 Ready · 재시작 · 소비 지연 | 2026-11-25 |
 | MON-STD-01 | | | 「GPU」 타일 온도 여유, 그래프 GPU 온도(한계 3단 점선) | 2026-11-20 |
 | MON-STD-02 | | | 「GPU」 타일 감속 GPU, 그래프 감속 사유 · 감속 시간 비율 · SM 클럭 | 2026-11-20 |
 | MON-STD-03 | | | 「GPU」 타일 ECC DBE · 폐기 대기, 그래프 ECC SBE 증가 · 페이지 폐기 | 2026-11-20 |

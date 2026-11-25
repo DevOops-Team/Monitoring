@@ -119,7 +119,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 | `gpu` | GPU | dcgm-exporter 지표를 노드 · GPU별로: 온도와 한계 3단(최대 동작 · 감속 · 차단) · 감속 사유 · 감속 시간 비율 · ECC · 페이지 폐기 · Xid(지표 + 커널 로그) · 사용률 · 메모리 · 전력 · 클럭 · PCIe 재시도 (MON-STD-01 ~ 05) | cluster · node |
 | `training-jobs` | 학습 작업 | trainer :8000 지표를 작업 · 세대 · 랭크별로: 단계 · 현재 step과 체크포인트 step · 스텝 시간(평균) · loss · 스트래글러 비율(1.5 · 2.0 선) · 랭크별 계산 · 통신 · 데이터 대기 (MON-STD-08) | cluster · job_id · generation |
 | `kueue` | Kueue | 관리 클러스터 + EKS의 큐: 대기 · 입장 Workload · 입장 못 한 사유 · GPU 쿼터 사용 · 입장 대기 · 실행 시간 · LocalQueue. 리더 Pod 지표만 읽는다 | cluster |
-| `failover` | 장애 복구 | 장애 1건마다 감지 · 분류 · 복구 시간(PostgreSQL `data.v_incidents`) · HOLD 목록(`data.v_recovery_held`) · 분류기 처리 현황 · 펜싱 하트비트 (MON-STD-25 · 27 · 28) | - |
+| `failover` | 장애 복구 | 장애 1건마다 감지 · 분류 · 복구 시간(PostgreSQL `data.v_incidents`) · HOLD 목록(`data.v_recovery_held`) · 복구 컨트롤러 Ready · 재시작 · `gpu.fault` 소비 지연 · 분류기 처리 현황 · 펜싱 하트비트 (MON-STD-25 · 27 · 28 · 29) | - |
 
 - **화면에서 고친 것은 저장되지 않는다**(`allowUiUpdates: false`). 고치는 흐름: 화면에서 편집 → 「Export → JSON」 → 레포 파일 교체 → 커밋 → 적용
 - 새 대시보드는 `kustomization.yaml`에서 그 폴더 ConfigMap(`grafana-dashboards-<폴더>`)의 files에도 넣는다. lint가 JSON 문법 · `uid` · `title` · uid 중복을 본다
