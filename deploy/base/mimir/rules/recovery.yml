@@ -69,3 +69,45 @@ groups:
         annotations:
           summary: '복구 컨트롤러가 펜싱 하트비트를 10분째 못 읽는다 — 그동안 하트비트 멈춤 알람(RecoveryHeartbeatStale)이 꺼져 있다'
           standard: MON-STD-28
+
+      # 복구 컨트롤러 자체의 이상 (MON-STD-29). 사람용(Slack)이고 분류기 입력이 아니다.
+      # 컨트롤러가 멈추면 gpu.fault가 나가도 복구가 시작되지 않는다. 11/24 ~ 11/25 사고 세 가지를 하나씩 잡는다
+
+      # 1) Ready가 하나도 없다 (11/25 11:00 설정 불일치로 CrashLoop). 2분 = 버전 교체(한 개씩 바꿈) 중엔 0이 되지 않는다
+      - alert: RecoveryControllerDown
+        expr: >
+          (kube_deployment_status_replicas_available{cluster="onprem-manager", namespace="platform", deployment="recovery-controller"} == 0)
+          and (kube_deployment_spec_replicas{cluster="onprem-manager", namespace="platform", deployment="recovery-controller"} > 0)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: '복구 컨트롤러 Ready 0개 — gpu.fault가 나가도 자동 복구가 시작되지 않는다'
+          standard: MON-STD-29
+
+      # 2) 죽었다 살아나기를 되풀이한다 (11/24 밤: 못 읽는 사건 하나에 스레드가 죽어 17시간 동안 15분마다 6 ~ 9번).
+      # 그사이 Ready로 보이는 때가 있어 1)로는 안 잡힌다. Pod 3개 합계 3번 = 한 바퀴. 버전 교체는 새 Pod라 재시작 수가 늘지 않는다
+      - alert: RecoveryControllerRestarting
+        expr: >
+          sum by (cluster, namespace) (
+            increase(kube_pod_container_status_restarts_total{cluster="onprem-manager", namespace="platform", pod=~"recovery-controller-.*"}[15m])
+          ) >= 3
+        labels:
+          severity: warning
+        annotations:
+          summary: '복구 컨트롤러가 15분 동안 {{ $value | printf "%.0f" }}번 재시작 — 같은 사건에서 계속 죽고 있을 수 있다. 로그의 마지막 오류와 gpu.fault 소비 지연 확인'
+          standard: MON-STD-29
+
+      # 3) gpu.fault를 못 읽고 있다 (11/25 17:00: 같은 사건을 19분 동안 되풀이해 읽음). 평소 지연은 0이고 사건 하나는 몇 초 안에 읽는다.
+      # 커밋한 적 없는 파티션은 -1이라 0 이상만 합친다
+      - alert: RecoveryControllerStuck
+        expr: >
+          sum by (consumergroup, topic) (
+            kafka_consumergroup_lag{job="kafka-exporter", consumergroup="recovery-controller-v1", topic="gpu.fault"} >= 0
+          ) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: '복구 컨트롤러가 gpu.fault {{ $value }}건을 5분째 못 읽는다 — 그 사건과 뒤따르는 사건의 복구가 멈춰 있다'
+          standard: MON-STD-29
