@@ -106,6 +106,7 @@ groups:
       # Agent는 살아 있는데 kube-state-metrics가 없거나 응답하지 않는다. Pod 수 룰(MonitoringReplicas* · Workload*) ·
       # FailoverPodExit · FailoverGpuNodeLost · FailoverJobFailed · 하트비트 알람이 모두 이 지표에 기대므로, 없으면 그 알람들이 조용해진다.
       # 대상 클러스터를 적어 둔다(kind 시험 클러스터가 같은 Mimir에 보낼 때가 있다). 일부러 내리는 EKS(펜싱됨)는 뺀다
+      # 펜싱 제외는 관리 클러스터가 낸 EKS 이름에만 건다: 이름이 monitoring · onprem-manager인 항목이 생겨도 그 클러스터의 알람이 꺼지지 않게
       - alert: MonitoringKsmAbsent
         expr: >
           (
@@ -114,7 +115,7 @@ groups:
             (up{job="kube-state-metrics"} == 1)
           )
           unless on (cluster)
-          label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
+          label_replace(kube_customresource_multikueuecluster_info{cluster="onprem-manager", fenced="true", name=~"eks-(a|b|c)"}, "cluster", "$1", "name", "(.+)")
         for: 5m
         labels:
           severity: critical
@@ -144,7 +145,7 @@ groups:
         expr: >
           (sum by (cluster) (rate(fluentbit_output_proc_records_total{cluster=~"monitoring|onprem-manager|eks-(a|b|c)"}[10m])) == 0)
           unless on (cluster)
-          label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
+          label_replace(kube_customresource_multikueuecluster_info{cluster="onprem-manager", fenced="true", name=~"eks-(a|b|c)"}, "cluster", "$1", "name", "(.+)")
         for: 10m
         labels:
           severity: warning

@@ -163,6 +163,9 @@ tests:
         values: '1x60'
       - series: 'up{job="prometheus-agent", cluster="kind-test", pod="prometheus-agent-z"}'
         values: '1x60'
+      # 펜싱 항목의 이름이 EKS가 아니면 제외에 쓰이지 않는다(관리 클러스터 알람이 꺼지면 안 된다)
+      - series: 'kube_customresource_multikueuecluster_info{cluster="onprem-manager", name="onprem-manager", fenced="true"}'
+        values: '1x60'
       - series: 'up{job="prometheus-agent", cluster="monitoring", pod="prometheus-agent-0"}'
         values: '1x60'
       - series: 'up{job="kube-state-metrics", cluster="monitoring"}'
