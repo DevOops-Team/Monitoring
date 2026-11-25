@@ -411,7 +411,7 @@ cd classifier && MIMIR_URL=http://172.30.0.35:9009 .venv/bin/uvicorn classifier.
 
 ## 장애 주입 (11/20, GPU-92)
 
-주입은 세 가지다. ① trainer 강제 종료(학습 Pod 장애, 룰부터 전부 실제 경로) ② 한송이 시나리오 Xid 79 → 48(분류기에 시험 알람을 직접 넣음, 룰은 건너뜀) ③ `dcgmi`로 DCGM 엔진에 Xid를 넣음(GPU 고장, 룰부터 실제 경로).
+주입은 세 가지다(④ 노드 종료 · ⑤ 클러스터는 절차 초안만 있다). ① trainer 강제 종료(학습 Pod 장애, 룰부터 전부 실제 경로) ② 한송이 시나리오 Xid 79 → 48(분류기에 시험 알람을 직접 넣음, 룰은 건너뜀) ③ `dcgmi`로 DCGM 엔진에 Xid를 넣음(GPU 고장, 룰부터 실제 경로).
 ③은 dcgm-exporter 사이드카가 GPU를 잡았을 때만 한다(「EKS가 뜬 날 확인 순서」 4번). 순서는 ① → ② → ③.
 
 **주입 전에 복구 컨트롤러의 모드를 확인한다**(Gitops `onprem/controllers/recovery-controller/overlays/onprem/config.json`의 `mode` · `execution_enabled`). 실행 모드면 주입할 때 실제로 복구(새 세대 제출 · 노드 격리)가 일어나므로 주입마다 한송이에게 먼저 알리고 순서를 맞춘다. 격리 해제는 한송이가 한다. observe면 `gpu.fault` 발행까지만 보이고 아래 표의 복구 줄(T4 · T5)은 나오지 않는다(11/23이 그랬다).
@@ -480,6 +480,7 @@ date '+%T'; kubectl -n training exec "$POD" -c trainer -- sh -c 'kill -9 <워커
 | 2 | 원인 알람 | Alertmanager | `FailoverPodExit`, 수신자 `classifier`, 라벨 `pod` · `node` · `reason` |
 | 3 | 분류기 수신 | `classifier_alerts_total{outcome="deferred"}` | +1. 30초 뒤 `published` +1 |
 | 4 | 발행 | Loki `{k8s_cluster_name="monitoring", service_name="pod"} \| kubernetes_container_name="classifier" \|= "event.published"` | `action` `restart_in_place` · `job_id` 채워짐. `dedup_key` 끝의 숫자 = 원본 신호 시각(epoch초) |
+| 2-1 | 원인 알람(다른 길) | Alertmanager | Pod가 15초 안에 지워져 2가 안 울리면 `FailoverJobFailed`(라벨 `job_id` · `generation`, `node` 없음)가 실패 시각부터 3분 울린다. 둘 다 울려도 사건은 한 건 |
 | 5 | 다른 랭크 | 1 · 4를 다시 본다 | 다른 랭크 Pod가 언제 · 어떻게 끝나는지 적는다(같이 `Error` → `gpu.fault` 한 건 더? 펜싱으로 지워짐 → `intended`?). 같은 세대에 `restart_in_place`가 두 번 나가면 컨트롤러가 한 번만 복구하는지 한송이와 확인 |
 | 6 | 컨트롤러 안전망 | `sum by (reason) (recovery_hold_total)` | 늘지 않는다. `job.failed`만 받고 300초 안에 `gpu.fault`가 안 오면 컨트롤러가 HOLD한다(`unclassified_job_failure`, 이 이름이 지표 라벨로도 나오는지는 미확인 → 전체 증가로 본다) |
 | 7 | 복구 | Grafana PostgreSQL `events`에서 그 `job_id`: `recovery.decided` → `job.submitted`(새 세대) → `job.resumed` · `train_current_step{job_id="…"}` 새 `generation` 증가 | 새 세대가 이어서 학습 |
@@ -549,6 +550,38 @@ kubectl -n monitoring delete pod "$DCGM"     # DaemonSet이 새로 띄운다 →
 # 확인: 그 노드의 DCGM_FI_DEV_XID_ERRORS가 사라진다(Xid가 없으면 시계열이 없다) · DCGM_FI_DEV_GPU_TEMP는 다시 나온다
 ```
 
+### ④ 학습 중인 GPU 노드 종료 (아직 실행 전 — 절차 초안, 11/25)
+
+`FailoverGpuNodeLost`(노드 소실) 첫 실전 검증이다. 학습 Pod가 있는 GPU 인스턴스를 종료한다. 관리형 노드그룹이 새 인스턴스를 띄운다(새 이름).
+
+```bash
+NODE=<학습 Pod가 있는 GPU 노드 이름, ip-…compute.internal>
+ID=$(aws ec2 describe-instances --profile devoops --region us-east-2 \
+  --filters "Name=private-dns-name,Values=$NODE" --query 'Reservations[].Instances[].InstanceId' --output text); echo $ID
+date '+%T'; aws ec2 terminate-instances --instance-ids $ID --profile devoops --region us-east-2
+```
+
+기대: 1 ~ 2분 뒤 `FailoverGpuNodeLost`(NotReady 1분 또는 Node 삭제) → `infra` · `isolate_migrate` → 새 세대. 볼 것: 옮겨 간 곳(같은 클러스터 예비 노드인지 다른 클러스터인지),
+인스턴스 종료 때 Pod 종료 사유가 남아 `FailoverPodExit` · `FailoverJobFailed`가 먼저 `restart_in_place`를 내는지(JobSet 실패가 노드 소실 알람보다 먼저 올 수 있다).
+
+### ⑤ 클러스터 전체 (아직 실행 전 — 절차 초안, 11/25. 김성모 R6와 같이)
+
+`FailoverSiteDown`(사이트) 첫 실전 검증이다. 노드그룹이 새로 띄우지 못하게 막고 그 클러스터 인스턴스를 한 번에 종료한다(크기를 0으로 줄이면 노드를 차례로 비워서 갑작스러운 장애가 아니다).
+**펜싱하지 않은 채로** 해야 알람이 울린다. 주입 방식은 김성모와 먼저 맞춘다.
+
+```bash
+C=devoops-prod-eks-a; R="--profile devoops --region us-east-2"
+ASGS=$(for g in cpu gpu-training gpu-spare; do aws eks describe-nodegroup --cluster-name $C --nodegroup-name $C-$g $R \
+  --query 'nodegroup.resources.autoScalingGroups[].name' --output text; done); echo $ASGS
+for a in $ASGS; do aws autoscaling suspend-processes --auto-scaling-group-name $a --scaling-processes Launch $R; done
+IDS=$(aws ec2 describe-instances $R --filters "Name=tag:EKSCluster,Values=$C" "Name=instance-state-name,Values=running" \
+  --query 'Reservations[].Instances[].InstanceId' --output text); echo $IDS
+date '+%T'; aws ec2 terminate-instances --instance-ids $IDS $R
+# 끝나면: for a in $ASGS; do aws autoscaling resume-processes --auto-scaling-group-name $a --scaling-processes Launch $R; done → 노드 Ready 뒤 on-check --unfence
+```
+
+기대: 2 ~ 3분 뒤 `FailoverSiteDown` → 작업마다 `site` · `fence_evacuate` → 다른 EKS에서 재개. 15분 뒤 `Held`가 되면 아래 「Held 풀 때」(런북 21절).
+
 ### HOLD가 나면
 
 `RecoveryHold` 알람이 Slack `#alerts-gpu`에 와야 한다(Slack 화면은 사용자가 확인). `recovery_hold_total{job_id, reason}`가 늘었는지 같이 적는다.
@@ -568,6 +601,7 @@ kubectl -n monitoring delete pod "$DCGM"     # DaemonSet이 새로 띄운다 →
 감지 = T3 − T0, 분류 = T3 − T1, 복구 = T5 − T3. 끝나면 `docs/measurements/`로 옮긴다.
 
 **11/23 결과**(① 두 번 · ③ 한 번, observe): ① 88.9초 → 평가 지연을 15초로 줄인 뒤 33.8초, ③ 36.9초. 다른 랭크는 Job이 삭제해 `gpu.fault`는 한 건만 나가고, 죽은 Pod는 약 37초 뒤 지워지며, 워커를 죽여도 Xid 45는 나지 않았다. 값과 타임라인은 `docs/measurements/2026-11-23-fault-injection.md`.
+**11/25 결과**(① 세 번, 실행 모드): 1차는 죽은 Pod가 14초 만에 지워져(JobSet Failed → MultiKueue가 EKS 쪽 JobSet 정리) `FailoverPodExit`가 못 봤고 `gpu.fault`가 안 나갔다 → `FailoverJobFailed`(관리 클러스터 JobSet 실패)를 더한 뒤 2차 47.9초 · 3차 38.9초에 발행. 3차에서 처음 자동 재제출이 됐지만 새 세대 trainer가 옛 세대 주소를 기다리며 멈췄다(relocator 2.5.3에서 고침, 다음 EKS에서 확인). `job.resumed`는 Pod Ready 기준이라 복구 시간의 끝이 아니다. 값과 타임라인은 `docs/measurements/2026-11-25-fault-injection.md`.
 「주입 해제」는 클럭 제한(`nvidia-smi -lgc`) · stress-ng · tc netem처럼 걸어 두는 주입을 푼 시각이다. 한 번에 끝나는 주입(kill -9 · Xid)은 비워 둔다.
 **기준선에서 빼는 구간 = T0 ~ (주입 해제와 T5 중 늦은 쪽)** (monitoring-standard.md 2절).
 
