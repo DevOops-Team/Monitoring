@@ -88,3 +88,19 @@ def test_node_lost():
 def test_node_lost_needs_node():
     with pytest.raises(RejectError):
         parse(alert({"signal": "node_lost", "node": ""}))
+
+
+def job_failed(**labels):
+    return alert({"signal": "job_failed", "node": "", "job_id": "3f9a1c2e", "generation": "3", **labels})
+
+
+def test_job_failed_carries_job_and_generation_without_node():
+    """관리 클러스터 JobSet이 실패로 끝남. 작업 · 세대는 알람이 주고 어느 Pod · 노드인지는 없다."""
+    s = parse(job_failed())
+    assert (s.signal, s.source, s.node, s.pod, s.job_id, s.generation) == ("job_failed", "pod", None, None, "3f9a1c2e", 3)
+
+
+@pytest.mark.parametrize("labels", [{"job_id": ""}, {"generation": ""}, {"generation": "x"}, {"job_id": "a|b"}])
+def test_job_failed_needs_job_and_generation(labels):
+    with pytest.raises(RejectError):
+        parse(job_failed(**labels))

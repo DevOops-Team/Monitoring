@@ -7,7 +7,9 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 # signal 라벨 → 이벤트 source. xid만 경로가 둘이라 source 라벨로 받는다
-_SOURCE = {"pod_exit": "pod", "spot": "spot", "site": "site", "node_lost": "node"}
+# job_failed = 학습 작업(JobSet)이 실패로 끝남. Pod 종료와 같은 종류의 사건이라 source는 pod, 어느 Pod · 노드인지는 모른다
+_SOURCE = {"pod_exit": "pod", "job_failed": "pod", "spot": "spot", "site": "site", "node_lost": "node"}
+_NO_NODE = ("site", "job_failed")
 _XID_SOURCES = ("dmesg", "dcgm")
 _GPU_UUID = re.compile(r"^GPU-[0-9a-f-]+$")     # v1 스키마와 같은 형식
 _POD_NAME = re.compile(r"^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$")     # 쿠버네티스 이름 규칙
@@ -20,18 +22,20 @@ class RejectError(ValueError):
 
 @dataclass(frozen=True)
 class Signal:
-    signal: str                 # xid | pod_exit | spot | site | node_lost
+    signal: str                 # xid | pod_exit | job_failed | spot | site | node_lost
     source: str                 # dcgm | dmesg | pod | spot | site | node
     alert: str                  # alertname
     cluster: str
     ts: datetime                # 원본 신호 발생 시각 (annotation event_ts)
-    node: str | None = None     # site는 None
+    node: str | None = None     # site · job_failed는 None
     gpu_uuid: str | None = None
     xid: int | None = None
     exit_code: int | None = None   # 알 수 있을 때만. kube-state-metrics는 재시작하지 않는 컨테이너의 종료 코드를 내지 않는다
     reason: str | None = None   # pod_exit: 컨테이너 종료 사유 (Error · OOMKilled …)
     pod: str | None = None
     log_line: str | None = None
+    job_id: str | None = None       # job_failed만: 알람이 작업 · 세대를 직접 준다(관리 클러스터 JobSet 라벨)
+    generation: int | None = None
 
 
 def _require(labels: dict[str, str], name: str) -> str:
@@ -116,11 +120,13 @@ def parse_alert(alert: dict[str, Any], now: datetime | None = None) -> Signal | 
         alert=_require(labels, "alertname"),
         cluster=_ident(labels, "cluster"),
         ts=_event_ts(annotations, now),
-        node=None if signal == "site" else _ident(labels, "node"),
+        node=None if signal in _NO_NODE else _ident(labels, "node"),
         gpu_uuid=_gpu_uuid(labels),
         xid=_int(labels, "xid") if signal == "xid" else None,
         exit_code=_opt_int(labels, "exit_code") if signal == "pod_exit" else None,
         reason=_require(labels, "reason") if signal == "pod_exit" else None,
         pod=_pod(labels) if signal == "pod_exit" else None,
         log_line=annotations.get("log_line") or None,
+        job_id=_ident(labels, "job_id") if signal == "job_failed" else None,
+        generation=_int(labels, "generation") if signal == "job_failed" else None,
     )

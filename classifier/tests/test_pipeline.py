@@ -39,6 +39,13 @@ def pod_exit(rank=0, code="137", ts=T0, generation=GEN):
             "annotations": {"event_ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ")}}
 
 
+def job_failed(ts=T0, generation=GEN):
+    return {"status": "firing",
+            "labels": {"alertname": "FailoverJobFailed", "pipeline": "failover", "signal": "job_failed", "cluster": "eks-a",
+                       "job_id": JOB, "generation": str(generation)},
+            "annotations": {"event_ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "log_line": "jobset failed"}}
+
+
 def xid(number="79", rank=0, ts=T0):
     return {"status": "firing",
             "labels": {"alertname": "GpuXid", "pipeline": "failover", "signal": "xid", "source": "dmesg",
@@ -57,7 +64,7 @@ def env():
     life.healthy = True
 
     def enrich(s):      # Pod 이름에서 세대를 읽는 가짜 Mimir. Xid는 같은 작업 · 세대의 노드에서 났다고 본다
-        generation = int(s.pod.split("-g")[1][:4]) if s.pod else GEN
+        generation = int(s.pod.split("-g")[1][:4]) if s.pod else (s.generation or GEN)
         return Context(az="us-east-2a", collector_healthy=True, job_id=JOB, generation=generation)
 
     return p.Pipeline(Rules.load(), Publisher(fake, "abc1234"), enrich, life), fake, life
@@ -362,4 +369,88 @@ def test_pod_exit_after_node_lost_is_absorbed():
                                     jobs=((JOB, GEN),) if s.signal == "node_lost" else None)
     assert pipe.handle(node_lost(), at(90)) == p.PUBLISHED
     assert pipe.handle(pod_exit(), at(100)) == p.ABSORBED
+    assert len(fake.sent) == 1
+
+
+
+# ---------- 작업 실패(job_failed): 죽은 Pod가 지워져 Pod 종료 알람이 못 본 경우 (GPU-220) ----------
+def test_job_failed_waits_30s_then_publishes_one_event_without_node(env):
+    pipe, fake, _ = env
+    assert pipe.handle(job_failed(), at(10)) == p.DEFERRED
+    assert pipe.handle(job_failed(), at(25)) == p.DEFERRED and len(pipe.pending) == 1     # Alertmanager 재전송
+    pipe.flush(at(30))
+    payload = fake.sent[0]["payload"]
+    assert (payload["source"], payload["node"], payload["job_id"], payload["generation"], payload["suggested_action"]) == (
+        "pod", None, JOB, GEN, "restart_in_place")
+    assert payload["dedup_key"].startswith(f"eks-a/{JOB}/g{GEN}|pod|")
+    assert pipe.handle(job_failed(), at(90)) == p.DUPLICATE         # 알람은 3분 울린다. 다시 와도 한 건
+    assert len(fake.sent) == 1
+
+
+def test_job_failed_after_pod_exit_event_is_absorbed(env):
+    """Pod 종료 알람이 먼저 봤으면 작업 실패는 같은 일이다."""
+    pipe, fake, _ = env
+    assert pipe.handle(pod_exit(), at(45)) == p.PUBLISHED
+    assert pipe.handle(job_failed(), at(50)) == p.ABSORBED
+    assert len(fake.sent) == 1
+
+
+def test_pod_exit_after_job_failed_event_is_absorbed(env):
+    pipe, fake, _ = env
+    assert pipe.handle(job_failed(), at(45)) == p.PUBLISHED
+    assert pipe.handle(pod_exit(rank=1), at(50)) == p.ABSORBED
+    assert len(fake.sent) == 1
+
+
+def test_both_waiting_publish_only_one(env):
+    pipe, fake, _ = env
+    pipe.handle(pod_exit(), at(5))
+    pipe.handle(job_failed(), at(6))
+    pipe.flush(at(31))
+    assert len(fake.sent) == 1 and pipe.pending == []
+
+
+@pytest.mark.parametrize("type_", ["job.fenced", "job.cancelled"])
+def test_job_failed_of_intended_termination_is_dropped(env, type_):
+    pipe, fake, life = env
+    life.apply(lifecycle_event(type_), at(5))
+    assert pipe.handle(job_failed(), at(45)) == p.INTENDED
+    assert fake.sent == []
+
+
+def test_job_failed_of_older_generation_is_stale(env):
+    pipe, fake, life = env
+    life.apply(lifecycle_event("job.submitted", generation=GEN + 1), at(5))
+    assert pipe.handle(job_failed(), at(45)) == p.STALE
+
+
+def test_job_failed_after_cause_is_absorbed(env):
+    """Xid로 이미 복구 대상이 된 세대의 JobSet 실패는 결과다."""
+    pipe, fake, _ = env
+    assert pipe.handle(xid(), at(2)) == p.PUBLISHED
+    assert pipe.handle(job_failed(), at(45)) == p.ABSORBED
+
+
+def test_job_failed_holds_when_lifecycle_is_unreadable(env):
+    pipe, fake, life = env
+    life.healthy = False
+    assert pipe.handle(job_failed(), at(45)) == p.PUBLISHED
+    assert fake.sent[0]["payload"]["suggested_action"] == "hold"
+
+
+def test_next_generation_job_failed_is_a_new_event(env):
+    pipe, fake, _ = env
+    assert pipe.handle(job_failed(), at(45)) == p.PUBLISHED
+    assert pipe.handle(job_failed(ts=at(600), generation=GEN + 1), at(660)) == p.PUBLISHED
+    assert len(fake.sent) == 2
+
+
+def test_restore_remembers_job_failed_event(env):
+    """대장이 바뀐 뒤에도, 이미 낸 작업 실패 사건의 세대에 뒤늦게 온 Pod 종료를 새 사건으로 내지 않는다."""
+    pipe, fake, life = env
+    pipe.handle(job_failed(), at(45))
+    fresh = p.Pipeline(pipe.rules, pipe.publisher, pipe.enrich, life)
+    fresh.restore(fake.sent[0])
+    assert fresh.handle(job_failed(), at(60)) == p.DUPLICATE
+    assert fresh.handle(pod_exit(rank=1), at(60)) == p.ABSORBED
     assert len(fake.sent) == 1

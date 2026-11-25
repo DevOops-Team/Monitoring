@@ -30,6 +30,8 @@ signal:
   # GPU 노드가 사라짐(NotReady · Node 삭제), 클러스터 지표는 계속 옴. 노드마다 1건, 그 노드에 학습 작업이 있었을 때만
   node_lost: {category: infra, action: isolate_migrate, confidence: 0.8}
   pod_exit: {category: app, action: restart_in_place, confidence: 0.6}
+  # 학습 작업(JobSet)이 실패로 끝남. Pod 종료와 같은 일인데 죽은 Pod가 지워져 Pod 종료 알람이 못 본 경우를 잡는다(GPU-220)
+  job_failed: {category: app, action: restart_in_place, confidence: 0.6}
 
 # 표에 없는 Xid
 unmatched: {category: hw, action: hold, confidence: 0.3}

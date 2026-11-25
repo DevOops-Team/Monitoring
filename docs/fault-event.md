@@ -30,7 +30,7 @@
 | `traceparent` | W3C | trace-id · parent-id가 전부 0이면 W3C 무효 값이라 거부. 컨트롤러는 이걸 부모로 `decide` span을 연다 → 분류기 · 컨트롤러 · 학습 Job span이 한 trace로 이어짐 |
 | `ts` | UTC 시각 | **원본 신호 발생 시각** (커널 로그 시각 등). 분류기가 받은 시각 아님 → 감지 지연 = 분류기 span 시작 − `ts` |
 | `cluster` · `az` | 문자열 | 예: `eks-a`, `us-east-2a` (클러스터 이름은 ADR-32의 `eks-a` · `b` · `c`) |
-| `node` | 문자열 / null | site 이벤트는 null |
+| `node` | 문자열 / null | site 이벤트는 null. **`source: pod`인데 null이면 「학습 작업 실패」 사건**이다(관리 클러스터 JobSet이 실패로 끝남, 2026-11-25 GPU-220): 죽은 Pod가 지워져 어느 노드인지 모른다. `job_id` · `generation`은 채워진다 |
 | `gpu_uuid` | `GPU-…` / null | dcgm-exporter 레이블(pci_bus_id → UUID)로 채움 |
 | `job_id` | 문자열 / null | **학습 작업 ID** = 백엔드가 만드는 8자리 hex (예 `3f9a1c2e`). k8s JobSet 이름 `job-3f9a1c2e-g0003`이 아니다. 분류기는 **Mimir의 kube-state-metrics 지표**로 찾는다: `kube_pod_info{node}` → `kube_pod_labels{label_devoops_job_id, label_devoops_generation}` (각 클러스터 KSM이 remote_write로 보낸 것, KSM `--metric-labels-allowlist` 필요). EKS API를 직접 부르지 않으므로 VPN·EKS 권한이 없어도 되고, VPN이 끊겨도 마지막 매핑이 남는다 (2026-11-11 김현수 지적으로 정정). 못 찾으면 null. **site는 클러스터가 끊기기 직전에 Running이던 작업마다 이벤트 1건**(작업이 없으면 이벤트 없음, 조회 실패 · 그 시각 KSM이 안 긁히고 있었으면 null로 1건. 2026-11-24 GPU-220) |
 | `generation` | 정수 / null | 세대 번호. 원본은 DynamoDB 펜싱 테이블 `devoops-job-fencing` (ADR-6). Pod 라벨 `devoops/generation`에서 읽음 |
@@ -58,7 +58,7 @@
 
 **키 만들기 (분류기)**
 
-- 대상 = `gpu_uuid` (spot · node는 `node`, site는 `cluster/job_id` — 작업마다 다른 사건이라서. `job_id`가 null이면 `cluster`), 코드 = `raw.xid` (없으면 `source`). 예 `eks-a/3f9a1c2e|site|1795010531`
+- 대상 = `gpu_uuid` (spot · node는 `node`, site는 `cluster/job_id` — 작업마다 다른 사건이라서. `job_id`가 null이면 `cluster`. 학습 작업 실패는 `cluster/job_id/g<세대>`), 코드 = `raw.xid` (없으면 `source`). 예 `eks-a/3f9a1c2e|site|1795010531` · `eks-a/3f9a1c2e/g3|pod|1795010531`
 - 같은 대상+코드 이벤트가 이미 본 사건의 기준 시각 **±45초** 안의 `ts`면 같은 사건 → 그 사건의 키를 그대로 쓴다
 - 아니면 새 사건 → 이 이벤트의 `ts`(epoch 초)가 기준 시각
 - 비교는 도착 시각이 아니라 `ts`(신호 발생 시각)로 한다. 로그 경로가 몇 시간 뒤 살아나 밀린 줄이 와도 같은 사건으로 묶인다
@@ -86,7 +86,7 @@
 
 | suggested_action | 뜻 | 컨트롤러가 실제로 하는 일 |
 |---|---|---|
-| `restart_in_place` | GPU 멀쩡, 프로그램만 문제 (Xid 13 · 31 · 32 · 43 · 94 등, Pod 종료) | 세대 +1 → 옛 JobSet 정리 · 중단 확인 → **원래 클러스터를 먼저 보는**(같은 노드는 보장 안 함. 빈 GPU가 잡 크기보다 적으면 디스패처가 다른 클러스터로 보낸다, ADR-38) 새 JobSet 재제출 → 승인 체크포인트에서 이어 감. Pod 재시작이 아니다: torchrun · Job · JobSet · Kueue 자동 재시작은 전부 꺼져 있고 재시작 주체는 컨트롤러뿐 (ADR-12) |
+| `restart_in_place` | GPU 멀쩡, 프로그램만 문제 (Xid 13 · 31 · 32 · 43 · 94 등, Pod 종료 · 학습 작업 실패) | 세대 +1 → 옛 JobSet 정리 · 중단 확인 → **원래 클러스터를 먼저 보는**(같은 노드는 보장 안 함. 빈 GPU가 잡 크기보다 적으면 디스패처가 다른 클러스터로 보낸다, ADR-38) 새 JobSet 재제출 → 승인 체크포인트에서 이어 감. Pod 재시작이 아니다: torchrun · Job · JobSet · Kueue 자동 재시작은 전부 꺼져 있고 재시작 주체는 컨트롤러뿐 (ADR-12) |
 | `isolate_migrate` | 이 GPU 못 씀 (Xid 79 · GPU 노드가 사라짐) | 노드 cordon + taint `devoops/faulty` → 세대 +1 → 옛 JobSet 정리 · 중단 확인 → 같은 클러스터 예비 GPU(taint `devoops/spare`)로 새 JobSet (자리가 모자라면 디스패처가 다른 클러스터로, ADR-38) |
 | `reset_then_migrate` | 이 GPU 리셋 필요 (Xid 48 · 64 · 95 · 119 · 120 · 140 등) | 먼저 다른 노드로 이전 → 빈 노드에서 GPU 리셋 → 성공하면 예비로 복귀, 실패하면 폐기 |
 | `evacuate_preemptive` | 곧 죽거나 느려짐 (스팟 2분 통보, 스트래글러) | 노드 격리 → 세대 +1 → 옛 실행 종료 확인 → 같은 클러스터 예비 GPU로 새 JobSet, **마지막 승인본에서 재개**. 스팟 회수 예고 때도 마지막 저장을 기다리지 않는다(ADR-36, 11/13. ADR-28의 120초 마지막 저장은 폐기) |

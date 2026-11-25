@@ -1,6 +1,7 @@
 """알람 1건을 끝까지 처리한다: 정규화 → 보강 → 판정 → 중복 제거 → 조립 → 발행 (docs/classifier.md 1절).
 
-Pod 종료 신호만 길이 다르다. 의도된 종료인지 확인하려고 신호 시각 + 30초까지 기다렸다가 판정한다 (4절).
+Pod 종료 · 작업 실패 신호만 길이 다르다. 의도된 종료인지 확인하려고 신호 시각 + 30초까지 기다렸다가 판정한다 (4절).
+작업 실패(job_failed)는 죽은 Pod가 지워져 Pod 종료 알람이 못 본 경우를 잡는다. 같은 작업 · 세대에 둘 다 오면 먼저 낸 쪽만 사건이다.
 사이트 신호는 그 클러스터에서 돌던 작업마다 사건 1건을 낸다(컨트롤러가 사건 1건 = 작업 1개로 대피한다).
 GPU 노드 소실은 그 노드에서 돌던 작업 1개의 사건을 낸다(작업이 없으면 사건 없음).
 """
@@ -28,6 +29,7 @@ POD_EXIT_WAIT = timedelta(seconds=30)       # 임시값. E2E에서 job.fenced와
 MAX_PENDING = 1000                          # 기다리는 신호의 상한. 넘으면 기다리지 않고 hold로 낸다(메모리 보호)
 RETRY_AFTER = timedelta(seconds=5)          # 기다리던 신호의 발행이 실패했을 때 다시 해 볼 간격
 NO_RECOVERY = ("hold", "none")              # 복구를 부르지 않는 action. 원인 사건으로 치지 않는다
+EXIT_SIGNALS = ("pod_exit", "job_failed")   # 「학습이 끝났다」는 결과 신호. 원인 사건(Xid · 노드 소실 · 사이트)에 묶인다
 
 # 처리 결과. classifier_alerts_total의 outcome 라벨 값
 RESOLVED = "resolved"               # 꺼짐 알림
@@ -68,6 +70,8 @@ class Pipeline:
         self.pending: list[Pending] = []
         # (job_id, generation) → 복구를 부르는 원인 사건의 신호 시각. 그 세대의 Pod 종료는 결과이지 새 사건이 아니다
         self.causes: dict[tuple[str, int], datetime] = {}
+        # (job_id, generation) → 그 세대에 이미 낸 종료 사건의 (신호 종류, 시각). 다른 종류의 종료 신호는 같은 일을 두 번 보는 것이다
+        self.exits: dict[tuple[str, int], tuple[str, datetime]] = {}
         self._lock = threading.Lock()       # 웹훅은 스레드 풀, 대기 처리는 타이머 스레드에서 돈다
 
         self.registry = CollectorRegistry()
@@ -104,6 +108,8 @@ class Pipeline:
             self.lifecycle.prune(now)
             for key in [k for k, ts in self.causes.items() if ts < now - timedelta(seconds=dedup.KEEP_SECONDS)]:
                 del self.causes[key]
+            for key in [k for k, (_, ts) in self.exits.items() if ts < now - timedelta(seconds=dedup.KEEP_SECONDS)]:
+                del self.exits[key]
 
     def restore(self, envelope: dict[str, Any]) -> None:
         """시작할 때 Kafka gpu.fault에서 읽은, 전에 낸 이벤트 1건을 기억에 되돌린다 (7절)."""
@@ -117,6 +123,9 @@ class Pipeline:
                 self.dedup.record(e["dedup_key"], e["suggested_action"])
                 if e["source"] != "pod":
                     self._remember_cause(e["job_id"], e["generation"], e["suggested_action"], ts)
+                else:       # source=pod 가운데 node가 없는 것이 작업 실패 사건이다
+                    self._remember_exit("job_failed" if e["node"] is None else "pod_exit",
+                                        e["job_id"], e["generation"], e["suggested_action"], ts)
         except (KeyError, TypeError, ValueError) as err:    # 분류기가 낸 v1 이벤트가 아니다. 기억에 넣지 않는다
             log("restore.skipped", reason=repr(err))
 
@@ -140,7 +149,7 @@ class Pipeline:
             return self._site(s, ctx, now)
         if s.signal == "node_lost":
             return self._node_lost(s, ctx, now)
-        if s.signal != "pod_exit":
+        if s.signal not in EXIT_SIGNALS:
             return self._emit(s, ctx, now)
         if now < s.ts + POD_EXIT_WAIT:
             if any(p.s == s for p in self.pending):         # Alertmanager 재전송
@@ -187,7 +196,7 @@ class Pipeline:
         return self._emit(s, replace(ctx, job_id=job, generation=gen, jobs=None), now, hold=not self.lifecycle.healthy)
 
     def _pod_exit(self, s: Signal, ctx: Context, now: datetime) -> str:
-        """대기가 끝난 Pod 종료 신호 (4절 표)."""
+        """대기가 끝난 Pod 종료 · 작업 실패 신호 (4절 표)."""
         if ctx.job_id is None or ctx.generation is None:
             return self._emit(s, ctx, now, hold=True)       # 어느 작업인지 몰라 확인할 수 없다
         if self.lifecycle.intended(ctx.job_id, ctx.generation):
@@ -195,6 +204,9 @@ class Pipeline:
         if (self.lifecycle.latest(ctx.job_id) or 0) > ctx.generation:
             return STALE
         if (ctx.job_id, ctx.generation) in self.causes:
+            return ABSORBED
+        other = self.exits.get((ctx.job_id, ctx.generation))
+        if other is not None and other[0] != s.signal:      # Pod 종료와 작업 실패가 같은 일을 가리킨다. 먼저 낸 쪽만 사건
             return ABSORBED
         return self._emit(s, ctx, now, hold=not self.lifecycle.healthy)
 
@@ -224,7 +236,9 @@ class Pipeline:
             return PUBLISH_FAILED
 
         self.dedup.record(d.key, v.action)
-        if s.signal != "pod_exit":
+        if s.signal in EXIT_SIGNALS:
+            self._remember_exit(s.signal, ctx.job_id, ctx.generation, v.action, s.ts)
+        else:
             self._remember_cause(ctx.job_id, ctx.generation, v.action, s.ts)
         for p in absorbed:
             self.pending.remove(p)
@@ -236,10 +250,14 @@ class Pipeline:
 
     def _absorbable(self, s: Signal, ctx: Context, v: Verdict) -> list[Pending]:
         """이 사건이 원인이면, 기다리고 있던 같은 작업 · 세대의 Pod 종료를 함께 묶는다."""
-        if s.signal == "pod_exit" or v.action in NO_RECOVERY or ctx.job_id is None:
+        if s.signal in EXIT_SIGNALS or v.action in NO_RECOVERY or ctx.job_id is None:
             return []
         return [p for p in self.pending if (p.ctx.job_id, p.ctx.generation) == (ctx.job_id, ctx.generation)]
 
     def _remember_cause(self, job_id: str | None, generation: int | None, action: str, ts: datetime) -> None:
         if job_id is not None and generation is not None and action not in NO_RECOVERY:
             self.causes[(job_id, generation)] = ts
+
+    def _remember_exit(self, signal: str, job_id: str | None, generation: int | None, action: str, ts: datetime) -> None:
+        if job_id is not None and generation is not None and action not in NO_RECOVERY:
+            self.exits.setdefault((job_id, generation), (signal, ts))
