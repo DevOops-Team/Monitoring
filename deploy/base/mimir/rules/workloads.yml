@@ -72,7 +72,7 @@ groups:
               "workload", "$1", "daemonset", "(.+)")
           )
           unless on (cluster)
-          label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
+          label_replace(kube_customresource_multikueuecluster_info{cluster="onprem-manager", fenced="true", name=~"eks-(a|b|c)"}, "cluster", "$1", "name", "(.+)")
         for: 5m
         labels:
           severity: critical
