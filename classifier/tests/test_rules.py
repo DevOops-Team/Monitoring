@@ -33,8 +33,10 @@ def test_examples(name):
     assert (v.category, v.action, v.confidence) == (ex["category"], ex["suggested_action"], ex["confidence"])
 
 
-def test_xid45_ignored():
-    assert rules.judge(signal(xid=45), True) is None
+@pytest.mark.parametrize("xid", [45, 174])
+def test_loop_xids_ignored(xid):
+    # 컨트롤러 조치(Pod 종료)가 만드는 Xid라 사건을 내면 루프가 된다
+    assert rules.judge(signal(xid=xid), True) is None
 
 
 def test_exit_code_0_ignored():
@@ -62,6 +64,18 @@ def test_pod_exit(kw):
     (94, ("hw", "restart_in_place", 0.8)),          # RESTART_APP
     (95, ("hw", "reset_then_migrate", 0.85)),       # RESET_GPU
     (119, ("driver", "reset_then_migrate", 0.5)),   # RESET_GPU, 원인 후보가 넓어 confidence 낮음
+    (32, ("app", "restart_in_place", 0.7)),         # RESTART_APP, 카탈로그 Parsing Policy가 31과 함께 User-App
+    (8, ("driver", "restart_in_place", 0.6)),       # RESTART_APP
+    (183, ("driver", "restart_in_place", 0.6)),     # RESTART_APP
+    (140, ("hw", "reset_then_migrate", 0.85)),      # RESET_GPU
+    (175, ("hw", "reset_then_migrate", 0.85)),      # RESET_GPU
+    (62, ("hw", "reset_then_migrate", 0.7)),        # RESET_GPU
+    (158, ("hw", "reset_then_migrate", 0.7)),       # RESET_GPU
+    (120, ("driver", "reset_then_migrate", 0.5)),   # RESET_GPU, 119의 짝
+    (184, ("driver", "reset_then_migrate", 0.5)),   # RESET_GPU
+    (38, ("driver", "none", 0.9)),                  # IGNORE → 기록만
+    (154, ("driver", "none", 0.9)),                 # 복구 힌트. 조치는 같이 난 Xid가 정한다
+    (171, ("hw", "none", 0.9)),                     # 48 보조 정보
 ])
 def test_xid_catalog_rows(xid, expected):
     v = rules.judge(signal(xid=xid), True)
