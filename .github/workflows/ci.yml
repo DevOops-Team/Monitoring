@@ -7,8 +7,9 @@
 #   dcgm-hostengine은 배포 봇을 쓰지 않는다: EKS 수집 층은 Gitops overlay 없이 이 레포 main을 따라가므로
 #   deploy/agents/gpu/dcgm-exporter/daemonset.yaml의 태그를 손으로 올린다. GHCR 패키지는 공개(EKS에 pull secret 없음)
 #
-#   PR               : 테스트 + 이미지 빌드 · 점검 (push 안 함)
-#   main push(머지)   : 같은 검사 → 릴리스 버전 계산 → classifier가 바뀌었으면 push {X.Y.Z, X.Y, main, sha-<7자리>}
+#   PR               : 테스트 + 바뀐 이미지만 빌드 · 점검 (push 안 함). 테스트와 이미지 빌드는 병렬 (GPU-282)
+#   main push(머지)   : 릴리스 버전 계산 → classifier가 바뀌었으면 빌드 · 점검 · push {X.Y.Z, X.Y, main, sha-<7자리>}
+#                       테스트는 다시 돌리지 않는다: develop → main PR에서 같은 트리를 이미 검사했다 (GPU-282)
 #                       → 배포 봇이 Gitops overlay의 이미지를 새 digest로 바꿈 → Argo CD가 모니터링 클러스터에 반영
 #                       → 버전 봇이 태그 vX.Y.Z · Release 생성
 #
@@ -46,7 +47,9 @@ jobs:
       contents: read
       pull-requests: read
 
-  # main push에서 이미지를 push할지: 이미지에 들어가는 파일이 이번 머지에서 바뀌었나
+  # 이미지를 빌드(PR) · push(main push)할지: 이미지에 들어가는 파일이 이번 PR · 머지에서 바뀌었나. workflow_dispatch는 둘 다.
+  #   안 바뀐 이미지는 job을 건너뛰지 않고 빌드 step만 건너뛴다: release가 image job 성공을 기다리고,
+  #   "classifier · image"는 main 필수 검사다 (GPU-282)
   changes:
     name: changes
     runs-on: ubuntu-24.04
@@ -64,9 +67,15 @@ jobs:
         run: |
           changed=true
           hostengine=true
-          if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
+          base=""
+          if [ "$EVENT" = pull_request ] && git rev-parse -q --verify 'HEAD^2' >/dev/null; then
+            base='HEAD^1'      # PR merge ref: 첫 부모 = base 브랜치 끝, 둘째 부모 = PR head
+          elif [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ] \
              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+            base="$BEFORE"
+          fi
+          if [ -n "$base" ]; then
+            files=$(git diff --name-only "$base" HEAD)
             printf '바뀐 파일:\n%s\n' "$files"
             grep -qE '^(classifier/|schemas/fault-event\.v1\.json$|\.dockerignore$|\.github/workflows/ci\.yml$)' <<<"$files" || changed=false
             grep -qE '^(dcgm-hostengine/|\.github/workflows/ci\.yml$)' <<<"$files" || hostengine=false
@@ -77,6 +86,7 @@ jobs:
 
   test:
     name: classifier · test
+    if: github.event_name != 'push'      # main push는 develop → main PR에서 검사한 트리 (GPU-282)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -92,7 +102,7 @@ jobs:
 
   image:
     name: classifier · image
-    needs: [changes, test, plan]
+    needs: [changes, plan]               # 테스트를 기다리지 않는다: PR에서는 병렬, main push에서는 테스트 없음 (GPU-282)
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -102,17 +112,25 @@ jobs:
     env:
       IMAGE: ghcr.io/devoops-team/classifier
       LOCAL: devoops/classifier:ci
+      BUILD: ${{ needs.changes.outputs.classifier == 'true' }}   # 아니면 빌드 step을 건너뛴다 (GPU-282)
       PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.release == 'true' && needs.changes.outputs.classifier == 'true' && vars.VERSION_APP_ID != '' }}
     steps:
+      - name: 건너뜀 (classifier 변경 없음)
+        if: env.BUILD != 'true'
+        run: echo "### classifier — 바뀐 파일이 없어 이미지 빌드를 건너뜀" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v4
+        if: env.BUILD == 'true'
         with:
           fetch-depth: 0                  # 판정 표의 마지막 커밋을 찾는다
       - id: rules
+        if: env.BUILD == 'true'
         name: 판정 표 버전 (Kafka 헤더 rule_version으로 나간다)
         run: echo "version=$(git log -1 --format=%h -- classifier/classifier/rules.yaml)" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
+        if: env.BUILD == 'true'
       # 빌드는 한 번만 (GPU-214). main 릴리스면 최종 태그 · 라벨까지 붙여 로컬에 올리고, 점검한 그 이미지를 그대로 push한다
       - id: meta
+        if: env.BUILD == 'true'
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
@@ -125,6 +143,7 @@ jobs:
             org.opencontainers.image.title=classifier
             ${{ env.PUSH == 'true' && format('org.opencontainers.image.description={0}', needs.plan.outputs.description) || '' }}
       - name: 이미지 빌드
+        if: env.BUILD == 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -140,6 +159,7 @@ jobs:
           cache-from: type=gha,scope=classifier
           cache-to: type=gha,mode=max,scope=classifier
       - name: 이미지 점검
+        if: env.BUILD == 'true'
         env:
           RULES: ${{ steps.rules.outputs.version }}
         run: |
@@ -185,11 +205,18 @@ jobs:
     env:
       IMAGE: ghcr.io/devoops-team/dcgm-hostengine
       LOCAL: devoops/dcgm-hostengine:ci
+      BUILD: ${{ needs.changes.outputs.hostengine == 'true' }}   # 아니면 빌드 step을 건너뛴다 (GPU-282)
       PUSH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.plan.outputs.release == 'true' && needs.changes.outputs.hostengine == 'true' && vars.VERSION_APP_ID != '' }}
     steps:
+      - name: 건너뜀 (dcgm-hostengine 변경 없음)
+        if: env.BUILD != 'true'
+        run: echo "### dcgm-hostengine — 바뀐 파일이 없어 이미지 빌드를 건너뜀" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/checkout@v4
+        if: env.BUILD == 'true'
       - uses: docker/setup-buildx-action@v3
+        if: env.BUILD == 'true'
       - id: meta
+        if: env.BUILD == 'true'
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
@@ -201,6 +228,7 @@ jobs:
           labels: |
             org.opencontainers.image.title=dcgm-hostengine
       - name: 이미지 빌드
+        if: env.BUILD == 'true'
         uses: docker/build-push-action@v6
         with:
           context: dcgm-hostengine
@@ -214,6 +242,7 @@ jobs:
           cache-from: type=gha,scope=dcgm-hostengine
           cache-to: type=gha,mode=max,scope=dcgm-hostengine
       - name: 이미지 점검
+        if: env.BUILD == 'true'
         run: |
           # 엔진 · dcgmi가 실행되는지(GPU 없이도 버전은 나온다), 크기 기록 (GPU 노드 루트 디스크가 작다)
           docker run --rm "$LOCAL" nv-hostengine --version
