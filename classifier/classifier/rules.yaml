@@ -8,9 +8,13 @@ ignore:
   reason: [Completed]  # 정상 완료 (종료 코드 0과 같은 뜻)
 
 # 위에서부터 먼저 맞는 행
+# 64 · 94 · 95 · 119 근거 = NVIDIA Xid 카탈로그(Xid-Catalog.xlsx, XIDs 시트 즉시 조치 열, 11/25 확인) · docs/classifier.md 3.2절
 xid:
   - {xids: [13, 31, 43, 68, 109], category: app, action: restart_in_place, confidence: 0.8}
+  - {xids: [94], category: hw, action: restart_in_place, confidence: 0.8}      # 격리된 메모리 오류: RESTART_APP. A100부터, T4엔 없음
   - {xids: [48], category: hw, action: reset_then_migrate, confidence: 0.9}
+  - {xids: [64, 95], category: hw, action: reset_then_migrate, confidence: 0.85}  # 페이지 폐기 기록 실패 · 격리 안 된 오류: RESET_GPU (95는 T4엔 없음)
+  - {xids: [119], category: driver, action: reset_then_migrate, confidence: 0.5}  # GSP RPC 타임아웃: RESET_GPU. 원인 후보 6가지라 낮게
   - {xids: [79], category: hw, action: isolate_migrate, confidence: 0.95}
   - {xids: [63, 92], category: hw_warn, action: none, confidence: 0.9}
 
