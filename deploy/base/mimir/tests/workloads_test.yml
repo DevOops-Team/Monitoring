@@ -1,0 +1,142 @@
+# promtool test rules. scripts/deploy-k8s.sh의 lint 단계가 돌린다
+rule_files:
+  - ../rules/workloads.yml
+evaluation_interval: 15s
+
+tests:
+  # dispatcher 3개 중 1개만 Ready: 10분 뒤 「적다」. 0개가 아니라 「멈춤」은 아니다
+  - name: 관리 클러스터 워크로드가 원하는 수보다 적으면 10분 뒤 울린다
+    interval: 15s
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{cluster="onprem-manager", namespace="platform", deployment="dispatcher"}'
+        values: '3x8 1x60'
+      - series: 'kube_deployment_spec_replicas{cluster="onprem-manager", namespace="platform", deployment="dispatcher"}'
+        values: '3x68'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: WorkloadReplicasDegraded
+        exp_alerts: []
+      - eval_time: 12m30s
+        alertname: WorkloadReplicasDegraded
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: onprem-manager, namespace: platform, deployment: dispatcher, workload: dispatcher}
+            exp_annotations:
+              summary: 'onprem-manager · platform/dispatcher Ready 1개 — 원하는 개수보다 적다'
+              standard: MON-STD-31
+      - eval_time: 12m30s
+        alertname: WorkloadDown
+        exp_alerts: []
+
+  # collector는 1개짜리: 죽으면 곧 0개 → 2분 뒤 「멈춤」
+  - name: 0개가 2분 이어지면 멈춤으로 울린다
+    interval: 15s
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{cluster="onprem-manager", namespace="data-system", deployment="collector"}'
+        values: '1x8 0x30'
+      - series: 'kube_deployment_spec_replicas{cluster="onprem-manager", namespace="data-system", deployment="collector"}'
+        values: '1x38'
+      - series: 'kube_statefulset_status_replicas_ready{cluster="onprem-manager", namespace="argocd", statefulset="argocd-application-controller"}'
+        values: '1x8 0x30'
+      - series: 'kube_statefulset_replicas{cluster="onprem-manager", namespace="argocd", statefulset="argocd-application-controller"}'
+        values: '1x38'
+      - series: 'kube_daemonset_status_number_ready{cluster="monitoring", namespace="monitoring", daemonset="fluent-bit"}'
+        values: '3x8 0x30'
+      - series: 'kube_daemonset_status_desired_number_scheduled{cluster="monitoring", namespace="monitoring", daemonset="fluent-bit"}'
+        values: '3x38'
+    alert_rule_test:
+      - eval_time: 3m30s
+        alertname: WorkloadDown
+        exp_alerts: []
+      - eval_time: 4m30s
+        alertname: WorkloadDown
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: onprem-manager, namespace: data-system, deployment: collector, workload: collector}
+            exp_annotations:
+              summary: 'onprem-manager · data-system/collector Ready 0개 — 그 기능이 멈췄다'
+              standard: MON-STD-31
+          - exp_labels: {severity: critical, cluster: onprem-manager, namespace: argocd, statefulset: argocd-application-controller, workload: argocd-application-controller}
+            exp_annotations:
+              summary: 'onprem-manager · argocd/argocd-application-controller Ready 0개 — 그 기능이 멈췄다'
+              standard: MON-STD-31
+          - exp_labels: {severity: critical, cluster: monitoring, namespace: monitoring, daemonset: fluent-bit, workload: fluent-bit}
+            exp_annotations:
+              summary: 'monitoring · monitoring/fluent-bit Ready 0개 — 그 기능이 멈췄다'
+              standard: MON-STD-31
+
+  # 이미 다른 룰이 보는 것은 여기서 울지 않는다: 모니터링 클러스터 monitoring 네임스페이스(self.yml) · 복구 컨트롤러 0개(recovery.yml).
+  # 일부러 0개로 둔 것(원하는 수 0)과 노드 하나가 빠진 DaemonSet도 울지 않는다
+  - name: 다른 룰이 보는 것 · 일부러 0개 · DaemonSet 일부 부족은 울지 않는다
+    interval: 15s
+    input_series:
+      - series: 'kube_deployment_status_replicas_available{cluster="monitoring", namespace="monitoring", deployment="grafana"}'
+        values: '0x60'
+      - series: 'kube_deployment_spec_replicas{cluster="monitoring", namespace="monitoring", deployment="grafana"}'
+        values: '1x60'
+      - series: 'kube_statefulset_status_replicas_ready{cluster="monitoring", namespace="monitoring", statefulset="mimir"}'
+        values: '0x60'
+      - series: 'kube_statefulset_replicas{cluster="monitoring", namespace="monitoring", statefulset="mimir"}'
+        values: '3x60'
+      - series: 'kube_deployment_status_replicas_available{cluster="onprem-manager", namespace="platform", deployment="recovery-controller"}'
+        values: '0x60'
+      - series: 'kube_deployment_spec_replicas{cluster="onprem-manager", namespace="platform", deployment="recovery-controller"}'
+        values: '3x60'
+      - series: 'kube_deployment_status_replicas_available{cluster="onprem-manager", namespace="platform", deployment="frontend"}'
+        values: '0x60'
+      - series: 'kube_deployment_spec_replicas{cluster="onprem-manager", namespace="platform", deployment="frontend"}'
+        values: '0x60'
+      - series: 'kube_daemonset_status_number_ready{cluster="onprem-manager", namespace="kube-system", daemonset="calico-node"}'
+        values: '5x60'
+      - series: 'kube_daemonset_status_desired_number_scheduled{cluster="onprem-manager", namespace="kube-system", daemonset="calico-node"}'
+        values: '6x60'
+    alert_rule_test:
+      - eval_time: 14m
+        alertname: WorkloadDown
+        exp_alerts: []
+      # 복구 컨트롤러는 「적다」에는 걸린다(0 < 3). 0개 전용 알람만 recovery.yml 몫
+      - eval_time: 14m
+        alertname: WorkloadReplicasDegraded
+        exp_alerts:
+          - exp_labels: {severity: warning, cluster: onprem-manager, namespace: platform, deployment: recovery-controller, workload: recovery-controller}
+            exp_annotations:
+              summary: 'onprem-manager · platform/recovery-controller Ready 0개 — 원하는 개수보다 적다'
+              standard: MON-STD-31
+
+  # EKS: dcgm-exporter가 전부 0개 → 5분 뒤. 펜싱된 EKS와 일부 부족은 울지 않는다
+  - name: EKS는 0개일 때만 · 펜싱된 EKS는 제외
+    interval: 15s
+    input_series:
+      - series: 'kube_daemonset_status_number_ready{cluster="eks-a", namespace="monitoring", daemonset="dcgm-exporter"}'
+        values: '5x8 0x40'
+      - series: 'kube_daemonset_status_desired_number_scheduled{cluster="eks-a", namespace="monitoring", daemonset="dcgm-exporter"}'
+        values: '5x48'
+      - series: 'kube_deployment_status_replicas_available{cluster="eks-a", namespace="kueue-system", deployment="kueue-controller-manager"}'
+        values: '1x8 0x40'
+      - series: 'kube_deployment_spec_replicas{cluster="eks-a", namespace="kueue-system", deployment="kueue-controller-manager"}'
+        values: '1x48'
+      - series: 'kube_daemonset_status_number_ready{cluster="eks-a", namespace="monitoring", daemonset="node-exporter"}'
+        values: '5x48'
+      - series: 'kube_daemonset_status_desired_number_scheduled{cluster="eks-a", namespace="monitoring", daemonset="node-exporter"}'
+        values: '6x48'
+      - series: 'kube_daemonset_status_number_ready{cluster="eks-b", namespace="monitoring", daemonset="dcgm-exporter"}'
+        values: '0x48'
+      - series: 'kube_daemonset_status_desired_number_scheduled{cluster="eks-b", namespace="monitoring", daemonset="dcgm-exporter"}'
+        values: '5x48'
+      - series: 'kube_customresource_multikueuecluster_info{cluster="onprem-manager", name="eks-b", fenced="true"}'
+        values: '1x48'
+      - series: 'kube_customresource_multikueuecluster_info{cluster="onprem-manager", name="eks-a", fenced="false"}'
+        values: '1x48'
+    alert_rule_test:
+      - eval_time: 6m30s
+        alertname: EksWorkloadDown
+        exp_alerts: []
+      - eval_time: 7m30s
+        alertname: EksWorkloadDown
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: eks-a, namespace: monitoring, daemonset: dcgm-exporter, workload: dcgm-exporter}
+            exp_annotations:
+              summary: 'eks-a · monitoring/dcgm-exporter Ready 0개 — 그 EKS에서 그 기능이 멈췄다'
+              standard: MON-STD-31
+          - exp_labels: {severity: critical, cluster: eks-a, namespace: kueue-system, deployment: kueue-controller-manager, workload: kueue-controller-manager}
+            exp_annotations:
+              summary: 'eks-a · kueue-system/kueue-controller-manager Ready 0개 — 그 EKS에서 그 기능이 멈췄다'
+              standard: MON-STD-31
