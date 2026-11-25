@@ -57,6 +57,9 @@ class Enricher:
         if s.signal == "node_lost":     # 노드가 사라졌다. 그 노드의 Fluent Bit이 꺼진 건 당연하니 클러스터 수집 경로만 본다
             return Context(az=self._az(s, at=s.ts), collector_healthy=self._collector_healthy(s, node_path=False),
                            jobs=self._cluster_jobs(s, node=s.node))
+        if s.signal == "job_failed":    # 작업 · 세대는 알람에 있다. 노드를 몰라 클러스터 수집 경로만 본다
+            return Context(az=UNKNOWN_AZ, collector_healthy=self._collector_healthy(s, node_path=False),
+                           job_id=s.job_id, generation=s.generation)
         job_id, generation = self._job(s)
         return Context(
             az=self._az(s),
@@ -75,10 +78,10 @@ class Enricher:
 
     def _collector_healthy(self, s: Signal, node_path: bool = True) -> bool:
         """분류 시점(지금) 기준. node_path=False면 그 노드의 Fluent Bit은 보지 않는다(노드가 사라진 신호)."""
-        c, n = _q(s.cluster), _q(s.node)
+        c = _q(s.cluster)
         expr = f'up{{cluster="{c}", job=~"prometheus-agent|otel-gateway"}}'
         if node_path:
-            expr += f' or up{{cluster="{c}", job="fluent-bit", node="{n}"}}'
+            expr += f' or up{{cluster="{c}", job="fluent-bit", node="{_q(s.node)}"}}'
         rows = self._try("collector", s, expr, None)
         if rows is None:
             return False

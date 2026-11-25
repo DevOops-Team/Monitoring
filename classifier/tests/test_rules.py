@@ -59,6 +59,11 @@ def test_pod_exit(kw):
     assert (v.category, v.action) == ("app", "restart_in_place")
 
 
+def test_job_failed_is_judged_like_pod_exit():
+    v = rules.judge(signal(signal="job_failed", source="pod", node=None, job_id="3f9a1c2e", generation=3), True)
+    assert (v.category, v.action, v.confidence, v.matched) == ("app", "restart_in_place", 0.6, True)
+
+
 @pytest.mark.parametrize("xid, expected", [
     (64, ("hw", "reset_then_migrate", 0.85)),       # NVIDIA 카탈로그 즉시 조치 RESET_GPU
     (94, ("hw", "restart_in_place", 0.8)),          # RESTART_APP

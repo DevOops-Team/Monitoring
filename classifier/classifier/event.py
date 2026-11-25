@@ -30,9 +30,11 @@ def iso_z(ts: datetime) -> str:
 
 def dedup_target(s: Signal, ctx: Context) -> str:
     """대상 = gpu_uuid, 없으면 node, site는 cluster/작업(작업을 못 찾으면 cluster).
-    Pod 종료는 그 Pod(같은 노드의 다른 Pod가 끝난 것은 다른 사건)."""
+    Pod 종료는 그 Pod(같은 노드의 다른 Pod가 끝난 것은 다른 사건), 작업 실패는 cluster/작업/세대."""
     if s.signal == "site" and ctx.job_id:
         return f"{s.cluster}/{ctx.job_id}"     # 사이트 1건이 작업마다 사건이 된다. 키가 같으면 두 번째 작업부터 중복으로 버려진다
+    if s.signal == "job_failed":
+        return f"{s.cluster}/{s.job_id}/g{s.generation}"   # 작업 · 세대마다 1건
     return s.pod or s.gpu_uuid or ctx.gpu_uuid or s.node or s.cluster
 
 
