@@ -1010,8 +1010,8 @@
     },
     {
       "type": "table",
-      "title": "학습 Pod",
-      "description": "devoops/job-id 라벨이 붙은 Pod(분류기가 Pod → 작업 · 세대를 찾는 데 쓰는 것). 학습 Job이 돌 때만 채워진다. 종료 코드는 위 「마지막 종료」 표",
+      "title": "진행 중인 학습 Pod",
+      "description": "지금 떠 있는 학습 Pod(devoops/job-id 라벨, 분류기가 Pod → 작업 · 세대를 찾는 데 쓰는 것). 조회 범위 끝 시각 기준이라 끝나거나 지워진 Pod는 안 나온다 → 실패는 아래 「실패한 학습」",
       "datasource": {
         "type": "prometheus",
         "uid": "prometheus"
@@ -1069,6 +1069,78 @@
         "y": 44,
         "w": 24,
         "h": 6
+      }
+    },
+    {
+      "type": "table",
+      "title": "실패한 학습",
+      "description": "실패로 끝나 멈춘 학습(마지막 세대가 FAILED). 원인 = train.py가 progress.json에 쓴 오류 한 줄(job.progress → 수집기 → data.v_job_status.progress_error). Pod가 지워져도 남는다. 실패했다가 복구된 건은 「장애 복구」 대시보드",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "postgres"
+          },
+          "rawSql": "SELECT ended_at, job_id, generation, cluster, gpus, step, recovery_count, progress_error FROM data.v_job_status WHERE state = 'FAILED' AND $__timeFilter(ended_at) ORDER BY ended_at DESC LIMIT 200",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "ended_at": "실패 시각",
+              "job_id": "작업",
+              "generation": "세대",
+              "cluster": "클러스터",
+              "gpus": "GPU",
+              "step": "step",
+              "recovery_count": "복구 횟수",
+              "progress_error": "원인"
+            },
+            "indexByName": {
+              "ended_at": 0,
+              "job_id": 1,
+              "generation": 2,
+              "cluster": 3,
+              "gpus": 4,
+              "step": 5,
+              "recovery_count": 6,
+              "progress_error": 7
+            }
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto"
+          },
+          "noValue": "-"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm"
+      },
+      "id": 19,
+      "gridPos": {
+        "x": 0,
+        "y": 50,
+        "w": 24,
+        "h": 7
       }
     }
   ]
