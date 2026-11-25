@@ -105,3 +105,88 @@ tests:
             exp_annotations:
               summary: '스크레이프 대상 다운: monitoring · node-exporter (노드 monitoring1)'
               standard: MON-STD-22
+
+  # --- 수집 자체가 죽은 경우 (MON-STD-15) ---
+  # 관리 클러스터 Agent 둘 다 4분에 멈춤(마지막 샘플 3m45s) → 2분 창이 비는 5m45s 뒤부터 운다. 모니터링 클러스터는 계속 보내므로 안 운다
+  - name: Agent 지표가 2분 동안 없으면 그 클러스터만 울린다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-0"}'
+        values: '1x15 _x40'
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-1"}'
+        values: '1x15 _x40'
+      - series: 'up{job="prometheus-agent", cluster="monitoring", pod="prometheus-agent-0"}'
+        values: '1x55'
+    alert_rule_test:
+      - eval_time: 5m30s
+        alertname: MonitoringAgentAbsent
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: MonitoringAgentAbsent
+        exp_alerts:
+          - exp_labels: {severity: critical, job: prometheus-agent, cluster: onprem-manager}
+            exp_annotations:
+              summary: 'onprem-manager 클러스터의 Prometheus Agent 지표가 2분째 없다 — 그 클러스터를 보는 알람(Pod 수 · HOLD · 복구 컨트롤러 등)이 전부 꺼져 있다'
+              standard: MON-STD-15
+
+  # Agent 하나만 죽으면 다른 쪽 지표가 이어지므로 안 운다
+  - name: Agent 하나만 죽은 것은 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-0"}'
+        values: '1x15 _x40'
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-1"}'
+        values: '1x55'
+      - series: 'up{job="prometheus-agent", cluster="monitoring", pod="prometheus-agent-0"}'
+        values: '1x55'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: MonitoringAgentAbsent
+        exp_alerts: []
+
+  # KSM: 관리 클러스터는 Pod가 사라짐(시계열 없음), eks-a는 응답 없음(0) → 둘 다 5분 뒤.
+  # 펜싱된 eks-b와 시험 클러스터(kind-test)는 KSM이 없어도 안 운다. 모니터링 클러스터는 정상
+  - name: Agent는 있는데 KSM이 없거나 응답이 없으면 5분 뒤 울린다
+    interval: 15s
+    input_series:
+      - series: 'up{job="prometheus-agent", cluster="onprem-manager", pod="prometheus-agent-0"}'
+        values: '1x60'
+      - series: 'up{job="kube-state-metrics", cluster="onprem-manager"}'
+        values: '1x8 _x52'
+      - series: 'up{job="prometheus-agent", cluster="eks-a", pod="prometheus-agent-x"}'
+        values: '1x60'
+      - series: 'up{job="kube-state-metrics", cluster="eks-a"}'
+        values: '1x8 0x52'
+      - series: 'up{job="prometheus-agent", cluster="eks-b", pod="prometheus-agent-y"}'
+        values: '1x60'
+      - series: 'kube_customresource_multikueuecluster_info{cluster="onprem-manager", name="eks-b", fenced="true"}'
+        values: '1x60'
+      - series: 'up{job="prometheus-agent", cluster="kind-test", pod="prometheus-agent-z"}'
+        values: '1x60'
+      - series: 'up{job="prometheus-agent", cluster="monitoring", pod="prometheus-agent-0"}'
+        values: '1x60'
+      - series: 'up{job="kube-state-metrics", cluster="monitoring"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: MonitoringKsmAbsent
+        exp_alerts: []
+      # eks-a(0으로 응답 없음)는 2m15s부터 5분 = 7m15s. 관리 클러스터(사라짐)는 마지막 값이 5분 남아 7m부터 5분 = 12m
+      - eval_time: 8m
+        alertname: MonitoringKsmAbsent
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: eks-a}
+            exp_annotations:
+              summary: 'eks-a 클러스터의 kube-state-metrics가 5분째 없거나 응답하지 않는다 — Pod 수 · Pod 종료 · 노드 소실 알람이 그 클러스터에서 꺼져 있다'
+              standard: MON-STD-15
+      - eval_time: 13m
+        alertname: MonitoringKsmAbsent
+        exp_alerts:
+          - exp_labels: {severity: critical, cluster: eks-a}
+            exp_annotations:
+              summary: 'eks-a 클러스터의 kube-state-metrics가 5분째 없거나 응답하지 않는다 — Pod 수 · Pod 종료 · 노드 소실 알람이 그 클러스터에서 꺼져 있다'
+              standard: MON-STD-15
+          - exp_labels: {severity: critical, cluster: onprem-manager}
+            exp_annotations:
+              summary: 'onprem-manager 클러스터의 kube-state-metrics가 5분째 없거나 응답하지 않는다 — Pod 수 · Pod 종료 · 노드 소실 알람이 그 클러스터에서 꺼져 있다'
+              standard: MON-STD-15

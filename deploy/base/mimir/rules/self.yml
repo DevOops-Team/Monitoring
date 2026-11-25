@@ -86,3 +86,38 @@ groups:
         annotations:
           summary: '모니터링 {{ $labels.workload }} Ready 0개 — 그 기능이 멈췄다'
           standard: MON-STD-22
+
+      # 수집 자체가 죽은 경우 (MON-STD-15). Agent가 전부 죽으면 그 클러스터의 지표가 0이 되는 것이 아니라 통째로 사라진다
+      # → up == 0도, Pod 수 룰도, HOLD · 컨트롤러 알람도 같이 조용해진다. 그래서 「없음」을 직접 본다.
+      # absent()가 아니라 absent_over_time([2m]): 죽은 Agent의 마지막 값이 조회에 5분 남아 absent()는 5분 뒤에야 참이 된다.
+      # Agent는 2개이고 하나가 죽으면 30초 안에 다른 쪽 것이 저장되므로 2분 빈칸은 둘 다 죽었을 때만 생긴다.
+      # EKS는 여기서 보지 않는다(Agent 지표 끊김 = FailoverSiteDown이 분류기로 보낸다)
+      - alert: MonitoringAgentAbsent
+        expr: >
+          absent_over_time(up{job="prometheus-agent", cluster="monitoring"}[2m])
+          or
+          absent_over_time(up{job="prometheus-agent", cluster="onprem-manager"}[2m])
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.cluster }} 클러스터의 Prometheus Agent 지표가 2분째 없다 — 그 클러스터를 보는 알람(Pod 수 · HOLD · 복구 컨트롤러 등)이 전부 꺼져 있다'
+          standard: MON-STD-15
+
+      # Agent는 살아 있는데 kube-state-metrics가 없거나 응답하지 않는다. Pod 수 룰(MonitoringReplicas* · Workload*) ·
+      # FailoverPodExit · FailoverGpuNodeLost · FailoverJobFailed · 하트비트 알람이 모두 이 지표에 기대므로, 없으면 그 알람들이 조용해진다.
+      # 대상 클러스터를 적어 둔다(kind 시험 클러스터가 같은 Mimir에 보낼 때가 있다). 일부러 내리는 EKS(펜싱됨)는 뺀다
+      - alert: MonitoringKsmAbsent
+        expr: >
+          (
+            count by (cluster) (up{job="prometheus-agent", cluster=~"monitoring|onprem-manager|eks-(a|b|c)"})
+            unless on (cluster)
+            (up{job="kube-state-metrics"} == 1)
+          )
+          unless on (cluster)
+          label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: '{{ $labels.cluster }} 클러스터의 kube-state-metrics가 5분째 없거나 응답하지 않는다 — Pod 수 · Pod 종료 · 노드 소실 알람이 그 클러스터에서 꺼져 있다'
+          standard: MON-STD-15
