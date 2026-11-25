@@ -121,3 +121,43 @@ groups:
         annotations:
           summary: '{{ $labels.cluster }} 클러스터의 kube-state-metrics가 5분째 없거나 응답하지 않는다 — Pod 수 · Pod 종료 · 노드 소실 알람이 그 클러스터에서 꺼져 있다'
           standard: MON-STD-15
+
+      # 로그 경로 (MON-STD-32): Fluent Bit → (관리 클러스터 · EKS는 OTel 게이트웨이) → Loki. 지표 경로와 따로라서 지표가 멀쩡해도 로그만 끊길 수 있다.
+      # Fluent Bit Pod가 전부 죽은 것은 WorkloadDown · EksWorkloadDown 몫이다(그때는 아래 지표 자체가 없다)
+
+      # 1) Fluent Bit이 로그를 버렸다: 재시도 한도를 넘겨 포기했거나(retries_failed) 버렸다(dropped). 평소 둘 다 0이다
+      - alert: LogShippingDropping
+        expr: >
+          (
+            sum by (cluster) (increase(fluentbit_output_dropped_records_total[10m]))
+            + sum by (cluster) (increase(fluentbit_output_retries_failed_total[10m]))
+          ) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.cluster }} Fluent Bit이 로그를 버리고 있다 — 받는 쪽(Loki · OTel 게이트웨이)이 못 받는 중. 그 구간 로그는 Loki에 없다'
+          standard: MON-STD-32
+
+      # 2) Fluent Bit은 떠 있는데 10분째 한 줄도 못 내보냈다(평소 관리 클러스터 약 26줄/초, 모니터링 약 6줄/초, 3일 최저 3줄/초).
+      # 일부러 내리는 EKS(펜싱됨)는 뺀다
+      - alert: LogShippingStopped
+        expr: >
+          (sum by (cluster) (rate(fluentbit_output_proc_records_total{cluster=~"monitoring|onprem-manager|eks-(a|b|c)"}[10m])) == 0)
+          unless on (cluster)
+          label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: '{{ $labels.cluster }} Fluent Bit이 20분째 로그를 한 줄도 못 내보냈다 — 입력(로그 파일 · journald) 또는 출력이 막혔다'
+          standard: MON-STD-32
+
+      # 3) Loki에 아무 로그도 안 들어온다(평소 약 37줄/초, 3일 최저 1.8줄/초). 모든 클러스터의 로그가 끊긴 것
+      - alert: LokiIngestStopped
+        expr: sum(rate(loki_distributor_lines_received_total{cluster="monitoring"}[10m])) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: 'Loki에 20분째 로그가 한 줄도 안 들어왔다 — 모든 클러스터의 로그 수집이 끊겼다(Loki 수신 · 서비스 VIP 172.30.0.35:3100 확인)'
+          standard: MON-STD-32
