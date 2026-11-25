@@ -83,12 +83,15 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | Xid | category | suggested_action | confidence | 근거 |
 |---|---|---|---|---|
 | 13 · 31 · 43 · 68 · 109 | `app` | `restart_in_place` | 0.8 | NVIDIA device plugin이 「앱 오류」로 보고 GPU 건강 검사에서 빼는 목록. 예시 03 |
+| 94 | `hw` | `restart_in_place` | 0.8 | 격리된 메모리 오류: 그 앱만 영향, 다른 앱은 그대로. 카탈로그 즉시 조치 `RESTART_APP`(GPU 리셋은 편할 때). 오류 격리는 A100부터라 **T4에선 안 나옴** |
 | 48 | `hw` | `reset_then_migrate` | 0.9 | 고칠 수 없는 2비트 ECC 오류. 예시 02 |
+| 64 · 95 | `hw` | `reset_then_migrate` | 0.85 | 64 = 메모리 페이지 폐기(T4) · 행 리매핑(Ampere 이후) 기록 실패, 95 = 격리 안 된 메모리 오류(여러 앱 영향, A100부터라 **T4에선 안 나옴**). 둘 다 카탈로그 즉시 조치 `RESET_GPU` |
+| 119 | `driver` | `reset_then_migrate` | 0.5 | GSP RPC 타임아웃. 카탈로그 즉시 조치 `RESET_GPU`, 조사 조치 `REPORT_ISSUE`. 원인 후보가 HW · 드라이버 · 메모리 · 버스 · 열 · FB로 넓어 confidence를 낮게. 3번 연속이면 드라이버가 Xid 154를 함께 낸다 |
 | 79 | `hw` | `isolate_migrate` | 0.95 | GPU가 버스에서 떨어짐. 예시 01 |
 | 63 · 92 | `hw_warn` | `none` | 0.9 | 페이지 폐기 기록 · 1비트 오류 빈발. 전조라 기록만 (fault-event.md 3절, MON-STD-03) |
 | 그 밖 | `hw` | `hold` | 0.3 | 표에 없는 번호는 사람이 본다. 5절 |
 
-추가 후보(NVIDIA Xid 문서 원문 대조 뒤): 64 · 94 · 95 · 119. 대조 전에는 「그 밖」 행으로 간다.
+64 · 94 · 95 · 119 근거(11/25, GPU-225): NVIDIA Xid 카탈로그 `Xid-Catalog.xlsx`(https://docs.nvidia.com/deploy/xid-errors/analyzing-xid-catalog.html 에서 받음)의 XIDs 시트 「Tenant In-Operation Action」(즉시 조치) 열과 Guidance Classes 시트 정의, 그리고 옛 판 원문(https://docs.nvidia.com/deploy/xid-errors/archive/index.html 4.7 · 4.11 · 4.13절). `reset_then_migrate`는 컨트롤러에서 「격리 + 예비로 이전, GPU 리셋은 나중에 사람이」다(fault-event.md 3.1). 우리 GPU = Tesla T4 · 드라이버 580.178.04(11/25 dcgm 라벨).
 
 ### 3.3 Xid가 아닌 신호
 
@@ -189,7 +192,8 @@ Pod 2개가 서로 다른 노드에 뜨고, 쿠버네티스 Lease `classifier`�
 
 ## 8. 확인 필요
 
-- [ ] (나) Xid 64 · 94 · 95 · 119를 NVIDIA 문서 원문과 대조해 3.2절에 추가
+- [x] (나) Xid 64 · 94 · 95 · 119를 NVIDIA 문서 원문과 대조해 3.2절에 추가 (11/25, GPU-225)
+- [ ] (나) 카탈로그가 바뀐 번호 검토: 63은 즉시 조치가 `RESET_GPU_DEFERRED`(작업 뒤 리셋)로 바뀜 — 지금 `none`. 79는 `CONTACT_SUPPORT`로 바뀜 — `isolate_migrate` 그대로 맞음
 - [x] dcgm-exporter 지표의 라벨 이름(`node` · `UUID`) 확인 — 11/19 EKS(T4 · 4.8.4)에서 둘 다 그대로 나온다. 수정 없음. (원래 걱정: 다르면 커널 로그 경로와 DCGM 경로의 `dedup_key` 대상이 달라져 같은 Xid가 두 건으로 나간다)
 - [x] (나, EKS overlay) KSM `--metric-labels-allowlist`에 `nodes=[topology.kubernetes.io/zone]` 추가 — `deploy/agents/overlays/eks`(11/18). kind에서 `az`가 채워지는 것 확인. EKS가 아닌 클러스터는 `az`가 `unknown`
 - [x] 분류기용 Alertmanager 라우트(`pipeline=failover`)는 `group_wait` 0초 · `repeat_interval` 1분 — `deploy/values/alertmanager.yaml`(11/18). 기본 4시간이면 분류기가 놓친 알람(재시작으로 사라진 대기 신호 · Kafka 전달 실패)이 다시 오지 않는다. 다시 온 알람은 중복 제거로 걸러진다
