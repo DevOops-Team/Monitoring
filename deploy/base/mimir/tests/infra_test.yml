@@ -97,3 +97,25 @@ tests:
             exp_annotations:
               summary: 'pfsense 루트 디스크 90% 초과. Kafka 로그 보존 · PostgreSQL 데이터 확인'
               standard: MON-STD-26
+
+  # kafka2가 2분부터 응답 없음 → 1분 뒤. 살아 있는 브로커와 다른 호스트 대상(vm-host)은 이 알람이 아니다
+  - name: Kafka 브로커가 1분째 응답이 없으면 울린다
+    interval: 15s
+    input_series:
+      - series: 'up{job="kafka-jmx", host="kafka1", instance="172.30.0.40:7071"}'
+        values: '1x30'
+      - series: 'up{job="kafka-jmx", host="kafka2", instance="172.30.0.41:7071"}'
+        values: '1x8 0x22'
+      - series: 'up{job="vm-host", host="db", instance="172.30.0.50:9100"}'
+        values: '0x30'
+    alert_rule_test:
+      - eval_time: 2m45s
+        alertname: KafkaBrokerDown
+        exp_alerts: []
+      - eval_time: 3m30s
+        alertname: KafkaBrokerDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: kafka-jmx, host: kafka2, instance: "172.30.0.41:7071"}
+            exp_annotations:
+              summary: 'Kafka 브로커 kafka2 1분째 응답 없음 — 한 대 더 죽으면 gpu.fault · job.lifecycle 흐름이 멈춘다'
+              standard: MON-STD-23
