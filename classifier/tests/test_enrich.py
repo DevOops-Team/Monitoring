@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -265,3 +265,49 @@ def test_job_failed_with_cuda_oom_takes_node_and_line_from_the_oom_line():
 def test_job_failed_oom_line_without_node_label_is_still_oom():
     ctx = Enricher(FakeMimir(up=UP[:2]), FakeLogs(None, oom=({}, OOM_LINE)))(signal(**JOB_FAILED))
     assert (ctx.oom, ctx.node, ctx.log_line) == (True, None, OOM_LINE)
+
+
+def straggler():
+    return signal(signal="straggler", source="straggler", alert="FailoverStraggler", xid=None,
+                  job_id="3f9a1c2e", generation=3, ratio=1.6)
+
+
+class StepMimir(FakeMimir):
+    """step 시간만 조회 시각에 따라 답이 다르다: 지금(None) = 느린 값, 과거 = 정상 값."""
+    def __init__(self, slow, normal, **answers):
+        super().__init__(**answers)
+        self.slow, self.normal = slow, normal
+
+    def __call__(self, expr, at=None):
+        if "train_step_seconds" in expr:
+            self.calls.append((expr, at))
+            return self.slow if at is None else self.normal
+        return super().__call__(expr, at)
+
+
+def test_straggler_takes_job_from_the_alert_and_reads_both_step_times():
+    mimir = StepMimir([{"__value__": 1.6}], [{"__value__": 1.0}], up=UP,
+                      DCGM_FI_DEV_GPU_TEMP=[{"UUID": GPU, "__value__": 41.0}])
+    ctx = Enricher(mimir)(straggler())
+    assert (ctx.job_id, ctx.generation, ctx.gpu_uuid, ctx.collector_healthy) == ("3f9a1c2e", 3, GPU, True)
+    assert ctx.step_seconds == (1.6, 1.0)
+    steps = [(expr, at) for expr, at in mimir.calls if "train_step_seconds" in expr]
+    assert [at for _, at in steps] == [None, TS - timedelta(minutes=1)]     # 지금, 느려지기 1분 전
+    assert all('job_id="3f9a1c2e", generation="3", phase="steady"' in expr for expr, _ in steps)
+    assert not any("kube_pod_labels" in expr for expr, _ in mimir.calls)    # 작업을 찾으러 가지 않는다
+
+
+@pytest.mark.parametrize("slow, normal", [
+    ([{"__value__": 1.6}], []),                         # 시작부터 느렸다: 직전 값이 없음
+    ([{"__value__": 1.6}], [{"__value__": float("nan")}]),
+    ([], [{"__value__": 1.0}]),
+    (RuntimeError("timeout"), [{"__value__": 1.0}]),
+])
+def test_straggler_without_both_step_times_is_none(slow, normal):
+    class Mimir(StepMimir):
+        def __call__(self, expr, at=None):
+            rows = super().__call__(expr, at)
+            if isinstance(rows, Exception):
+                raise rows
+            return rows
+    assert Enricher(Mimir(slow, normal, up=UP))(straggler()).step_seconds is None

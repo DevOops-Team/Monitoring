@@ -4,6 +4,7 @@ Pod 종료 · 작업 실패 신호만 길이 다르다. 의도된 종료인지 �
 작업 실패(job_failed)는 죽은 Pod가 지워져 Pod 종료 알람이 못 본 경우를 잡는다. 같은 작업 · 세대에 둘 다 오면 먼저 낸 쪽만 사건이다.
 사이트 신호는 그 클러스터에서 돌던 작업마다 사건 1건을 낸다(컨트롤러가 사건 1건 = 작업 1개로 대피한다).
 GPU 노드 소실은 그 노드에서 돌던 작업 1개의 사건을 낸다(작업이 없으면 사건 없음).
+스트래글러는 느린 동안 알람이 계속 온다. 작업 · 세대 · 노드마다 사건 1건만 내고, 옮길 만한지(straggler_evidence)를 같이 싣는다.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from typing import Any, Callable
 
 from prometheus_client import CollectorRegistry, Counter, Gauge
 
-from . import dedup
+from . import dedup, intended
 from .event import Context, build, dedup_code, dedup_target, iso_z
 from .intended import Lifecycle
 from .publish import SOURCE, InvalidEvent, Publisher, validate
@@ -71,6 +72,8 @@ class Pipeline:
         self.causes: dict[tuple[str, int], datetime] = {}
         # (job_id, generation) → 그 세대에 이미 낸 종료 사건의 (신호 종류, 시각). 다른 종류의 종료 신호는 같은 일을 두 번 보는 것이다
         self.exits: dict[tuple[str, int], tuple[str, datetime]] = {}
+        # (job_id, generation, node) → 이미 낸 스트래글러 사건의 신호 시각. 느린 동안 알람이 1분마다 다시 온다
+        self.stragglers: dict[tuple[str, int, str], datetime] = {}
         self._lock = threading.Lock()       # 웹훅은 스레드 풀, 대기 처리는 타이머 스레드에서 돈다
 
         self.registry = CollectorRegistry()
@@ -109,6 +112,8 @@ class Pipeline:
                 del self.causes[key]
             for key in [k for k, (_, ts) in self.exits.items() if ts < now - timedelta(seconds=dedup.KEEP_SECONDS)]:
                 del self.exits[key]
+            for key in [k for k, ts in self.stragglers.items() if ts < now - intended.KEEP]:
+                del self.stragglers[key]
 
     def restore(self, envelope: dict[str, Any]) -> None:
         """시작할 때 Kafka gpu.fault에서 읽은, 전에 낸 이벤트 1건을 기억에 되돌린다 (7절)."""
@@ -120,6 +125,10 @@ class Pipeline:
             ts = datetime.fromisoformat(e["ts"].replace("Z", "+00:00"))
             with self._lock:
                 self.dedup.record(e["dedup_key"], e["suggested_action"])
+                # 이득을 계산해 낸 사건만 고정한다(_straggler). 계산 못 한 hold는 중복 제거 기억(위)으로 충분하다
+                if (e["source"] == "straggler" and e.get("straggler_evidence") and e["collector_healthy"]
+                        and e["job_id"] and e["generation"] is not None and e["node"]):
+                    self.stragglers[(e["job_id"], e["generation"], e["node"])] = ts
                 if e["source"] != "pod":
                     self._remember_cause(e["job_id"], e["generation"], e["suggested_action"], ts)
                 else:       # source=pod 가운데 대상이 「cluster/작업/g세대」인 것이 작업 실패 사건이다(Pod 이름에는 /가 없다)
@@ -148,6 +157,8 @@ class Pipeline:
             return self._site(s, ctx, now)
         if s.signal == "node_lost":
             return self._node_lost(s, ctx, now)
+        if s.signal == "straggler":
+            return self._straggler(s, ctx, now)
         if s.signal not in EXIT_SIGNALS:
             return self._emit(s, ctx, now)
         if now < s.ts + POD_EXIT_WAIT:
@@ -194,6 +205,30 @@ class Pipeline:
         # job.lifecycle을 못 읽으면 위 거르기가 비어 있다 → 취소된 작업을 되살리지 않게 hold (Pod 종료와 같은 기준)
         return self._emit(s, replace(ctx, job_id=job, generation=gen, jobs=None), now, hold=not self.lifecycle.healthy)
 
+    def _straggler(self, s: Signal, ctx: Context, now: datetime) -> str:
+        """작업 · 세대 · 노드마다 1건. 이득을 계산해 낸 뒤에는 남은 스텝이 줄어 판정이 달라져도 다시 내지 않는다
+        (옮기는 중에 hold로 뒤집히면 안 된다. 이득은 처음 판정할 때가 가장 크다).
+        계산하지 못하고 낸 hold(진행률 · step 시간 · 수집 경로 · job.lifecycle을 모름)는 고정하지 않는다:
+        다음 알람(1분 뒤)에 다시 계산해 판정이 달라지면 재분류로 나간다(같으면 중복 제거가 거른다)."""
+        if self.lifecycle.intended(s.job_id, s.generation):
+            return INTENDED
+        if (self.lifecycle.latest(s.job_id) or 0) > s.generation:
+            return STALE
+        key = (s.job_id, s.generation, s.node)
+        if key in self.stragglers:
+            return DUPLICATE
+        duration = max(0, int((now - s.ts).total_seconds()))
+        remaining = self.lifecycle.remaining_steps(s.job_id, s.generation)
+        evidence, worth = self.rules.straggler_evidence(s.node, duration, remaining, ctx.step_seconds)
+        if evidence is None:
+            log("straggler.gain_unknown", job_id=s.job_id, generation=s.generation, node=s.node,
+                remaining_steps=remaining, step_seconds=ctx.step_seconds)
+        # job.lifecycle을 못 읽으면 위 거르기가 비어 있다 → 취소된 작업을 옮기지 않게 hold (Pod 종료와 같은 기준)
+        outcome = self._emit(s, replace(ctx, evidence=evidence, worth=worth), now, hold=not self.lifecycle.healthy)
+        if outcome in (PUBLISHED, DUPLICATE) and evidence and ctx.collector_healthy and self.lifecycle.healthy:
+            self.stragglers[key] = s.ts
+        return outcome
+
     def _pod_exit(self, s: Signal, ctx: Context, now: datetime) -> str:
         """대기가 끝난 Pod 종료 · 작업 실패 신호 (4절 표)."""
         if ctx.job_id is None or ctx.generation is None:
@@ -210,7 +245,7 @@ class Pipeline:
         return self._emit(s, ctx, now, hold=not self.lifecycle.healthy)
 
     def _emit(self, s: Signal, ctx: Context, now: datetime, hold: bool = False) -> str:
-        v = self.rules.judge(s, ctx.collector_healthy, oom=ctx.oom)
+        v = self.rules.judge(s, ctx.collector_healthy, oom=ctx.oom, worth=ctx.worth)
         if hold:
             v = self.rules.hold(v)
         if not v.matched:

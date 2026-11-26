@@ -520,3 +520,129 @@ def test_oom_without_lifecycle_is_hold(env):
     life.healthy = False
     assert pipe.handle(oom_killed(), at(45)) == p.PUBLISHED
     assert fake.sent[0]["payload"]["suggested_action"] == "hold"
+
+
+# ── 스트래글러 (3.3절). T0 = 느려지기 시작한 시각, 알람은 10분 뒤부터 온다
+
+def straggler(rank=3, ts=T0, generation=GEN):
+    return {"status": "firing",
+            "labels": {"alertname": "FailoverStraggler", "pipeline": "failover", "signal": "straggler", "cluster": "eks-a",
+                       "node": f"node-{rank}", "job_id": JOB, "generation": str(generation), "rank": str(rank)},
+            "annotations": {"event_ts": ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "ratio": "1.60"}}
+
+
+def progress(step, total_steps=10000, generation=GEN):
+    return {**lifecycle_event("job.progress", generation), "payload": {"step": step, "total_steps": total_steps}}
+
+
+@pytest.fixture
+def slow_env(env):
+    """step 시간이 1.0 → 1.6초로 느려진 작업. 남은 스텝은 테스트가 job.progress로 넣는다."""
+    pipe, fake, life = env
+    plain = pipe.enrich
+    pipe.enrich = lambda s: replace(plain(s), gpu_uuid=GPU, step_seconds=(1.6, 1.0))
+    return pipe, fake, life
+
+
+def test_straggler_worth_moving_carries_evidence(slow_env):
+    pipe, fake, life = slow_env
+    life.apply(progress(5200), T0)                      # 남은 4,800 스텝 × 0.6초 = 손해 2,880초
+    assert pipe.handle(straggler(), at(720)) == p.PUBLISHED
+    e = fake.sent[0]["payload"]
+    assert (e["category"], e["suggested_action"], e["source"]) == ("straggler", "evacuate_preemptive", "straggler")
+    assert e["straggler_evidence"] == {"duration_seconds": 720, "cause_node": "node-3", "estimated_gain_seconds": 1980}
+    assert e["straggler_evidence"]["cause_node"] == e["node"]       # 스키마로 못 막는 조건 (fault-event.md 2절)
+    assert (e["raw"]["metric"], e["raw"]["value"]) == ("train_rank_compute_seconds_ratio", 1.6)
+    assert e["dedup_key"] == f"{GPU}|straggler|{int(T0.timestamp())}"
+    assert (e["job_id"], e["generation"]) == (JOB, GEN)
+
+
+def test_straggler_not_worth_moving_holds_with_evidence(slow_env):
+    pipe, fake, life = slow_env
+    life.apply(progress(9000), T0)                      # 남은 1,000 스텝 × 0.6초 = 손해 600초 < 1,800
+    assert pipe.handle(straggler(), at(720)) == p.PUBLISHED
+    e = fake.sent[0]["payload"]
+    assert (e["category"], e["suggested_action"], e["confidence"]) == ("straggler", "hold", 0.75)
+    assert e["straggler_evidence"]["estimated_gain_seconds"] == -300
+
+
+def test_straggler_is_published_once_per_job_generation_node(slow_env):
+    pipe, fake, life = slow_env
+    life.apply(progress(5200), T0)
+    assert pipe.handle(straggler(), at(720)) == p.PUBLISHED
+    life.apply(progress(9500), at(780))                 # 그 사이 남은 스텝이 줄어 다시 계산하면 hold가 된다
+    assert pipe.handle(straggler(), at(780)) == p.DUPLICATE
+    assert pipe.handle(straggler(ts=at(3600)), at(4400)) == p.DUPLICATE     # 풀렸다가 다시 느려져도 같은 세대 · 노드면 1건
+    assert len(fake.sent) == 1
+    assert pipe.handle(straggler(rank=2), at(780)) == p.PUBLISHED           # 다른 노드는 다른 사건
+    assert len(fake.sent) == 2
+
+
+@pytest.mark.parametrize("steps, with_progress", [((1.6, 1.0), False), (None, True)])
+def test_straggler_with_unknown_gain_holds_without_evidence(env, steps, with_progress):
+    pipe, fake, life = env
+    plain = pipe.enrich
+    pipe.enrich = lambda s: replace(plain(s), step_seconds=steps)
+    if with_progress:
+        life.apply(progress(5200), T0)
+    assert pipe.handle(straggler(), at(720)) == p.PUBLISHED
+    e = fake.sent[0]["payload"]
+    assert (e["category"], e["suggested_action"]) == ("straggler", "hold")
+    assert "straggler_evidence" not in e
+
+
+def test_straggler_holds_when_lifecycle_unreadable(slow_env):
+    pipe, fake, life = slow_env
+    life.apply(progress(5200), T0)
+    life.healthy = False
+    assert pipe.handle(straggler(), at(720)) == p.PUBLISHED
+    assert fake.sent[0]["payload"]["suggested_action"] == "hold"
+
+
+def test_straggler_of_fenced_or_old_generation_is_dropped(slow_env):
+    pipe, fake, life = slow_env
+    life.apply(lifecycle_event("job.fenced"), T0)
+    assert pipe.handle(straggler(), at(720)) == p.INTENDED
+    life.apply(lifecycle_event("job.submitted", generation=GEN + 1), T0)
+    assert pipe.handle(straggler(), at(720)) == p.INTENDED      # 펜싱이 먼저 걸린다
+    assert pipe.handle(straggler(generation=GEN - 1), at(720)) == p.STALE
+    assert fake.sent == []
+
+
+def test_straggler_failed_publish_is_retried(slow_env):
+    pipe, fake, life = slow_env
+    life.apply(progress(5200), T0)
+    fake.fail = True
+    assert pipe.handle(straggler(), at(720)) == p.PUBLISH_FAILED
+    fake.fail = False
+    assert pipe.handle(straggler(), at(780)) == p.PUBLISHED
+
+
+def test_straggler_is_remembered_after_restart(slow_env):
+    pipe, fake, life = slow_env
+    life.apply(progress(5200), T0)
+    pipe.handle(straggler(), at(720))
+    fresh = p.Pipeline(Rules.load(), Publisher(FakeProducer(), "abc1234"), pipe.enrich, life)
+    fresh.restore(fake.sent[0])
+    life.apply(progress(9500), at(760))                 # 다시 계산하면 hold로 뒤집히지만, 낸 것을 기억해 다시 내지 않는다
+    assert fresh.handle(straggler(), at(780)) == p.DUPLICATE
+    # 옮기기로 한 사건은 원인이다. 그 세대의 Pod 종료는 결과라 따로 내지 않는다
+    assert fresh.handle(pod_exit(ts=at(800)), at(840)) == p.ABSORBED
+
+
+def test_straggler_hold_without_a_computed_gain_is_judged_again(env):
+    """Mimir가 잠깐 답하지 못해 낸 hold가 그 작업을 계속 막으면 안 된다."""
+    pipe, fake, life = env
+    plain, steps = pipe.enrich, [None]
+    pipe.enrich = lambda s: replace(plain(s), gpu_uuid=GPU, step_seconds=steps[0])
+    life.apply(progress(5200), T0)
+    assert pipe.handle(straggler(), at(720)) == p.PUBLISHED             # step 시간을 못 구함 → hold
+    assert pipe.handle(straggler(), at(780)) == p.DUPLICATE             # 여전히 모름 → 같은 hold는 다시 안 냄
+    steps[0] = (1.6, 1.0)
+    assert pipe.handle(straggler(), at(840)) == p.PUBLISHED             # 이제 계산됨 → 재분류
+    assert [(m["type"], m["payload"]["suggested_action"]) for m in fake.sent] == [
+        ("fault.held", "hold"), ("fault.reclassified", "evacuate_preemptive")]
+    assert fake.sent[0]["payload"]["dedup_key"] == fake.sent[1]["payload"]["dedup_key"]
+    steps[0] = None
+    assert pipe.handle(straggler(), at(900)) == p.DUPLICATE             # 계산해 낸 뒤에는 고정
+    assert len(fake.sent) == 2

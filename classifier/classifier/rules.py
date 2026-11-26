@@ -38,11 +38,14 @@ class Rules:
         ignore = self.table["ignore"]
         return s.xid in ignore["xid"] or s.exit_code in ignore["exit_code"] or s.reason in ignore["reason"]
 
-    def judge(self, s: Signal, collector_healthy: bool, oom: bool = False) -> Verdict | None:
-        """None = 이벤트를 만들지 않는다. oom = 신호 밖(trainer 로그)에서 메모리 부족을 확인했다."""
+    def judge(self, s: Signal, collector_healthy: bool, oom: bool = False, worth: bool = True) -> Verdict | None:
+        """None = 이벤트를 만들지 않는다. oom = 신호 밖(trainer 로그)에서 메모리 부족을 확인했다.
+        worth = 스트래글러를 옮길 만하다(straggler_evidence). 아니면 category는 두고 hold."""
         if self.ignored(s):
             return None
         v = self._match(s, oom) or self.unmatched(s)
+        if s.signal == "straggler" and not worth:
+            v = replace(v, action="hold")
         if not collector_healthy and v.category != "site":
             v = self.hold(v)
         return v
@@ -61,6 +64,19 @@ class Rules:
         if s.signal in EXIT_SIGNALS and (oom or s.reason == "OOMKilled"):
             return _verdict(self.table["oom"])
         return _verdict(self.table["signal"][s.signal])
+
+    def straggler_evidence(self, node: str, duration: int, remaining_steps: int | None,
+                           step_seconds: tuple[float, float] | None) -> tuple[dict[str, Any] | None, bool]:
+        """(사건에 넣을 straggler_evidence, 옮길 만한가). step_seconds = (느린, 정상) 평균 step 시간.
+        남은 스텝이나 step 시간을 모르면 이득을 계산할 수 없다 → 증거 없이 (None, False)."""
+        if remaining_steps is None or step_seconds is None:
+            return None, False
+        t = self.table["straggler"]
+        slow, normal = step_seconds
+        loss = remaining_steps * (slow - normal)        # 그대로 둘 때 손해(초)
+        cost = t["migration_cost_seconds"]
+        evidence = {"duration_seconds": duration, "cause_node": node, "estimated_gain_seconds": round(loss - cost)}
+        return evidence, duration >= t["min_duration_seconds"] and loss >= t["safety_factor"] * cost
 
     def unmatched(self, s: Signal) -> Verdict:
         """표에 없는 신호가 모이는 자리. 모델을 붙일 때 이 함수만 바꾼다 (docs/classifier.md 5절)."""

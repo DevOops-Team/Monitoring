@@ -104,3 +104,24 @@ def test_job_failed_carries_job_and_generation_without_node():
 def test_job_failed_needs_job_and_generation(labels):
     with pytest.raises(RejectError):
         parse(job_failed(**labels))
+
+
+def straggler(labels=None, annotations=None):
+    return alert({"alertname": "FailoverStraggler", "signal": "straggler", "job_id": "3f9a1c2e", "generation": "3",
+                  "rank": "3", **(labels or {})}, {"ratio": "1.60", **(annotations or {})})
+
+
+def test_straggler_carries_job_node_and_ratio():
+    s = parse(straggler())
+    assert (s.signal, s.source, s.node, s.job_id, s.generation, s.ratio) == (
+        "straggler", "straggler", "ip-10-0-1-23", "3f9a1c2e", 3, 1.6)
+    assert s.xid is None and s.pod is None
+
+
+@pytest.mark.parametrize("labels, annotations", [
+    ({"node": ""}, None), ({"job_id": ""}, None), ({"generation": ""}, None), ({"generation": "x"}, None),
+    (None, {"ratio": ""}), (None, {"ratio": "fast"}), (None, {"ratio": "+Inf"}), (None, {"ratio": "NaN"}),
+])
+def test_straggler_needs_node_job_generation_and_ratio(labels, annotations):
+    with pytest.raises(RejectError):
+        parse(straggler(labels, annotations))
