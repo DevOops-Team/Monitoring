@@ -1,8 +1,9 @@
 """신호에 없는 값을 Mimir에서 채운다 (docs/fault-event.md 2절 job_id · collector_healthy).
 작업 실패(job_failed)만 Loki도 본다: 죽은 Pod가 지워져 지표에 없으므로 trainer 로그에서 죽은 노드를 찾는다(GPU-288).
+Pod 종료 · 작업 실패는 같은 로그에서 GPU 메모리 부족 줄도 찾는다. 있으면 재시도 없이 실패로 확정한다(GPU-222).
 
 EKS API를 부르지 않는다. 각 클러스터의 kube-state-metrics · up 지표가 remote_write로 Mimir에 와 있다.
-조회가 실패하면 모르는 값으로 둔다: collector_healthy=false(→ hold), job_id=null(→ 컨트롤러가 HOLD), node=null.
+조회가 실패하면 모르는 값으로 둔다: collector_healthy=false(→ hold), job_id=null(→ 컨트롤러가 HOLD), node=null, oom=false.
 """
 from __future__ import annotations
 
@@ -26,6 +27,9 @@ GPU_METRIC = "DCGM_FI_DEV_GPU_TEMP"
 
 # torchrun이 자기 학습 프로세스가 죽었을 때 남기는 줄. 랭크마다 Pod가 따로 torchrun을 돌려 죽은 Pod의 로그에만 있다
 FAILED_LINE = "failed (exitcode"
+# PyTorch가 GPU 메모리를 못 잡았을 때 남기는 줄(torch.OutOfMemoryError: CUDA out of memory. Tried to allocate …).
+# TODO(EKS 주입 ⑥): 실제 줄 원문으로 확인. 지금은 PyTorch 버전이 달라도 같은 부분만 본다
+OOM_LINE = "CUDA out of memory"
 # 로그 줄은 작업 실패(신호 시각)보다 앞선다(11/25 실측 8 ~ 45초). 뒤쪽 여유는 노드 시계 차이
 LOG_BEFORE, LOG_AFTER = timedelta(minutes=10), timedelta(minutes=1)
 
@@ -92,17 +96,26 @@ class Enricher:
             return Context(az=self._az(s, at=s.ts), collector_healthy=self._collector_healthy(s, node_path=False),
                            jobs=self._cluster_jobs(s, node=s.node))
         if s.signal == "job_failed":    # 작업 · 세대는 알람에 있다. 노드는 로그에서 찾고, 수집 경로는 클러스터 것만 본다
-            node, line = self._failed_pod(s)
+            oom = self._trainer_line(s, s.job_id, s.generation, OOM_LINE)
+            node, line = oom or self._trainer_line(s, s.job_id, s.generation, FAILED_LINE) or (None, None)
+            if node is None and oom is None:    # 실패 줄은 노드를 찾으려고 보는 것이라 노드 라벨이 없으면 쓰지 않는다
+                line = None
             return Context(az=self._az(s, at=s.ts, node=node) if node else UNKNOWN_AZ,
                            collector_healthy=self._collector_healthy(s, node_path=False),
-                           job_id=s.job_id, generation=s.generation, node=node, log_line=line)
+                           job_id=s.job_id, generation=s.generation, node=node, log_line=line, oom=oom is not None)
         job_id, generation = self._job(s)
+        oom = None
+        # 종료 사유가 OOMKilled면 이미 메모리 부족이다(rules.py). 그 밖의 Pod 종료만 로그를 본다
+        if s.signal == "pod_exit" and s.reason != "OOMKilled" and job_id is not None and generation is not None:
+            oom = self._trainer_line(s, job_id, generation, OOM_LINE)
         return Context(
             az=self._az(s),
             collector_healthy=self._collector_healthy(s),
             job_id=job_id,
             generation=generation,
             gpu_uuid=self._gpu_uuid(s),
+            log_line=oom[1] if oom else None,
+            oom=oom is not None,
         )
 
     def _try(self, what: str, s: Signal, expr: str, at: datetime | None) -> list[dict[str, Any]] | None:
@@ -112,21 +125,22 @@ class Enricher:
             log("enrich.failed", what=what, reason=str(e), cluster=s.cluster, node=s.node)
             return None
 
-    def _failed_pod(self, s: Signal) -> tuple[str | None, str | None]:
-        """그 작업 · 세대의 trainer 로그에서 가장 먼저 찍힌 실패 줄의 (노드, 줄). 못 찾으면 (None, None)."""
+    def _trainer_line(self, s: Signal, job_id: str, generation: int, needle: str) -> tuple[str | None, str] | None:
+        """그 작업 · 세대의 모든 trainer Pod 로그에서 needle이 든, 가장 먼저 찍힌 줄의 (노드, 줄). 못 찾으면 None.
+        Pod 하나가 아니라 작업 전체를 본다: Pod 종료 사건은 랭크마다 나가는데 판정이 랭크마다 갈리면 안 된다."""
         if self.logs is None:
-            return None, None
-        pods = _q(re.escape(f"job-{s.job_id}-g{s.generation:04d}-")) + ".+"
+            return None
+        pods = _q(re.escape(f"job-{job_id}-g{generation:04d}-")) + ".+"
         query = (f'{{k8s_cluster_name="{_q(s.cluster)}", k8s_namespace_name="training", k8s_container_name="trainer",'
-                 f' k8s_pod_name=~"{pods}"}} |= "{FAILED_LINE}"')
+                 f' k8s_pod_name=~"{pods}"}} |= "{needle}"')
         try:
             found = self.logs(query, s.ts - LOG_BEFORE, s.ts + LOG_AFTER)
         except Exception as e:
-            log("enrich.failed", what="failed_pod", reason=str(e), cluster=s.cluster, job_id=s.job_id)
-            return None, None
-        if found is None or not found[0].get("k8s_node_name"):
-            return None, None
-        return found[0]["k8s_node_name"], found[1]
+            log("enrich.failed", what="trainer_line", needle=needle, reason=str(e), cluster=s.cluster, job_id=job_id)
+            return None
+        if found is None:
+            return None
+        return found[0].get("k8s_node_name") or None, found[1]
 
     def _collector_healthy(self, s: Signal, node_path: bool = True) -> bool:
         """분류 시점(지금) 기준. node_path=False면 그 노드의 Fluent Bit은 보지 않는다(노드가 사라진 신호)."""

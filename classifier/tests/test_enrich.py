@@ -171,23 +171,28 @@ FAILED_LINE = "E1125 08:00:07.199000 1 api.py:869] failed (exitcode: -9) local_r
 JOB_FAILED = dict(signal="job_failed", source="pod", node=None, xid=None, job_id="3f9a1c2e", generation=3)
 
 
+OOM_LINE = "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB. GPU 0 has a total capacity of 14.57 GiB"
+
+
 class FakeLogs:
-    def __init__(self, answer):
-        self.answer, self.calls = answer, []
+    """answer = 실패 줄 조회의 답, oom = 메모리 부족 줄 조회의 답."""
+    def __init__(self, answer, oom=None):
+        self.answer, self.oom, self.calls = answer, oom, []
 
     def __call__(self, query, start, end):
         self.calls.append((query, start, end))
-        if isinstance(self.answer, Exception):
-            raise self.answer
-        return self.answer
+        answer = self.oom if "CUDA out of memory" in query else self.answer
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
 
 
 def test_job_failed_fills_node_and_log_line_from_the_trainer_log():
     logs = FakeLogs(({"k8s_node_name": "n7", "k8s_pod_name": "job-3f9a1c2e-g0003-workers-0-1-ck529"}, FAILED_LINE))
     mimir = FakeMimir(up=UP[:2], kube_node_labels=[{"label_topology_kubernetes_io_zone": "us-east-2b", "__value__": 1.0}])
     ctx = Enricher(mimir, logs)(signal(**JOB_FAILED))
-    assert (ctx.node, ctx.log_line, ctx.az, ctx.collector_healthy) == ("n7", FAILED_LINE, "us-east-2b", True)
-    (query, start, end), = logs.calls
+    assert (ctx.node, ctx.log_line, ctx.az, ctx.collector_healthy, ctx.oom) == ("n7", FAILED_LINE, "us-east-2b", True, False)
+    query, start, end = logs.calls[-1]      # 메모리 부족 줄을 먼저 찾고, 없으면 실패 줄
     assert 'k8s_cluster_name="eks-a"' in query and r'k8s_pod_name=~"job\\-3f9a1c2e\\-g0003\\-.+"' in query
     assert '|= "failed (exitcode"' in query and start < TS < end
     assert any('node="n7"' in e for e, _ in mimir.calls)        # 영역은 찾은 노드로 본다
@@ -218,3 +223,45 @@ def test_earliest_line_across_pods_wins():
     ]}}
     assert _earliest(body) == ({"k8s_node_name": "n1"}, "first")
     assert _earliest({"status": "success", "data": {"result": []}}) is None
+
+
+# ---------- 메모리 부족: trainer 로그에 CUDA out of memory가 있으면 oom (GPU-222) ----------
+POD_EXIT = dict(signal="pod_exit", source="pod", xid=None, pod=POD["pod"], reason="Error")
+
+
+def test_pod_exit_with_cuda_oom_in_any_pod_of_the_job():
+    """랭크 1이 메모리 부족으로 죽고 랭크 0은 따라 죽었다. 랭크 0의 사건도 같은 판정이 되게 작업 전체 로그를 본다."""
+    logs = FakeLogs(None, oom=({"k8s_node_name": "n7", "k8s_pod_name": "job-3f9a1c2e-g0003-w-0-1"}, OOM_LINE))
+    ctx = Enricher(FakeMimir(kube_pod_labels=[POD], up=UP), logs)(signal(**POD_EXIT))
+    assert (ctx.oom, ctx.log_line, ctx.job_id, ctx.generation, ctx.node) == (True, OOM_LINE, "3f9a1c2e", 3, None)
+    (query, start, end), = logs.calls
+    assert r'k8s_pod_name=~"job\\-3f9a1c2e\\-g0003\\-.+"' in query and '|= "CUDA out of memory"' in query and start < TS < end
+
+
+@pytest.mark.parametrize("oom", [None, TimeoutError("timed out")])
+def test_pod_exit_without_oom_line_is_not_oom(oom):
+    ctx = Enricher(FakeMimir(kube_pod_labels=[POD], up=UP), FakeLogs(None, oom=oom))(signal(**POD_EXIT))
+    assert (ctx.oom, ctx.log_line, ctx.job_id) == (False, None, "3f9a1c2e")
+
+
+@pytest.mark.parametrize("kw, mimir", [
+    ({"reason": "OOMKilled"}, {"kube_pod_labels": [POD]}),      # 종료 사유로 이미 안다
+    ({}, {}),                                                   # 어느 작업인지 모른다
+    ({"signal": "xid", "source": "dcgm", "xid": 79, "pod": None, "reason": None}, {"kube_pod_labels": [POD]}),
+])
+def test_log_is_not_searched_when_it_cannot_change_the_verdict(kw, mimir):
+    logs = FakeLogs(None, oom=({"k8s_node_name": "n7"}, OOM_LINE))
+    ctx = Enricher(FakeMimir(up=UP, **mimir), logs)(signal(**{**POD_EXIT, **kw}))
+    assert (ctx.oom, logs.calls) == (False, [])
+
+
+def test_job_failed_with_cuda_oom_takes_node_and_line_from_the_oom_line():
+    logs = FakeLogs(({"k8s_node_name": "n3"}, FAILED_LINE), oom=({"k8s_node_name": "n7"}, OOM_LINE))
+    ctx = Enricher(FakeMimir(up=UP[:2]), logs)(signal(**JOB_FAILED))
+    assert (ctx.oom, ctx.node, ctx.log_line) == (True, "n7", OOM_LINE)
+    assert len(logs.calls) == 1         # 찾았으면 실패 줄은 안 본다
+
+
+def test_job_failed_oom_line_without_node_label_is_still_oom():
+    ctx = Enricher(FakeMimir(up=UP[:2]), FakeLogs(None, oom=({}, OOM_LINE)))(signal(**JOB_FAILED))
+    assert (ctx.oom, ctx.node, ctx.log_line) == (True, None, OOM_LINE)

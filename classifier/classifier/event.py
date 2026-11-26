@@ -14,7 +14,7 @@ DCGM_XID_METRIC = "DCGM_FI_DEV_XID_ERRORS"
 
 @dataclass(frozen=True)
 class Context:
-    """신호에 없어 Mimir(작업 실패의 node · log_line은 Loki)에서 채우는 값 (enrich.py)."""
+    """신호에 없어 Mimir(작업 실패의 node, log_line · oom은 Loki)에서 채우는 값 (enrich.py)."""
     az: str
     collector_healthy: bool
     job_id: str | None = None
@@ -24,7 +24,8 @@ class Context:
     jobs: tuple[tuple[str, int | None], ...] | None = None
     # job_failed 전용: trainer 로그에서 찾은, 가장 먼저 죽은 Pod의 노드와 그 로그 줄. 못 찾으면 None
     node: str | None = None
-    log_line: str | None = None
+    log_line: str | None = None     # Pod 종료 · 작업 실패에서 메모리 부족 줄을 찾았으면 그 줄
+    oom: bool = False               # trainer 로그에서 GPU 메모리 부족을 확인했다 → refuse (rules.py)
 
 
 def iso_z(ts: datetime) -> str:

@@ -604,6 +604,20 @@ date '+%T'; aws ec2 terminate-instances --instance-ids $IDS $R
 
 기대: 2 ~ 3분 뒤 `FailoverSiteDown` → 작업마다 `site` · `fence_evacuate` → 다른 EKS에서 재개. 15분 뒤 `Held`가 되면 아래 「Held 풀 때」(런북 21절).
 
+### ⑥ OOM 두 가지 (아직 실행 전 — 절차 초안, 11/26, GPU-222)
+
+분류기는 메모리 부족을 일반 Pod 종료와 구분해 바로 `refuse`로 낸다(GPU-222, 한송이 POD-003 · 004): 종료 사유 `OOMKilled` 또는 trainer 로그의 `CUDA out of memory`.
+그런데 실제 줄이 Loki에 한 건도 없어(11/26, 최근 7일) 찾는 글자는 PyTorch 표준 문구에 맞춘 값이다 → **로그 원문을 얻고 판정이 맞는지 보는 것**이 목적이다.
+기대: `gpu.fault`에 `suggested_action: refuse`가 나가고 컨트롤러가 재시도 없이 `REJECTED`로 닫는다(새 세대가 뜨지 않는다). `restart_in_place`로 나가 새 세대가 뜨면 판정이 빗나간 것이니 작업을 취소하고 원문을 적어 온다.
+작업을 내는 방법(배치 크기 · 메모리 한도를 어디서 바꾸는지)은 노찬경과 먼저 확인한다.
+
+| 주입 | 방법 | 적어 올 것 |
+|---|---|---|
+| GPU OOM | 배치 크기를 T4 16GB에 안 들어가게 키워 제출 | trainer 로그의 `out of memory` 줄 원문(Loki `{k8s_namespace_name="training", k8s_container_name="trainer"} \|~ "(?i)out of memory"`) · `FailoverPodExit`의 `reason`(`Error`일 것) · 사건이 `refuse`이고 `raw.log_line`이 그 줄인지 |
+| 컨테이너 OOM | trainer 메모리 한도를 낮춰 제출 | `FailoverPodExit`의 `reason`(`OOMKilled`일 것 — 아니면 `refuse`가 안 나간다) · 사건이 `refuse`인지 · trainer 로그에 남는 줄(`exitcode: -9`뿐인지) · 노드 커널 로그에 `out of memory` 줄이 Loki로 오는지(`{k8s_cluster_name="eks-a", service_name="kernel"} \|~ "(?i)out of memory"`) |
+
+둘 다 볼 것: 죽은 Pod가 15초 안에 지워져 `FailoverJobFailed`로만 잡히는지(그러면 종료 사유가 사건에 없다 → 컨테이너 OOM은 `restart_in_place`로 나가고, GPU OOM은 로그로 찾아 `refuse`).
+
 ### HOLD가 나면
 
 `RecoveryHold` 알람이 Slack `#alerts-gpu`에 와야 한다(Slack 화면은 사용자가 확인). `recovery_hold_total{job_id, reason}`가 늘었는지 같이 적는다.

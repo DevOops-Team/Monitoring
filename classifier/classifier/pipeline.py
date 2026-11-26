@@ -20,7 +20,7 @@ from . import dedup
 from .event import Context, build, dedup_code, dedup_target, iso_z
 from .intended import Lifecycle
 from .publish import SOURCE, InvalidEvent, Publisher, validate
-from .rules import Rules, Verdict
+from .rules import EXIT_SIGNALS, Rules, Verdict
 from .signals import RejectError, Signal, parse_alert
 
 logger = logging.getLogger("classifier")
@@ -29,7 +29,6 @@ POD_EXIT_WAIT = timedelta(seconds=30)       # 임시값. E2E에서 job.fenced와
 MAX_PENDING = 1000                          # 기다리는 신호의 상한. 넘으면 기다리지 않고 hold로 낸다(메모리 보호)
 RETRY_AFTER = timedelta(seconds=5)          # 기다리던 신호의 발행이 실패했을 때 다시 해 볼 간격
 NO_RECOVERY = ("hold", "none")              # 복구를 부르지 않는 action. 원인 사건으로 치지 않는다
-EXIT_SIGNALS = ("pod_exit", "job_failed")   # 「학습이 끝났다」는 결과 신호. 원인 사건(Xid · 노드 소실 · 사이트)에 묶인다
 
 # 처리 결과. classifier_alerts_total의 outcome 라벨 값
 RESOLVED = "resolved"               # 꺼짐 알림
@@ -211,7 +210,7 @@ class Pipeline:
         return self._emit(s, ctx, now, hold=not self.lifecycle.healthy)
 
     def _emit(self, s: Signal, ctx: Context, now: datetime, hold: bool = False) -> str:
-        v = self.rules.judge(s, ctx.collector_healthy)
+        v = self.rules.judge(s, ctx.collector_healthy, oom=ctx.oom)
         if hold:
             v = self.rules.hold(v)
         if not v.matched:
