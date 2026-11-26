@@ -23,7 +23,8 @@
 | [Denpex fixtures](https://github.com/denpexzero/denpex-gpu-failure-fixtures) | 공개 이슈 25건, 라벨 18종, 오류 문구 354줄(건당 1 ~ 46줄) | 있음 | 보조 학습 (`app`) | MIT |
 | [Delta A100 · H100](https://doi.org/10.5281/zenodo.15287639) | 정규식 매칭 뒤 집계 피클 5개 + Xid 정규식 표 143행. **원문 로그 줄 없음**(원본 300GB+는 비공개) | 없음 | 학습 안 씀. Xid 분류 참고 · 합성 줄 형식 참고 | CC-BY-4.0 |
 | [ClusterWise](https://huggingface.co/datasets/MachaParfait/ClusterWise) | parquet 145개 · 221GB. 온도 · 전력 · 작업 기록 + 숫자 `xid` 열. **로그 문구 없음** | 없음 | 안 씀 (받지 않음, README · 파일 목록만 확인) | CC-BY-4.0 |
-| ORNL Summit DBE · Loghub | — | 미확인 | 미정 (이번에 확인 안 함) | 미확인 |
+| [ORNL Summit DBE](https://doi.ccs.ornl.gov/dataset/56c244d2-d273-5222-8f4b-f2324282fab8) | V100 메모리 2비트 오류(Xid 48) 때의 GPU 상태: Xid 기록 · 1Hz 측정값 · 재부팅 로그 · 작업 기록 (설명 페이지 기준, Globus로만 받을 수 있어 받지 않음) | 미확인 | 안 씀. 있어도 `hw` 한 종류(Xid 48)이고 Xid는 룰 몫 | 미확인 |
+| [Loghub](https://github.com/logpai/loghub) | 시스템 16종(Android · Apache · BGL · HDFS · HPC · Hadoop · Linux · OpenSSH · OpenStack · Spark · Thunderbird · Zookeeper 등)의 일반 로그. **GPU 로그 없음** | 있음 | 안 씀 (사전 학습 비교에만 쓸 수 있음) | 저장소 표기 불명확 |
 
 ADR-45 v2와 다른 점 (파일을 받아 보고 알게 된 것):
 
@@ -71,6 +72,25 @@ Delta 피클은 열지 않았다(피클은 여는 순간 코드가 실행될 수
 | `GPU_USER_APP`(3) | `app` |
 | `GPU_HARDWARE_DRIVERS`(40) · `GPU_USER_DRIVERS`(27) · `GPU_MULTI`(7) | 미정 (원인 후보가 둘 이상) |
 | `GPU_RESERVED`(20) · `GPU_UNUSED`(15) | 안 씀 |
+
+### 2.4 찾아봤지만 안 쓰는 것 (2026-11-26 검색)
+
+Hugging Face(검색어 25개: `nccl` · `xid` · `gpu failure` · `cuda error` · `cuda out of memory` · `log anomaly` · `syslog` · `incident log` 등, 169건)와 Kaggle(검색어 5개)에서 이름이 가까운 것을 열어 봤다. 전수 확인은 아니다.
+
+| 데이터셋 | 실제 내용 | 안 쓰는 이유 |
+|---|---|---|
+| HF `emgena/nccl_multi_gpu_allreduce_timeout_watchdog_teaser` | 500행. LLM이 만든 장애 대응 대화, 유료 상품의 맛보기판 | 실제 로그가 아님. CC-BY-NC |
+| HF `akankshakshurai/cuda-error-resolution-analysis` | PyTorch 포럼 글 덤프 1.5GB | 원인 라벨 없음. 오류 문구는 진짜지만 대부분 `app` |
+| HF `Swapnil007-Curious/kanvas-gpu-failure` | 작업 18,890건의 스케줄링 · 측정 수치와 실패 여부 | 로그 문구 없음 |
+| HF `project-vajra/nccl-*` | NCCL all-reduce 성능 측정 CSV | 장애 로그 아님 |
+| HF `bolu61/loghub_2` | Loghub 2.0 사본 5GB | GPU 로그 아님 |
+| HF `lumicero/xids-dataset` | 침입 탐지 데이터 | 이름만 비슷함 (Xid 아님) |
+| HF `denpex/denpex-gpu-failure-fixtures` | GitHub와 같은 25건 | 2.2절에 이미 반영 |
+| Kaggle `ramprasadatluri/gpu-cluster-straggler-nccl-sync-telemetry` | 스크립트(`generate_data.py`)로 만든 합성 수치 85,000행 | 합성 · 로그 문구 없음 |
+| Kaggle `beatsprom/autonomous-cloud-gpu-and-distributed-serving-2026` | LLM 학습용 합성 대화 2,500행 | 실제 로그가 아님 |
+| Kaggle `stanislavkublitskiy/t4-gpu-telemetry-baseline-kaggle` | T4 2장의 `nvidia-smi` 측정값, 정상 동작만 | 장애 없음 · 로그 문구 없음 |
+
+**없는 이유**: 운영 로그는 개인정보 · 규정 때문에 공개되지 않고(Delta가 원본 300GB를 뺀 이유), 원인 라벨은 누군가 일부러 장애를 주입해야 생긴다(GF-Bench가 그렇게 했지만 OOM · 스트래글러 두 종류뿐). `network` · `infra` 줄은 우리가 직접 주입해 만든다.
 
 ## 3. 우리 장애 주입 → 라벨
 
