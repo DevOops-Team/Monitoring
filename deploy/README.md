@@ -143,7 +143,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 - 새 대시보드는 `kustomization.yaml`에서 그 폴더 ConfigMap(`grafana-dashboards-<폴더>`)의 files에도 넣는다. lint가 JSON 문법 · `uid` · `title` · uid 중복을 본다
 - 새 폴더는 `values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`와 `kustomization.yaml`의 ConfigMap을 **같은 커밋**에 넣는다(없는 ConfigMap을 마운트하면 Grafana Pod가 뜨지 못한다). 폴더를 추가하면 Grafana Pod가 한 번 다시 뜬다
 - 레코딩 룰은 만든 뒤부터만 계산된다. 「GPU」의 감속 시간 비율 · ECC SBE 증가 · PCIe 재시도는 2026-11-20 저녁 이전 구간이 비어 있다
-- 「장애 복구」의 PostgreSQL 패널은 `grafana_ro` 계정으로 읽는다. HOLD 목록은 `recovery.held` 사건만 보이는 뷰 `data.v_recovery_held`를 읽는다(Data `db/008_recovery_held_view.sql`, GPU-252)
+- 「장애 복구」의 PostgreSQL 패널은 `grafana_ro` 계정으로 읽는다. HOLD 목록은 `recovery.held` 사건만 보이는 뷰 `data.v_recovery_held`를 읽는다(Data `db/008_recovery_held_view.sql`, GPU-252). 장애 목록의 「Pod 준비」는 원인 확정 → 새 세대 Pod 전부 Ready(`job.resumed`), 「복구」는 원인 확정 → 새 세대가 마지막 승인 step 다음 step을 실제로 진행한 때다(Data `db/010_incident_resume.sql`, GPU-289). Pod 준비만 있고 복구가 비면 Pod는 떴지만 학습이 이어지지 않은 것
 - uid를 바꾸거나 파일을 지우면 옛 대시보드가 Grafana에 남을 수 있다(11/11 `mon-self` → 분리 때). 남아 있으면 화면에서 지운다
 - 타일(폭 4칸) 제목은 한 줄로만 나오고 넘치면 "…"로 잘린다. 제목은 짧게, 자세한 뜻은 설명(ⓘ)에 둔다. 이름이 `_total`로 안 끝나는 카운터에 `increase()` · `rate()`를 쓰면 PromQL 안내 아이콘이 제목 칸을 차지하므로, 타일에서는 레코딩 룰(`base/mimir/rules/records.yml`)을 읽는다
 - 색: 정상 `#73BF69` · 경고 `#FF9830` · 위험 `#F2495C` · 좋고 나쁨이 없는 값 `#8AB8FF`. 점선 임계선은 MON-STD에 값이 있는 패널에만 긋는다
@@ -258,6 +258,7 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
   ```
 - **알람이 들어오는 길**: Alertmanager 라우트 `pipeline=failover` + `signal=~"xid|pod_exit|node_lost|site|job_failed"` → 웹훅 `http://classifier.monitoring.svc:8080/alerts`. 분류기 `ENABLED_SIGNALS`(Gitops)에 없는 신호는 받아서 버린다
 - **받는 신호**: Gitops overlay의 `ENABLED_SIGNALS=xid,pod_exit,node_lost`(11/24 19:07부터, Gitops #101). 라우트와 이 값이 둘 다 있어야 그 신호로 사건이 나간다. 복구 컨트롤러가 실행 모드라 `node_lost`는 GPU 노드가 1분 넘게 NotReady이거나 사라지면 그 노드 작업을 실제로 옮긴다. 사이트를 켤 때는 `xid,pod_exit,node_lost,site`
+- **작업 실패 사건의 죽은 노드**(11/26, GPU-288): `job_failed` 알람이 오면 분류기가 Loki(`LOKI_URL`)에 한 번 물어 그 작업 · 세대 trainer 로그에서 가장 먼저 찍힌 `failed (exitcode` 줄을 찾고, 그 줄의 노드를 사건 `node`에 넣는다. 못 찾거나 Loki가 3초 안에 답하지 않으면 노드 없이 낸다(사건은 그대로 나간다). 사건에 노드가 비어 있으면 대장 Pod 로그의 `enrich.failed`(`what=failed_pod`)와 Grafana Explore에서 `{k8s_namespace_name="training", k8s_container_name="trainer", k8s_pod_name=~"job-<작업>-g<세대 4자리>-.+"} |= "failed (exitcode"`를 본다. 알람은 여전히 Alertmanager 웹훅으로만 들어온다
 - **확인**: `kubectl -n monitoring get deploy classifier`(2/2) · `kubectl -n monitoring get lease classifier`(`HOLDER` = 지금 대장) · `kubectl -n monitoring logs <대장 Pod>` · 아래 지표
 - **2개 중 하나만 처리한다**(대장, `docs/classifier.md` 7.1절). 대기 쪽은 받은 웹훅을 대장에게 넘기므로 `svc/classifier`로 보내면 어느 Pod에 닿든 대장이 처리한다. 로그 `event.published`는 대장에만 남는다
 - **끄기**: 웹훅만 끊으려면 `values/alertmanager.yaml`의 수신자 `classifier`에서 `webhook_configs`를 지운다. 분류기는 떠 있어도 알람이 안 오면 아무것도 내지 않는다
@@ -612,19 +613,19 @@ date '+%T'; aws ec2 terminate-instances --instance-ids $IDS $R
 주입마다 한 줄. 시각은 KST, 원 시각을 남기고 차이는 나중에 계산한다(정의가 바뀌어도 다시 계산할 수 있게).
 주입 시각을 기계가 남기는 곳은 없다(Kafka `fault.injection` 토픽은 11/20 삭제, ADR-33 사람이 CLI로 주입). T0은 주입 명령 바로 앞에 `date '+%H:%M:%S'`를 같이 쳐서 그 출력을 적는다.
 
-| 주입 | 작업 · 세대 · 노드 | T0 주입 | 주입 해제 | T1 원본 신호(`dedup_key` epoch) | T2 알람 발화(Alertmanager) | T3 발행(Loki `event.published`) | T4 `recovery.decided` | T5 `job.resumed` | 결과 · 메모 |
-|---|---|---|---|---|---|---|---|---|---|
-| ① kill -9 | | | | | | | | | |
-| ② Xid 79 | | | | | | | | | |
-| ② Xid 48 | | | | | | | | | |
-| ③ dcgmi Xid | | | | | | | | | |
+| 주입 | 작업 · 세대 · 노드 | T0 주입 | 주입 해제 | T1 원본 신호(`dedup_key` epoch) | T2 알람 발화(Alertmanager) | T3 발행(Loki `event.published`) | T4 `recovery.decided` | T5 `job.resumed`(Pod 준비) | T6 첫 진행 step(`v_incidents` `resumed_at`) | 결과 · 메모 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| ① kill -9 | | | | | | | | | | |
+| ② Xid 79 | | | | | | | | | | |
+| ② Xid 48 | | | | | | | | | | |
+| ③ dcgmi Xid | | | | | | | | | | |
 
-감지 = T3 − T0, 분류 = T3 − T1, 복구 = T5 − T3. 끝나면 `docs/measurements/`로 옮긴다.
+감지 = T3 − T0, 분류 = T3 − T1, Pod 준비 = T5 − T3, 복구 = T6 − T3(11/26부터. T6 = 새 세대가 마지막 승인 step 다음 step을 실제로 진행한 첫 시각, 「장애 복구」 장애 목록의 재개 시각 칸). 끝나면 `docs/measurements/`로 옮긴다.
 
 **11/23 결과**(① 두 번 · ③ 한 번, observe): ① 88.9초 → 평가 지연을 15초로 줄인 뒤 33.8초, ③ 36.9초. 다른 랭크는 Job이 삭제해 `gpu.fault`는 한 건만 나가고, 죽은 Pod는 약 37초 뒤 지워지며, 워커를 죽여도 Xid 45는 나지 않았다. 값과 타임라인은 `docs/measurements/2026-11-23-fault-injection.md`.
 **11/25 결과**(① 세 번, 실행 모드): 1차는 죽은 Pod가 14초 만에 지워져(JobSet Failed → MultiKueue가 EKS 쪽 JobSet 정리) `FailoverPodExit`가 못 봤고 `gpu.fault`가 안 나갔다 → `FailoverJobFailed`(관리 클러스터 JobSet 실패)를 더한 뒤 2차 47.9초 · 3차 38.9초에 발행. 3차에서 처음 자동 재제출이 됐지만 새 세대 trainer가 옛 세대 주소를 기다리며 멈췄다(relocator 2.5.3에서 고침, 다음 EKS에서 확인). `job.resumed`는 Pod Ready 기준이라 복구 시간의 끝이 아니다. 값과 타임라인은 `docs/measurements/2026-11-25-fault-injection.md`.
 「주입 해제」는 클럭 제한(`nvidia-smi -lgc`) · stress-ng · tc netem처럼 걸어 두는 주입을 푼 시각이다. 한 번에 끝나는 주입(kill -9 · Xid)은 비워 둔다.
-**기준선에서 빼는 구간 = T0 ~ (주입 해제와 T5 중 늦은 쪽)** (monitoring-standard.md 2절).
+**기준선에서 빼는 구간 = T0 ~ (주입 해제와 T6 중 늦은 쪽)** (monitoring-standard.md 2절).
 
 ### 끝난 뒤 (EKS를 내리기 전에)
 
