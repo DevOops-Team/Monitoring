@@ -210,7 +210,7 @@ class Pipeline:
         return self._emit(s, ctx, now, hold=not self.lifecycle.healthy)
 
     def _emit(self, s: Signal, ctx: Context, now: datetime, hold: bool = False) -> str:
-        v = self.rules.judge(s, ctx.collector_healthy)
+        v = self.rules.judge(s, ctx.collector_healthy, oom=ctx.oom)
         if hold:
             v = self.rules.hold(v)
         if not v.matched:
