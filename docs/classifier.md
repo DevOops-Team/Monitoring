@@ -167,7 +167,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 
 | | 값 |
 |---|---|
-| 자리표시자로 바꿈 | 시각 `<TS>` · 노드 · Pod 이름 `<HOST>` · 작업 ID `<JOB>` · `<PID>` · `<RANK>` · 메모리 주소 `<ADDR>` · `<PCI>` · `<MAC>` · `<IP>` · `<PORT>` · `<UUID>` · 메모리 크기 `<SIZE>` · 이름이 붙은 일련번호 `<SEQ>` |
+| 자리표시자로 바꿈 | 시각 `<TS>` · 노드 · Pod 이름 `<HOST>` · 작업 ID `<JOB>` · `<PID>` · `<RANK>` · 메모리 주소 `<ADDR>` · `<PCI>` · `<MAC>` · `<IP>` · `<PORT>` · `<UUID>` · 메모리 크기 `<SIZE>` · 이름이 붙은 일련번호 · trainer 진행 줄의 step 수 `<SEQ>` · 걸린 시간 `<DUR>` |
 | 남김 | 종료 코드 · 시그널 · Xid 번호 · 버전 · 오류 클래스 이름 · 소스 줄 번호 · 이름을 모르는 그 밖의 숫자 전부 |
 
 이름을 아는 패턴만 바꾼다. 패턴은 Loki 실제 줄(2026-11-21 ~ 11-26)로 잡았고, Xid 줄만 NVIDIA 문서 형식 기준이다(실제 줄 없음, GPU-218).

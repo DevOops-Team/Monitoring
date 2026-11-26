@@ -69,6 +69,16 @@ CASES = [
      "172.30.0.42:9092/3: Connection setup timed out in state CONNECT (after 30026ms in state CONNECT)",
      "%4|<TS>|FAIL|<HOST>#producer-1| [thrd:<IP>/3]: "
      "<IP>/3: Connection setup timed out in state CONNECT (after 30026ms in state CONNECT)"),
+    # trainer 진행 줄: step 번호 · 걸린 시간은 지우고 랭크 수 · 배치 설정은 남긴다
+    ("step 517: saved step-00000517 in 4.4s", "step <SEQ>: saved step-<SEQ> in <DUR>"),
+    ("step time 1.332s, expected 137.8 min, interval 594s -> save every 478 steps (13 saves)",
+     "step time <DUR>, expected <DUR>, interval <DUR> -> save every <SEQ> steps (<SEQ> saves)"),
+    ("fsdp x 4: 2485 samples, 155 steps/epoch, 1550 steps",
+     "fsdp x 4: <SEQ> samples, <SEQ> steps/epoch, <SEQ> steps"),
+    ("fsdp qlora FULL_SHARD x 4: 9766 blocks, micro batch 4 x accum 4, 152 steps/epoch, 304 steps",
+     "fsdp qlora FULL_SHARD x 4: <SEQ> blocks, micro batch 4 x accum 4, <SEQ> steps/epoch, <SEQ> steps"),
+    ("rank 0: STOP at step 43", "rank <RANK>: STOP at step <SEQ>"),
+    ("resumed from step-00000500", "resumed from step-<SEQ>"),
     # 그 밖
     ("node ip-172-28-69-78.us-east-2.compute.internal GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7 at 172.30.0.35:9009",
      "node <HOST> <UUID> at <IP>"),
