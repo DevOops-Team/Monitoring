@@ -91,7 +91,7 @@
 | `reset_then_migrate` | 이 GPU 리셋 필요 (Xid 48 · 64 · 95 · 119 · 120 · 140 등) | 먼저 다른 노드로 이전 → 빈 노드에서 GPU 리셋 → 성공하면 예비로 복귀, 실패하면 폐기 |
 | `evacuate_preemptive` | 곧 죽거나 느려짐 (스팟 2분 통보, 스트래글러) | 노드 격리 → 세대 +1 → 옛 실행 종료 확인 → 같은 클러스터 예비 GPU로 새 JobSet, **마지막 승인본에서 재개**. 스팟 회수 예고 때도 마지막 저장을 기다리지 않는다(ADR-36, 11/13. ADR-28의 120초 마지막 저장은 폐기) |
 | `fence_evacuate` | 클러스터 전체가 사라짐 (AZ 장애) | 클러스터 펜싱(`devoops/fenced=true`) → 세대 +1 (옛 Job이 살아 있어도 승인 못 하게) → 옛 실행 중단을 확인할 수 없으므로 확인 어노테이션을 기다렸다가 다른 AZ 클러스터에서 재개 |
-| `refuse` | 같은 Job이 같은 버그로 반복 사망 | 재시도 중단, 사용자에게 실패 알림 |
+| `refuse` | 다시 띄워도 같은 자리에서 죽음. 분류기는 **메모리 부족**(컨테이너 `OOMKilled` · trainer 로그의 `CUDA out of memory`)일 때 직접 낸다. 같은 버그로 반복 사망은 컨트롤러가 횟수로 올린다 | 재시도 중단, 사용자에게 실패 알림 |
 | `hold` | 애매함, 지켜봐야 함 | 아무것도 안 함. 반복되면 다음 이벤트에서 결정 |
 | `none` | 기록만 (Xid 63, 92 등 전조 · 154 같은 보조 정보) | 아무것도 안 함, DB 저장만 |
 
@@ -110,7 +110,7 @@
 | `reset_then_migrate` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 컨트롤러 입장에선 `isolate_migrate`와 같다. GPU 리셋은 한송이 6절대로 **별도 운영 액션**(격리 뒤 수동 · 후속), 자동 리셋 안 함 |
 | `evacuate_preemptive` | `QUARANTINE_AND_RETRY` | `moveToSpare` | 스팟 2분 통보 · 스트래글러. 세대를 먼저 올리고 **마지막 승인본에서 재개**한다 (ADR-19 v5, 컨트롤러 contracts.md). 사전 저장 뒤 옮기는 `PLANNED_MIGRATE`는 **보류**(컨트롤러에서 현재 HOLD). 스팟 회수 예고의 이 순서(승인본 확정 → 세대 +1 → 옛 실행 종료 → 재개)는 ADR-36(11/13)으로 확정됐다. ADR-28은 폐기. **스트래글러는 조건부**(ADR-37, 11/16): 분류기는 느린 상태가 600초 이상 이어지고 「그대로 둘 때 손해 ≥ 2 × 이전 비용 C」일 때만 이 값을 내고, 아니면 `category: straggler` + `hold`로 낸다. C(실측 전 900초 가정)와 안전 계수 2는 **분류기**가 계산해 `straggler_evidence.estimated_gain_seconds`에 순절감으로 넣고, 컨트롤러는 양수인지만 본다. 예비 용량 · 작업당 1회 · 수집 정상 · 정책 활성화(기본 OFF)는 **컨트롤러**가 최종 확인한다 |
 | `fence_evacuate` | `FENCE_AND_EVACUATE` | `evacuateCluster` | 클러스터 펜싱(`devoops/fenced=true`) → 옛 실행 권한 차단. 펜싱 확인은 `devoops/old-execution-stopped=true` 어노테이션만이 아니라 **실제 차단 근거**(세대 +1 반영 · 하트비트 끊김)까지. `evacuateCluster`는 이 행 전용 |
-| `refuse` | `NEEDS_CONFIG_FIX` (결과 state `REJECTED`) | 없음 (복구 안 함) | 사용자에게 실패 알림. 자동 복구 한도(3회) 초과 · init 종료 코드 5 · 6도 같은 `REJECTED`로 끝난다. Slack 알림은 HOLD만 있고 `REJECTED` 알림은 협의 중(11/11, 카운터 추가되면 MON-STD-25에 포함). 자동 재시작이 전부 꺼져 있어 JobSet이 Failed → Kueue Workload 종료 → 쿼터 자동 반납될 것으로 봄(김성모, 미검증). 멈춘 채 안 죽는 Job만 별도 처리 |
+| `refuse` | `NEEDS_CONFIG_FIX` (결과 state `REJECTED`) | 없음 (복구 안 함) | 사용자에게 실패 알림. 분류기가 메모리 부족으로 직접 낸 `refuse`(2026-11-26, GPU-222)는 재시도 없이 바로 이 상태가 된다. 자동 복구 한도(3회) 초과 · init 종료 코드 5 · 6도 같은 `REJECTED`로 끝난다. Slack 알림은 HOLD만 있고 `REJECTED` 알림은 협의 중(11/11, 카운터 추가되면 MON-STD-25에 포함). 자동 재시작이 전부 꺼져 있어 JobSet이 Failed → Kueue Workload 종료 → 쿼터 자동 반납될 것으로 봄(김성모, 미검증). 멈춘 채 안 죽는 Job만 별도 처리 |
 | `hold` | `HOLD` | 없음 | 상태 저장 · 알림. Kafka `recovery.action` `type=recovery.held`, Slack은 Mimir 룰 `RecoveryHold`(MON-STD-25, ADR-27). HOLD는 그 사건의 최종 상태이고 자동 재개하지 않는다 |
 | `none` | `NONE` (결과 state `IGNORED`) | 없음 | 기록만. 컨트롤러는 Kafka에서 읽어도 처리하지 않는다 |
 
@@ -140,7 +140,7 @@ RelocationRequest `action`은 `restartInPlace` · `moveToSpare` · `evacuateClus
 | `confidence`가 낮다 (예: 0.5 미만) | `isolate_migrate` | `hold`로 낮춤 |
 | 이 Job이 이미 복구 중이다 | 무엇이든 | 무시 (중복 처리 방지) |
 | VPN 단절인지 AZ 장애인지 아직 모른다 | `fence_evacuate` | `hold` 후 VPN 터널을 우회하는 별도 경로(DynamoDB `heartbeat_at` · progress 갱신, EC2 상태 조회)를 보고 결정. 워커는 프라이빗 서브넷이라 공인망에서 직접 probe할 수 없다. 이 경로도 pfSense · 회선은 VPN과 공유하므로, 조회 자체가 실패하면 하트비트가 멈춘 것으로 보지 않고 `hold`를 유지한다 (MON-STD-18) |
-| `restart_in_place`를 3번(가정값, 상한은 한송이 미확정) 했는데 또 같은 에러 | `restart_in_place` | `refuse`로 올림 |
+| 자동 복구를 3번(확정, 한송이 2026-11-26) 다 쓴 뒤 또 같은 에러 | `restart_in_place` | 4번째 요청은 `REJECTED`로 닫는다. 횟수는 컨트롤러만 센다(분류기는 반복이어도 `restart_in_place` 그대로 보낸다) |
 
 ## 5. 예시 목록
 
@@ -156,6 +156,7 @@ RelocationRequest `action`은 `restartInPlace` · `moveToSpare` · `evacuateClus
 | `08-hold-collector-down` | DCGM 필드 230만 바뀜, 로그 경로 죽음 | hw → hold |
 | `09-straggler-hold` | 같은 1.6배 · 720초지만 남은 스텝이 적어 손해 600초 < 2 × 900 → 순절감 −300초 | straggler → hold |
 | `10-infra-node-lost-isolate` | GPU 노드가 NotReady가 되거나 Node가 지워짐(스팟 회수 · 인스턴스 종료), CPU 노드의 Agent · KSM은 살아 있음 | infra → isolate_migrate |
+| `11-app-oom-refuse` | trainer 컨테이너가 메모리 한도를 넘겨 `OOMKilled`로 끝남 | app → refuse |
 
 01과 08은 같은 사건이다. 로그 경로가 죽어 DCGM 경로(08, 14:02:40)가 먼저 와서 `hold`, 로그 경로가 살아나 커널 로그(01, 14:02:11)가 뒤늦게 와서 `isolate_migrate`. `ts` 차이 29초 < 45초라 01은 08의 키를 재사용한다. action이 달라졌으므로 새 `event_id`로 나가고, 컨트롤러는 새 사건으로 처리한다.
 
@@ -165,8 +166,8 @@ RelocationRequest `action`은 `restartInPlace` · `moveToSpare` · `evacuateClus
 
 - [ ] (한송이) 3절 · 4절 동작이 컨트롤러 설계와 맞나 — 2026-11-05 확인됨: Kafka `gpu.fault` 소비, 봉투 `occurred_at`=판정 시각 · `payload.ts`=원본 시각 구분, exit 75 이벤트 없음, dcgm 5초는 확정값(±45초 창 전제). 나머지는 매핑표(11/12)와 함께
 - [x] (한송이) 스트래글러를 `evacuate_preemptive`로 처리해도 되나, 별도 값(`isolate_straggler` 등)이 필요한가 — 2026-11-16 확정: 별도 값 없이 `evacuate_preemptive` + `straggler_evidence`(조건 미충족은 `hold`, 이때도 evidence 포함 가능). ADR-37 채택, 컨트롤러 정책 스위치 기본 OFF
-- [ ] (한송이) `refuse`는 컨트롤러가 반복 횟수로 올리는 것만 있나, 분류기가 직접 추천할 경우도 있나
-- [ ] (한송이) 소프트웨어 `restart_in_place` 재시도 상한은 미확정 (2026-11-05). 4절의 3회는 가정값으로 유지. 정해지면 `refuse` 승격 횟수와 같은 값으로 맞춤
+- [x] (한송이) `refuse`는 컨트롤러가 반복 횟수로 올리는 것만 있나, 분류기가 직접 추천할 경우도 있나 — 2026-11-26 확정: 분류기는 메모리 부족(컨테이너 `OOMKilled` · 종료한 trainer 로그의 `CUDA out of memory`)이 확인될 때만 직접 `refuse`를 낸다. Pod가 빨리 지워져 원인을 모르면 `restart_in_place`
+- [x] (한송이) 소프트웨어 `restart_in_place` 재시도 상한 — 2026-11-26 확정: 최대 3회, 한도를 다 쓴 뒤 온 4번째 요청은 `REJECTED`. 횟수는 컨트롤러에서만 관리한다
 - [ ] (김현수) DB 컬럼 매핑: `raw` · `correlated`는 JSONB 한 칸으로 충분한가
 - [ ] (김현수) `dedup_key` 유니크 제약을 DB에도 걸 것인가
 - [x] (한송이 · 김성모) 3.1 매핑표 확인 완료 (2026-11-05): `PLANNED_MIGRATE` · `FENCE_AND_EVACUATE` 신설, `rule_version`은 v1 Kafka 헤더, SDC는 컨트롤러 승격, `moveToOtherCluster` 신설 (→ 둘 다 2026-11-17에 없어짐: ADR-38 · ADR-39)

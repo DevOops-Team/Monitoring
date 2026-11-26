@@ -4,7 +4,8 @@
   KAFKA_BOOTSTRAP  브로커 주소. 없으면 표준 출력으로만 낸다(로컬 확인용)
   REQUIRE_KAFKA    true면 KAFKA_BOOTSTRAP 없이 시작하지 않는다. 배포 매니페스트는 항상 true
   MIMIR_URL        예 http://mimir:9009. 없으면 수집 경로를 확인할 수 없어 전부 hold로 낸다
-  LOKI_URL         예 http://loki:3100. 작업 실패 사건의 죽은 노드를 trainer 로그에서 찾는다. 없으면 노드 없이 낸다
+  LOKI_URL         예 http://loki:3100. trainer 로그에서 작업 실패 사건의 죽은 노드와 GPU 메모리 부족 줄을 찾는다.
+                   없으면 노드 없이, 메모리 부족은 종료 사유(OOMKilled)로만 판정한다
   RULE_VERSION     rules.yaml의 git SHA 앞 7자 (이미지 빌드 때 넣음). Kafka 헤더로 나간다
   LEASE_NAME       대장 선출에 쓸 Lease 이름. 있으면 Lease를 잡은 Pod만 알람을 처리한다(7절). 없으면 혼자 도는 것으로 본다
   POD_IP           LEASE_NAME과 같이 쓴다. 대기 쪽이 받은 알람을 넘겨줄 대장 주소로 Lease에 적힌다

@@ -479,3 +479,44 @@ def test_job_failed_event_carries_the_node_and_log_line_found_in_logs(env):
     assert (payload["node"], payload["raw"]["log_line"]) == ("node-1", "failed (exitcode: -9) local_rank: 0")
     assert payload["dedup_key"].startswith(f"eks-a/{JOB}/g{GEN}|pod|")
     assert pipe.handle(pod_exit(rank=1), at(60)) == p.ABSORBED
+
+
+# ---------- 메모리 부족: 재시도 없이 실패 확정 (GPU-222) ----------
+OOM_LINE = "torch.OutOfMemoryError: CUDA out of memory. Tried to allocate 2.00 GiB."
+
+
+def oom_killed(rank=0):
+    alert = pod_exit(rank)
+    alert["labels"]["reason"] = "OOMKilled"
+    return alert
+
+
+def test_container_oom_is_published_as_refuse(env):
+    pipe, fake, _ = env
+    assert pipe.handle(oom_killed(), at(45)) == p.PUBLISHED
+    payload = fake.sent[0]["payload"]
+    assert (payload["category"], payload["suggested_action"]) == ("app", "refuse")
+
+
+def test_cuda_oom_from_the_log_is_published_as_refuse_with_the_line(env):
+    pipe, fake, _ = env
+    found = pipe.enrich
+    pipe.enrich = lambda s: replace(found(s), oom=True, log_line=OOM_LINE)
+    assert pipe.handle(pod_exit(), at(45)) == p.PUBLISHED
+    payload = fake.sent[0]["payload"]
+    assert (payload["suggested_action"], payload["raw"]["log_line"]) == ("refuse", OOM_LINE)
+
+
+def test_job_failed_after_a_refused_pod_exit_is_absorbed(env):
+    """refuse도 그 작업 · 세대의 사건이다. 뒤에 온 작업 실패 신호가 restart_in_place로 따로 나가면 안 된다."""
+    pipe, fake, _ = env
+    assert pipe.handle(oom_killed(), at(45)) == p.PUBLISHED
+    assert pipe.handle(job_failed(), at(50)) == p.ABSORBED
+    assert len(fake.sent) == 1
+
+
+def test_oom_without_lifecycle_is_hold(env):
+    pipe, fake, life = env
+    life.healthy = False
+    assert pipe.handle(oom_killed(), at(45)) == p.PUBLISHED
+    assert fake.sent[0]["payload"]["suggested_action"] == "hold"
