@@ -166,3 +166,27 @@ groups:
           event_ts: >-
             {{ with printf "max_over_time(timestamp(up{job=\"prometheus-agent\", cluster=%q})[15m:15s])" $labels.cluster | query }}{{ (. | first | value | toTime).UTC.Format "2006-01-02T15:04:05Z" }}{{ end }}
           summary: '클러스터 수집 끊김: {{ $labels.cluster }}'
+
+      # 스트래글러: 한 랭크의 GPU 계산 시간이 그 작업 · 세대 랭크 중앙값의 1.5배를 10분째 넘는다(MON-STD-08, ADR-37 조건 「600초 지속」).
+      # 위 룰들과 달리 「사건」이 아니라 「상태」다: 느린 동안 계속 울린다. 분류기가 작업 · 세대 · 노드마다 사건 1건만 낸다(docs/classifier.md 3.3절).
+      # event_ts = 느려지기 시작한 시각 = 이 알람이 pending이 된 시각(ruler가 남기는 ALERTS_FOR_STATE의 값). 울리는 내내 같은 값이다.
+      #   분류기는 「지금 − event_ts」를 느린 상태가 이어진 시간(straggler_evidence.duration_seconds)으로 쓴다
+      # 기준은 랭크 값들의 중앙값이다(training-metrics.md 5절). 랭크가 2개면 중앙값이 두 값의 평균이라 3배 넘게 느려야 1.5를 넘는다
+      # 출처를 고정한다(training 네임스페이스의 trainer 컨테이너). 다만 trainer는 사용자 코드라 값 자체는 꾸밀 수 있다 →
+      #   영향은 자기 작업의 이전 1회(복구 컨트롤러가 작업당 1회로 막는다)
+      - alert: FailoverStraggler
+        expr: >
+          max by (cluster, node, job_id, generation, rank) (
+              train_rank_compute_seconds{job="annotated-pods", namespace="training", container="trainer"}
+            / on (cluster, job_id, generation) group_left ()
+              quantile by (cluster, job_id, generation) (0.5, train_rank_compute_seconds{job="annotated-pods", namespace="training", container="trainer"})
+          ) > 1.5
+        for: 10m
+        labels:
+          pipeline: failover
+          signal: straggler
+        annotations:
+          event_ts: >-
+            {{ with printf "max(ALERTS_FOR_STATE{alertname=\"FailoverStraggler\", cluster=%q, job_id=%q, generation=%q, rank=%q})" $labels.cluster $labels.job_id $labels.generation $labels.rank | query }}{{ (. | first | value | toTime).UTC.Format "2006-01-02T15:04:05Z" }}{{ end }}
+          ratio: '{{ printf "%.2f" $value }}'
+          summary: '스트래글러: {{ $labels.cluster }} {{ $labels.job_id }} 세대 {{ $labels.generation }} 랭크 {{ $labels.rank }} ({{ $labels.node }}) — 계산 시간이 중앙값의 {{ printf "%.2f" $value }}배'

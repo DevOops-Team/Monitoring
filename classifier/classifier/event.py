@@ -10,6 +10,7 @@ from .rules import Verdict
 from .signals import Signal
 
 DCGM_XID_METRIC = "DCGM_FI_DEV_XID_ERRORS"
+STRAGGLER_METRIC = "train_rank_compute_seconds_ratio"      # 그 랭크 계산 시간 ÷ 랭크 중앙값 (알람 annotation ratio)
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,10 @@ class Context:
     node: str | None = None
     log_line: str | None = None     # Pod 종료 · 작업 실패에서 메모리 부족 줄을 찾았으면 그 줄
     oom: bool = False               # trainer 로그에서 GPU 메모리 부족을 확인했다 → refuse (rules.py)
+    # straggler 전용: 그 작업 · 세대의 평균 step 시간 (지금, 느려지기 직전). 하나라도 못 구하면 None
+    step_seconds: tuple[float, float] | None = None
+    evidence: dict[str, Any] | None = None      # straggler 전용: 사건에 넣을 straggler_evidence (pipeline.py가 채운다)
+    worth: bool = True              # straggler 전용: 옮길 만하다. False면 hold (rules.py)
 
 
 def iso_z(ts: datetime) -> str:
@@ -51,6 +56,8 @@ def build(s: Signal, v: Verdict, ctx: Context, dedup_key: str,
           correlated: list[dict[str, str]] | None = None) -> dict[str, Any]:
     event_id = secrets.token_hex(16)        # trace-id와 같은 값. 판정마다 새로 만든다(재판정 포함)
     from_dcgm = s.source == "dcgm"
+    metric, value = (STRAGGLER_METRIC, s.ratio) if s.signal == "straggler" else \
+        (DCGM_XID_METRIC, s.xid) if from_dcgm else (None, None)
     return {
         "schema_version": "1",
         "event_id": event_id,
@@ -66,8 +73,8 @@ def build(s: Signal, v: Verdict, ctx: Context, dedup_key: str,
         "raw": {
             "xid": s.xid,
             "exit_code": s.exit_code,
-            "metric": DCGM_XID_METRIC if from_dcgm else None,
-            "value": s.xid if from_dcgm else None,
+            "metric": metric,
+            "value": value,
             "log_line": ctx.log_line or s.log_line,
         },
         "correlated": correlated or [],
@@ -76,4 +83,5 @@ def build(s: Signal, v: Verdict, ctx: Context, dedup_key: str,
         "category": v.category,
         "confidence": v.confidence,
         "suggested_action": v.action,
+        **({"straggler_evidence": ctx.evidence} if ctx.evidence else {}),
     }

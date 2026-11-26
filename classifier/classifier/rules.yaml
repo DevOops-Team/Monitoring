@@ -32,6 +32,13 @@ signal:
   pod_exit: {category: app, action: restart_in_place, confidence: 0.6}
   # 학습 작업(JobSet)이 실패로 끝남. Pod 종료와 같은 일인데 죽은 Pod가 지워져 Pod 종료 알람이 못 본 경우를 잡는다(GPU-220)
   job_failed: {category: app, action: restart_in_place, confidence: 0.6}
+  # 한 랭크가 10분째 느림. 아래 straggler 조건을 못 채우면 category는 두고 hold로 낸다(ADR-37)
+  straggler: {category: straggler, action: evacuate_preemptive, confidence: 0.75}
+
+# 스트래글러를 옮길지: 느린 상태가 min_duration_seconds 이상 이어졌고
+# 「그대로 둘 때 손해 = 남은 스텝 × (느린 step 시간 − 정상 step 시간)」이 safety_factor × migration_cost_seconds 이상일 때만 옮긴다.
+# migration_cost_seconds(C) = 옮기는 데 드는 시간. 실측 전 가정값(fault-event.md 3.1절). 사건에는 순절감(손해 − C)이 나간다
+straggler: {min_duration_seconds: 600, migration_cost_seconds: 900, safety_factor: 2}
 
 # 학습이 메모리 부족으로 끝남(컨테이너 OOMKilled · trainer 로그의 CUDA out of memory).
 # 다시 띄워도 같은 자리에서 죽으므로 재시도 없이 실패로 확정한다(GPU-222, 한송이 합의 11/26)

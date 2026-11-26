@@ -3,7 +3,10 @@
 Pod 종료 · 작업 실패는 같은 로그에서 GPU 메모리 부족 줄도 찾는다. 있으면 재시도 없이 실패로 확정한다(GPU-222).
 
 EKS API를 부르지 않는다. 각 클러스터의 kube-state-metrics · up 지표가 remote_write로 Mimir에 와 있다.
-조회가 실패하면 모르는 값으로 둔다: collector_healthy=false(→ hold), job_id=null(→ 컨트롤러가 HOLD), node=null, oom=false.
+스트래글러만 step 시간 두 개(지금 · 느려지기 직전)를 더 본다: 옮겨서 얻는 이득 계산에 쓴다(GPU-296).
+
+조회가 실패하면 모르는 값으로 둔다: collector_healthy=false(→ hold), job_id=null(→ 컨트롤러가 HOLD), node=null, oom=false,
+step_seconds=None(→ hold).
 """
 from __future__ import annotations
 
@@ -32,6 +35,9 @@ FAILED_LINE = "failed (exitcode"
 OOM_LINE = "CUDA out of memory"
 # 로그 줄은 작업 실패(신호 시각)보다 앞선다(11/25 실측 8 ~ 45초). 뒤쪽 여유는 노드 시계 차이
 LOG_BEFORE, LOG_AFTER = timedelta(minutes=10), timedelta(minutes=1)
+# 스트래글러의 「정상 step 시간」을 재는 창의 끝 = 느려진 시각(알람이 pending이 된 시각)보다 이만큼 앞.
+# 랭크 계산 시간은 프로파일된 step에서만 갱신되고 수집 · 룰 평가(각 15초)도 거쳐서, 알람이 본 시각보다 조금 먼저 느려졌다
+STEP_NORMAL_BEFORE = timedelta(minutes=1)
 
 Query = Callable[[str, datetime | None], list[dict[str, Any]]]
 # (LogQL, 시작, 끝) → 그 구간에서 가장 먼저 찍힌 줄의 (스트림 라벨, 줄). 없으면 None
@@ -103,6 +109,9 @@ class Enricher:
             return Context(az=self._az(s, at=s.ts, node=node) if node else UNKNOWN_AZ,
                            collector_healthy=self._collector_healthy(s, node_path=False),
                            job_id=s.job_id, generation=s.generation, node=node, log_line=line, oom=oom is not None)
+        if s.signal == "straggler":     # 작업 · 세대 · 노드는 알람에 있다(trainer 지표 라벨)
+            return Context(az=self._az(s), collector_healthy=self._collector_healthy(s), job_id=s.job_id,
+                           generation=s.generation, gpu_uuid=self._gpu_uuid(s), step_seconds=self._step_seconds(s))
         job_id, generation = self._job(s)
         oom = None
         # 종료 사유가 OOMKilled면 이미 메모리 부족이다(rules.py). 그 밖의 Pod 종료만 로그를 본다
@@ -204,8 +213,22 @@ class Enricher:
         zones = {z for r in rows or [] if (z := r.get("label_topology_kubernetes_io_zone"))}
         return zones.pop() if len(zones) == 1 else UNKNOWN_AZ
 
+    def _step_seconds(self, s: Signal) -> tuple[float, float] | None:
+        """그 작업 · 세대의 5분 평균 step 시간 (지금 = 느린 값, 느려지기 직전 = 정상 값). FSDP는 랭크가 같이 나아가
+        step 시간이 랭크마다 같으므로 작업 전체로 본다. 시작부터 느렸으면 직전 값이 없어 None."""
+        sel = f'{{cluster="{_q(s.cluster)}", job_id="{_q(s.job_id)}", generation="{s.generation}", phase="steady"}}'
+        expr = f'sum(rate(train_step_seconds_sum{sel}[5m])) / sum(rate(train_step_seconds_count{sel}[5m]))'
+        found = []
+        for what, at in (("step_slow", None), ("step_normal", s.ts - STEP_NORMAL_BEFORE)):
+            rows = self._try(what, s, expr, at)
+            value = rows[0]["__value__"] if rows else None
+            if value is None or not value > 0 or value == float("inf"):     # NaN(그 창에 step이 없음)도 여기서 걸린다
+                return None
+            found.append(value)
+        return found[0], found[1]
+
     def _gpu_uuid(self, s: Signal) -> str | None:
-        if s.signal != "xid" or s.gpu_uuid:
+        if s.signal not in ("xid", "straggler") or s.gpu_uuid:
             return None
         rows = self._try("gpu_uuid", s,
                          f'last_over_time({GPU_METRIC}{{cluster="{_q(s.cluster)}", node="{_q(s.node)}"}}[5m])', s.ts)
