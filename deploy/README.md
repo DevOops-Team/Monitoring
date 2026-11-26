@@ -619,6 +619,51 @@ date '+%T'; aws ec2 terminate-instances --instance-ids $IDS $R
 
 둘 다 볼 것: 죽은 Pod가 15초 안에 지워져 `FailoverJobFailed`로만 잡히는지(그러면 종료 사유가 사건에 없다 → 컨테이너 OOM은 `restart_in_place`로 나가고, GPU OOM은 로그로 찾아 `refuse`).
 
+### ⑦ 스트래글러 — GPU 클럭 제한 (아직 실행 전 — 절차 초안, 11/26, GPU-296)
+
+한 노드의 GPU 클럭을 낮춰 그 랭크만 느리게 만든다. 목적은 둘이다: `FailoverStraggler` → 사건의 `straggler_evidence`가 실제 값으로 맞게 나오는지, 그리고 **판정 숫자(10분 지속 · 이전 비용 900초 · 안전 계수 2)를 실측으로 다시 정할 재료**를 얻는 것.
+학습이 길어야 1시간이라 지금 숫자로는 「옮겨라」가 거의 안 나온다(손해 30분 이상이어야 함) → 이번엔 `hold`가 나오는 것이 정상이다.
+
+준비
+- **랭크 3개 이상인 작업**으로 한다. 랭크가 2개면 중앙값이 두 값의 평균이라 3배 넘게 느려야 1.5를 넘는다
+- 남은 학습이 20분 이상인 시점에 시작한다(알람까지 10분)
+- 한송이에게 시각을 알린다. 컨트롤러의 `straggler_auto_migration_enabled`가 꺼져 있으면 사건은 HOLD로만 기록된다
+
+```bash
+# 대상: 학습 Pod가 도는 GPU 노드 하나. 그 노드의 dcgm-exporter Pod 안에서 nvidia-smi를 쓴다
+kubectl -n training get pods -o wide -L devoops/job-id,devoops/generation
+DCGM=<그 노드의 dcgm-exporter Pod>
+
+# 지금 클럭과 낮출 수 있는 범위 확인 (T4)
+kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- nvidia-smi --query-gpu=clocks.gr,clocks.max.gr --format=csv
+
+# 제한 (최저 ~ 최저로 고정). T0 = 이 시각
+date '+%T'; kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- nvidia-smi -lgc 300,300
+```
+
+- 이 컨테이너에서 `nvidia-smi`가 없거나 권한이 없으면(처음 해 보는 것이다) 노드에 SSM으로 들어가서 같은 명령을 쓴다. 어느 쪽으로 됐는지 적어 온다
+- 클럭을 최저로 해도 비율이 1.5를 못 넘으면 그 값을 적어 온다(임계 재검토 재료)
+
+볼 것
+
+| # | 무엇 | 어디서 | 기대 |
+|---|---|---|---|
+| 1 | 비율 | 「학습 작업」 대시보드 스트래글러 비율 그래프 | 그 랭크만 1.5 위로. 프로파일 주기만큼 늦게 오른다 |
+| 2 | step 시간 | 같은 대시보드 step 시간 | 작업 전체가 같이 느려진다(느린 값 · 직전 값을 적어 둔다) |
+| 3 | 원인 알람 | Alertmanager | 1.5를 넘은 지 10분 뒤 `FailoverStraggler`, `signal="straggler"` · `node` · `job_id` · `generation` · `rank`, annotation `event_ts`(느려진 시각) · `ratio`. 수신자 `classifier`. **느린 동안 계속 떠 있다** |
+| 4 | 발행 | Loki `event.published` | `category` `straggler` · `action` `hold`(또는 `evacuate_preemptive`) 1건. 1분마다 다시 오는 알람은 `classifier_alerts_total{outcome="duplicate"}`만 오른다 |
+| 5 | 증거 | `gpu.fault` 사건 | `straggler_evidence.duration_seconds` ≥ 600 · `cause_node` = `node` · `estimated_gain_seconds` = 남은 스텝 × (2번의 두 값 차이) − 900에 가까운가. 증거가 없으면 대장 Pod 로그의 `straggler.gain_unknown` |
+| 6 | 컨트롤러 | #alerts-gpu `RecoveryHold` | HOLD 1건(`straggler_auto_migration_disabled` 또는 조건 미달). 학습은 그대로 돈다 |
+
+적어 올 것(숫자 재검토용): 느려지기 전 · 후 step 시간, 비율, 알람까지 걸린 시간, 클럭을 풀면 비율이 몇 초 만에 돌아오는지. 실제 이전 시간(이전 비용 C)은 ① · ④의 「주입 → 재개」 값으로 본다.
+
+**끝나면 반드시 클럭 제한을 푼다.** 인스턴스가 살아 있는 동안 남는다.
+
+```bash
+kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- nvidia-smi -rgc
+# 확인: 비율이 1.0 근처로 돌아오고 FailoverStraggler가 꺼진다
+```
+
 ### HOLD가 나면
 
 `RecoveryHold` 알람이 Slack `#alerts-gpu`에 와야 한다(Slack 화면은 사용자가 확인). `recovery_hold_total{job_id, reason}`가 늘었는지 같이 적는다.
