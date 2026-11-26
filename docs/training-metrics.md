@@ -123,7 +123,7 @@ prometheus.io/path: "/metrics"
 
 | 용도 | 식 (초안) | 표준 |
 |---|---|---|
-| 스트래글러 (GPU) | `train_rank_compute_seconds / on(job_id, generation) group_left quantile by (job_id, generation) (0.5, train_rank_compute_seconds) > 1.5` for 2m. 기준값은 **랭크 값들의 중앙값**(합친 분포의 p50 아님. 느린 랭크가 기준을 끌어올려 정상 랭크가 1.0 아래로 밀림, A5 테스트 0.85) | MON-STD-08 |
+| 스트래글러 (GPU) | `train_rank_compute_seconds / on(job_id, generation) group_left quantile by (job_id, generation) (0.5, train_rank_compute_seconds) > 1.5` for 10m = 원인 알람 `FailoverStraggler`(`deploy/base/mimir/rules/failover.yml`, 2026-11-26 GPU-296. 대시보드 경고선은 그대로 1.5). 기준값은 **랭크 값들의 중앙값**(합친 분포의 p50 아님. 느린 랭크가 기준을 끌어올려 정상 랭크가 1.0 아래로 밀림, A5 테스트 0.85) | MON-STD-08 |
 | 스트래글러 (노드) | 같은 구조로 `histogram_quantile(0.5, sum by (job_id, generation, rank, le) (rate(train_data_wait_seconds_bucket{phase="steady"}[5m])))` ÷ 랭크 중앙값 > 1.5 이고 그 랭크 p50 > 0.1초 for 2m(3절: 정상 대기는 ms 미만이라 비율만 보면 과장). 튀면 GPU가 아니라 노드(로더 · 디스크 · CPU) 문제 | MON-STD-08 보조 |
 | Job 저하 | `histogram_quantile(0.5, sum by (job_id, generation, le) (rate(train_step_seconds_bucket{phase="steady"}[5m])))`가 기준선 × 1.5 초과. 누가 느린지는 위 둘로 | MON-STD-08 전제 |
 | 학습 정체 | `train_stage{stage="train"}==1 and increase(train_current_step[5m])==0` | MON-STD-20 보조, 분류기 `hold`/`restart_in_place` 입력 |
