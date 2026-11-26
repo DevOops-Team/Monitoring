@@ -8,8 +8,11 @@ from typing import Any
 
 # signal 라벨 → 이벤트 source. xid만 경로가 둘이라 source 라벨로 받는다
 # job_failed = 학습 작업(JobSet)이 실패로 끝남. Pod 종료와 같은 종류의 사건이라 source는 pod, 어느 Pod · 노드인지는 모른다
-_SOURCE = {"pod_exit": "pod", "job_failed": "pod", "spot": "spot", "site": "site", "node_lost": "node"}
+# straggler = 한 랭크가 10분째 느림. 알람이 작업 · 세대 · 노드를 직접 준다(trainer 지표 라벨)
+_SOURCE = {"pod_exit": "pod", "job_failed": "pod", "spot": "spot", "site": "site", "node_lost": "node",
+           "straggler": "straggler"}
 _NO_NODE = ("site", "job_failed")
+_WITH_JOB = ("job_failed", "straggler")     # 알람 라벨에 job_id · generation이 있는 신호
 _XID_SOURCES = ("dmesg", "dcgm")
 _GPU_UUID = re.compile(r"^GPU-[0-9a-f-]+$")     # v1 스키마와 같은 형식
 _POD_NAME = re.compile(r"^[a-z0-9]([-a-z0-9.]{0,251}[a-z0-9])?$")     # 쿠버네티스 이름 규칙
@@ -22,8 +25,8 @@ class RejectError(ValueError):
 
 @dataclass(frozen=True)
 class Signal:
-    signal: str                 # xid | pod_exit | job_failed | spot | site | node_lost
-    source: str                 # dcgm | dmesg | pod | spot | site | node
+    signal: str                 # xid | pod_exit | job_failed | spot | site | node_lost | straggler
+    source: str                 # dcgm | dmesg | pod | spot | site | node | straggler
     alert: str                  # alertname
     cluster: str
     ts: datetime                # 원본 신호 발생 시각 (annotation event_ts)
@@ -34,8 +37,9 @@ class Signal:
     reason: str | None = None   # pod_exit: 컨테이너 종료 사유 (Error · OOMKilled …)
     pod: str | None = None
     log_line: str | None = None
-    job_id: str | None = None       # job_failed만: 알람이 작업 · 세대를 직접 준다(관리 클러스터 JobSet 라벨)
+    job_id: str | None = None       # job_failed · straggler만: 알람이 작업 · 세대를 직접 준다
     generation: int | None = None
+    ratio: float | None = None      # straggler만: 그 랭크 계산 시간 ÷ 랭크 중앙값 (annotation ratio)
 
 
 def _require(labels: dict[str, str], name: str) -> str:
@@ -70,6 +74,13 @@ def _int(labels: dict[str, str], name: str) -> int:
 
 def _opt_int(labels: dict[str, str], name: str) -> int | None:
     return _int(labels, name) if labels.get(name) else None
+
+
+def _ratio(annotations: dict[str, str]) -> float:
+    try:
+        return float(annotations.get("ratio") or "")
+    except ValueError as e:
+        raise RejectError("annotation ratio: 숫자가 아님") from e
 
 
 def _event_ts(annotations: dict[str, str], now: datetime) -> datetime:
@@ -127,6 +138,7 @@ def parse_alert(alert: dict[str, Any], now: datetime | None = None) -> Signal | 
         reason=_require(labels, "reason") if signal == "pod_exit" else None,
         pod=_pod(labels) if signal == "pod_exit" else None,
         log_line=annotations.get("log_line") or None,
-        job_id=_ident(labels, "job_id") if signal == "job_failed" else None,
-        generation=_int(labels, "generation") if signal == "job_failed" else None,
+        job_id=_ident(labels, "job_id") if signal in _WITH_JOB else None,
+        generation=_int(labels, "generation") if signal in _WITH_JOB else None,
+        ratio=_ratio(annotations) if signal == "straggler" else None,
     )
