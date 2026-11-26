@@ -21,7 +21,7 @@ def signal(**kw) -> Signal:
     return Signal(**{**base, **kw})
 
 
-# 07 · 09는 스트래글러(이번 범위 밖)
+# 07 · 09(스트래글러)는 증거 계산이 따로라 아래 test_straggler_examples에서 본다
 @pytest.mark.parametrize("name", [
     "01-hw-xid79-isolate", "02-hw-xid48-reset", "03-app-xid13-restart", "04-hwwarn-xid63-none",
     "05-infra-spot-evacuate", "06-site-az-fence", "08-hold-collector-down", "10-infra-node-lost-isolate",
@@ -126,3 +126,37 @@ def test_unknown_xid_holds():
 def test_collector_down_keeps_category():
     v = rules.judge(signal(xid=13), False)
     assert (v.category, v.action, v.confidence) == ("app", "hold", 0.5)
+
+
+# 손해 = 남은 스텝 × (느린 step − 정상 step). 예시의 손해(fault-event.md 5절)가 나오게 넣는다: 07 = 2,880초 · 09 = 600초
+@pytest.mark.parametrize("name, remaining", [("07-straggler-evacuate", 4800), ("09-straggler-hold", 1000)])
+def test_straggler_examples(name, remaining):
+    ex = json.loads((EXAMPLES / f"{name}.json").read_text(encoding="utf-8"))
+    s = signal(signal="straggler", source="straggler", node=ex["node"], ratio=ex["raw"]["value"])
+    evidence, worth = rules.straggler_evidence(ex["node"], 720, remaining, (1.6, 1.0))
+    v = rules.judge(s, ex["collector_healthy"], worth=worth)
+    assert evidence == ex["straggler_evidence"]
+    assert (v.category, v.action, v.confidence) == (ex["category"], ex["suggested_action"], ex["confidence"])
+
+
+@pytest.mark.parametrize("duration, remaining, steps, expected", [
+    (599, 4800, (1.6, 1.0), False),     # 손해는 충분하지만 10분을 못 채움
+    (600, 3000, (1.6, 1.0), True),      # 손해 1,800 = 2 × 900 (경계)
+    (600, 2999, (1.6, 1.0), False),
+    (720, 4800, (1.0, 1.6), False),     # 지금이 오히려 빠르다 → 음수
+])
+def test_straggler_worth_needs_duration_and_twice_the_cost(duration, remaining, steps, expected):
+    evidence, worth = rules.straggler_evidence("n1", duration, remaining, steps)
+    assert worth is expected and type(evidence["estimated_gain_seconds"]) is int
+
+
+@pytest.mark.parametrize("remaining, steps", [(None, (1.6, 1.0)), (4800, None)])
+def test_straggler_without_inputs_has_no_evidence_and_holds(remaining, steps):
+    evidence, worth = rules.straggler_evidence("n1", 720, remaining, steps)
+    assert (evidence, worth) == (None, False)
+    v = rules.judge(signal(signal="straggler", source="straggler"), True, worth=worth)
+    assert (v.category, v.action) == ("straggler", "hold")
+
+
+def test_worth_does_not_touch_other_signals():
+    assert rules.judge(signal(xid=79), True, worth=False).action == "isolate_migrate"
