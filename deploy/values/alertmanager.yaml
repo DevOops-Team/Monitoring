@@ -56,7 +56,8 @@ config:
       # 원인 알람은 사람이 아니라 분류기가 읽는다 (docs/classifier.md 2절). Xid · Pod 종료 · GPU 노드 소실 · 사이트를 분류기로 보낸다.
       # 사이트(GPU-220, 11/25 켬): 펜싱된(일부러 끈) EKS는 룰에서 빠진다. 분류기 ENABLED_SIGNALS(Gitops)에 없는 신호는 분류기가 받아서 버린다(outcome="disabled")
       # 작업 실패(job_failed, GPU-220 11/25 켬): 관리 클러스터 JobSet이 실패로 끝남. 죽은 Pod가 바로 지워져 pod_exit가 못 보는 경우를 잡는다
-      - matchers: ["pipeline = failover", 'signal =~ "xid|pod_exit|node_lost|site|job_failed"']
+      # 스트래글러(GPU-296, 11/26 켬): 한 랭크가 10분째 느림. 느린 동안 계속 울려 1분마다 다시 가고, 분류기가 작업 · 세대 · 노드마다 1건만 낸다
+      - matchers: ["pipeline = failover", 'signal =~ "xid|pod_exit|node_lost|site|job_failed|straggler"']
         receiver: classifier
         group_by: [alertname, cluster, node, pod, gpu_uuid]   # 사건 하나 = 알림 하나
         group_wait: 0s           # 원인 알람은 약 30초만 발화한다. 기다리면 그 사이 꺼져서 못 보낸다
