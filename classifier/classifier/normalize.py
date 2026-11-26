@@ -19,6 +19,8 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [(re.compile(p), r) for p, r in [
     (r"\d{4}-\d{2}-\d{2}[T_ ]\d{2}:\d{2}:\d{2}(?:[.,]\d+)?(?:Z|[+-]\d{2}:?\d{2})?", "<TS>"),
     # 시각: glog(W1123 07:17:37.869000). 앞 글자(I · W · E · F)는 로그 수준이라 남긴다
     (r"\b([IWEF])\d{4} \d{2}:\d{2}:\d{2}\.\d+", r"\1<TS>"),
+    # 시각: Kafka 클라이언트(librdkafka) 줄 머리의 epoch 초(%4|1795416750.404|GETPID|…). 앞 숫자는 로그 수준
+    (r"^(%\d\|)\d+\.\d+(?=\|)", r"\1<TS>"),
     # EC2 노드 이름(ip-172-28-69-78.us-east-2.compute.internal)
     (r"\bip(?:-\d{1,3}){4}(?:\.[a-z0-9-]+)*", "<HOST>"),
     # 학습 Pod 이름 · DNS 이름(job-61fa5acc-g0001-workers-0-1.job-61fa5acc-g0001.training.svc.cluster.local)
@@ -32,6 +34,8 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [(re.compile(p), r) for p, r in [
     # TODO(GPU-218): 실제 NVRM: Xid 줄이 아직 없어 NVIDIA 문서 형식으로만 맞췄다
     (rf"\b{_HEX}{{4}}:{_HEX}{{2}}:{_HEX}{{2}}(?:\.[0-7])?\b", "<PCI>"),
     (r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d{2,5})?\b", "<IP>"),
+    # NCCL이 상대 이름 뒤에 붙이는 포트(Connection closed by remote peer …svc.cluster.local<38056>)
+    (r"(<HOST>|<IP>)<\d+>", r"\1<PORT>"),
     # 메모리 주소 · 오프셋(frame #0: … + 0x96 (0x7fd645db9446 in …))
     (rf"\b0x{_HEX}+\b", "<ADDR>"),
     # PID: (pid: 62) · pid=1234 · Sending process 61 · Process 1 got signal

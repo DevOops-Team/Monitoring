@@ -60,6 +60,15 @@ CASES = [
     # Xid 번호는 남는다
     ("NVRM: Xid (PCI:0000:00:1e): 79, pid=1234, name=python3, GPU has fallen off the bus.",
      "NVRM: Xid (PCI:<PCI>): 79, pid=<PID>, name=python3, GPU has fallen off the bus."),
+    # NCCL 소켓: 상대 이름 뒤 포트
+    ("socketProgress: Connection closed by remote peer "
+     "job-5983f88d-g0001-workers-0-1.job-5983f88d-g0001.training.svc.cluster.local<38056>",
+     "socketProgress: Connection closed by remote peer <HOST><PORT>"),
+    # ckpt-sidecar의 Kafka 클라이언트 줄: 머리의 epoch 시각. 브로커 번호(/3) · 대기 시간은 남는다
+    ("%4|1795501416.117|FAIL|job-d00dfb6b-g0002-workers-0-0#producer-1| [thrd:172.30.0.42:9092/3]: "
+     "172.30.0.42:9092/3: Connection setup timed out in state CONNECT (after 30026ms in state CONNECT)",
+     "%4|<TS>|FAIL|<HOST>#producer-1| [thrd:<IP>/3]: "
+     "<IP>/3: Connection setup timed out in state CONNECT (after 30026ms in state CONNECT)"),
     # 그 밖
     ("node ip-172-28-69-78.us-east-2.compute.internal GPU-b850f46d-d5ea-c752-ddf3-c4453e44d3f7 at 172.30.0.35:9009",
      "node <HOST> <UUID> at <IP>"),
