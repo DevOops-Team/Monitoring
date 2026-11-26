@@ -1,5 +1,6 @@
 """Pod 종료 신호의 30초 대기와 의도된 종료 거르기 (docs/classifier.md 4절). 시각은 전부 손으로 준다."""
 import json
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -466,3 +467,15 @@ def test_restore_tells_job_failed_by_dedup_key_not_by_missing_node(env):
     fresh.restore(sent)
     assert fresh.exits[(JOB, GEN)][0] == "job_failed"
     assert fresh.handle(pod_exit(rank=1), at(60)) == p.ABSORBED
+
+
+def test_job_failed_event_carries_the_node_and_log_line_found_in_logs(env):
+    """보강이 찾은 죽은 노드 · 로그 줄이 사건에 실린다(GPU-288). 중복 제거 키는 그대로 작업 · 세대다."""
+    pipe, fake, _ = env
+    found = pipe.enrich
+    pipe.enrich = lambda s: replace(found(s), node="node-1", log_line="failed (exitcode: -9) local_rank: 0")
+    assert pipe.handle(job_failed(), at(45)) == p.PUBLISHED
+    payload = fake.sent[0]["payload"]
+    assert (payload["node"], payload["raw"]["log_line"]) == ("node-1", "failed (exitcode: -9) local_rank: 0")
+    assert payload["dedup_key"].startswith(f"eks-a/{JOB}/g{GEN}|pod|")
+    assert pipe.handle(pod_exit(rank=1), at(60)) == p.ABSORBED

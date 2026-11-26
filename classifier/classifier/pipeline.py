@@ -245,7 +245,7 @@ class Pipeline:
             self.alerts.labels(ABSORBED).inc()
         self.published.labels(env["type"], v.category, v.action).inc()
         log("event.published", event_id=event["event_id"], type=env["type"], dedup_key=d.key,
-            category=v.category, action=v.action, node=s.node, job_id=ctx.job_id, correlated=len(correlated))
+            category=v.category, action=v.action, node=event["node"], job_id=ctx.job_id, correlated=len(correlated))
         return PUBLISHED
 
     def _absorbable(self, s: Signal, ctx: Context, v: Verdict) -> list[Pending]:

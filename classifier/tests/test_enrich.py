@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 
-from classifier.enrich import Enricher, _q
+import pytest
+
+from classifier.enrich import Enricher, _earliest, _q
 from classifier.signals import Signal
 
 TS = datetime(2026, 11, 18, 14, 2, 11, tzinfo=timezone.utc)
@@ -162,3 +164,57 @@ def test_job_failed_takes_job_from_the_alert_and_checks_cluster_collectors_only(
     assert (ctx.job_id, ctx.generation, ctx.collector_healthy, ctx.az) == ("3f9a1c2e", 3, True, "unknown")
     assert all("fluent-bit" not in e and "kube_pod_labels" not in e for e, _ in mimir.calls)
     assert Enricher(FakeMimir(up=UP[:1]))(s).collector_healthy is False
+
+
+# ---------- 작업 실패: 죽은 Pod의 노드를 trainer 로그에서 찾는다 (GPU-288) ----------
+FAILED_LINE = "E1125 08:00:07.199000 1 api.py:869] failed (exitcode: -9) local_rank: 0 (pid: 61) of binary: /opt/conda/bin/python3.11"
+JOB_FAILED = dict(signal="job_failed", source="pod", node=None, xid=None, job_id="3f9a1c2e", generation=3)
+
+
+class FakeLogs:
+    def __init__(self, answer):
+        self.answer, self.calls = answer, []
+
+    def __call__(self, query, start, end):
+        self.calls.append((query, start, end))
+        if isinstance(self.answer, Exception):
+            raise self.answer
+        return self.answer
+
+
+def test_job_failed_fills_node_and_log_line_from_the_trainer_log():
+    logs = FakeLogs(({"k8s_node_name": "n7", "k8s_pod_name": "job-3f9a1c2e-g0003-workers-0-1-ck529"}, FAILED_LINE))
+    mimir = FakeMimir(up=UP[:2], kube_node_labels=[{"label_topology_kubernetes_io_zone": "us-east-2b", "__value__": 1.0}])
+    ctx = Enricher(mimir, logs)(signal(**JOB_FAILED))
+    assert (ctx.node, ctx.log_line, ctx.az, ctx.collector_healthy) == ("n7", FAILED_LINE, "us-east-2b", True)
+    (query, start, end), = logs.calls
+    assert 'k8s_cluster_name="eks-a"' in query and r'k8s_pod_name=~"job\\-3f9a1c2e\\-g0003\\-.+"' in query
+    assert '|= "failed (exitcode"' in query and start < TS < end
+    assert any('node="n7"' in e for e, _ in mimir.calls)        # 영역은 찾은 노드로 본다
+
+
+@pytest.mark.parametrize("answer", [None, TimeoutError("timed out"), ({"k8s_pod_name": "p"}, FAILED_LINE)])
+def test_job_failed_without_a_usable_log_line_stays_without_node(answer):
+    """줄이 없음 · 조회 실패 · 노드 라벨 없음 → 지금처럼 노드 없이 낸다."""
+    ctx = Enricher(FakeMimir(up=UP[:2]), FakeLogs(answer))(signal(**JOB_FAILED))
+    assert (ctx.node, ctx.log_line, ctx.az, ctx.job_id, ctx.collector_healthy) == (None, None, "unknown", "3f9a1c2e", True)
+
+
+def test_job_failed_without_loki_does_not_look():
+    assert Enricher(FakeMimir(up=UP[:2]))(signal(**JOB_FAILED)).node is None
+
+
+def test_job_id_cannot_break_the_log_query():
+    logs = FakeLogs(None)
+    Enricher(FakeMimir(), logs)(signal(**{**JOB_FAILED, "job_id": 'a.b"c'}))
+    assert r'k8s_pod_name=~"job\\-a\\.b\"c\\-g0003\\-.+"}' in logs.calls[0][0]     # 정규식 문자 앞에 \\, 따옴표는 \"
+
+
+def test_earliest_line_across_pods_wins():
+    """전 랭크가 같이 죽으면 Pod마다 줄이 있다. 가장 먼저 찍힌 줄의 Pod를 고른다."""
+    body = {"status": "success", "data": {"result": [
+        {"stream": {"k8s_node_name": "n2"}, "values": [["1795585474457673425", "late"]]},
+        {"stream": {"k8s_node_name": "n1"}, "values": [["1795585474220018244", "first"], ["1795585474900000000", "x"]]},
+    ]}}
+    assert _earliest(body) == ({"k8s_node_name": "n1"}, "first")
+    assert _earliest({"status": "success", "data": {"result": []}}) is None
