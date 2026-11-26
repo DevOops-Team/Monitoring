@@ -258,6 +258,7 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
   ```
 - **알람이 들어오는 길**: Alertmanager 라우트 `pipeline=failover` + `signal=~"xid|pod_exit|node_lost|site|job_failed"` → 웹훅 `http://classifier.monitoring.svc:8080/alerts`. 분류기 `ENABLED_SIGNALS`(Gitops)에 없는 신호는 받아서 버린다
 - **받는 신호**: Gitops overlay의 `ENABLED_SIGNALS=xid,pod_exit,node_lost`(11/24 19:07부터, Gitops #101). 라우트와 이 값이 둘 다 있어야 그 신호로 사건이 나간다. 복구 컨트롤러가 실행 모드라 `node_lost`는 GPU 노드가 1분 넘게 NotReady이거나 사라지면 그 노드 작업을 실제로 옮긴다. 사이트를 켤 때는 `xid,pod_exit,node_lost,site`
+- **작업 실패 사건의 죽은 노드**(11/26, GPU-288): `job_failed` 알람이 오면 분류기가 Loki(`LOKI_URL`)에 한 번 물어 그 작업 · 세대 trainer 로그에서 가장 먼저 찍힌 `failed (exitcode` 줄을 찾고, 그 줄의 노드를 사건 `node`에 넣는다. 못 찾거나 Loki가 3초 안에 답하지 않으면 노드 없이 낸다(사건은 그대로 나간다). 사건에 노드가 비어 있으면 대장 Pod 로그의 `enrich.failed`(`what=failed_pod`)와 Grafana Explore에서 `{k8s_namespace_name="training", k8s_container_name="trainer", k8s_pod_name=~"job-<작업>-g<세대 4자리>-.+"} |= "failed (exitcode"`를 본다. 알람은 여전히 Alertmanager 웹훅으로만 들어온다
 - **확인**: `kubectl -n monitoring get deploy classifier`(2/2) · `kubectl -n monitoring get lease classifier`(`HOLDER` = 지금 대장) · `kubectl -n monitoring logs <대장 Pod>` · 아래 지표
 - **2개 중 하나만 처리한다**(대장, `docs/classifier.md` 7.1절). 대기 쪽은 받은 웹훅을 대장에게 넘기므로 `svc/classifier`로 보내면 어느 Pod에 닿든 대장이 처리한다. 로그 `event.published`는 대장에만 남는다
 - **끄기**: 웹훅만 끊으려면 `values/alertmanager.yaml`의 수신자 `classifier`에서 `webhook_configs`를 지운다. 분류기는 떠 있어도 알람이 안 오면 아무것도 내지 않는다
