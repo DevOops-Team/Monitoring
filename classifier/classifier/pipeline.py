@@ -125,7 +125,9 @@ class Pipeline:
             ts = datetime.fromisoformat(e["ts"].replace("Z", "+00:00"))
             with self._lock:
                 self.dedup.record(e["dedup_key"], e["suggested_action"])
-                if e["source"] == "straggler" and e["job_id"] and e["generation"] is not None and e["node"]:
+                # 이득을 계산해 낸 사건만 고정한다(_straggler). 계산 못 한 hold는 중복 제거 기억(위)으로 충분하다
+                if (e["source"] == "straggler" and e.get("straggler_evidence") and e["collector_healthy"]
+                        and e["job_id"] and e["generation"] is not None and e["node"]):
                     self.stragglers[(e["job_id"], e["generation"], e["node"])] = ts
                 if e["source"] != "pod":
                     self._remember_cause(e["job_id"], e["generation"], e["suggested_action"], ts)
@@ -204,8 +206,10 @@ class Pipeline:
         return self._emit(s, replace(ctx, job_id=job, generation=gen, jobs=None), now, hold=not self.lifecycle.healthy)
 
     def _straggler(self, s: Signal, ctx: Context, now: datetime) -> str:
-        """작업 · 세대 · 노드마다 1건. 한 번 낸 뒤에는 남은 스텝이 줄어 판정이 달라져도 다시 내지 않는다
-        (옮기는 중에 hold로 뒤집히면 안 된다. 이득은 처음 판정할 때가 가장 크다)."""
+        """작업 · 세대 · 노드마다 1건. 이득을 계산해 낸 뒤에는 남은 스텝이 줄어 판정이 달라져도 다시 내지 않는다
+        (옮기는 중에 hold로 뒤집히면 안 된다. 이득은 처음 판정할 때가 가장 크다).
+        계산하지 못하고 낸 hold(진행률 · step 시간 · 수집 경로 · job.lifecycle을 모름)는 고정하지 않는다:
+        다음 알람(1분 뒤)에 다시 계산해 판정이 달라지면 재분류로 나간다(같으면 중복 제거가 거른다)."""
         if self.lifecycle.intended(s.job_id, s.generation):
             return INTENDED
         if (self.lifecycle.latest(s.job_id) or 0) > s.generation:
@@ -221,7 +225,7 @@ class Pipeline:
                 remaining_steps=remaining, step_seconds=ctx.step_seconds)
         # job.lifecycle을 못 읽으면 위 거르기가 비어 있다 → 취소된 작업을 옮기지 않게 hold (Pod 종료와 같은 기준)
         outcome = self._emit(s, replace(ctx, evidence=evidence, worth=worth), now, hold=not self.lifecycle.healthy)
-        if outcome in (PUBLISHED, DUPLICATE):
+        if outcome in (PUBLISHED, DUPLICATE) and evidence and ctx.collector_healthy and self.lifecycle.healthy:
             self.stragglers[key] = s.ts
         return outcome
 

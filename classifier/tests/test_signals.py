@@ -120,7 +120,7 @@ def test_straggler_carries_job_node_and_ratio():
 
 @pytest.mark.parametrize("labels, annotations", [
     ({"node": ""}, None), ({"job_id": ""}, None), ({"generation": ""}, None), ({"generation": "x"}, None),
-    (None, {"ratio": ""}), (None, {"ratio": "fast"}),
+    (None, {"ratio": ""}), (None, {"ratio": "fast"}), (None, {"ratio": "+Inf"}), (None, {"ratio": "NaN"}),
 ])
 def test_straggler_needs_node_job_generation_and_ratio(labels, annotations):
     with pytest.raises(RejectError):

@@ -1,6 +1,7 @@
 """Alertmanager 웹훅의 알람 1건 → 내부 신호 (docs/classifier.md 2절 라벨 계약)."""
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -78,9 +79,12 @@ def _opt_int(labels: dict[str, str], name: str) -> int | None:
 
 def _ratio(annotations: dict[str, str]) -> float:
     try:
-        return float(annotations.get("ratio") or "")
+        v = float(annotations.get("ratio") or "")
     except ValueError as e:
         raise RejectError("annotation ratio: 숫자가 아님") from e
+    if not math.isfinite(v):    # 중앙값이 0이면 룰이 +Inf를 낸다. 사건(JSON)에 실을 수 없는 값이다
+        raise RejectError("annotation ratio: 유한한 수가 아님")
+    return v
 
 
 def _event_ts(annotations: dict[str, str], now: datetime) -> datetime:

@@ -628,3 +628,21 @@ def test_straggler_is_remembered_after_restart(slow_env):
     assert fresh.handle(straggler(), at(780)) == p.DUPLICATE
     # 옮기기로 한 사건은 원인이다. 그 세대의 Pod 종료는 결과라 따로 내지 않는다
     assert fresh.handle(pod_exit(ts=at(800)), at(840)) == p.ABSORBED
+
+
+def test_straggler_hold_without_a_computed_gain_is_judged_again(env):
+    """Mimir가 잠깐 답하지 못해 낸 hold가 그 작업을 계속 막으면 안 된다."""
+    pipe, fake, life = env
+    plain, steps = pipe.enrich, [None]
+    pipe.enrich = lambda s: replace(plain(s), gpu_uuid=GPU, step_seconds=steps[0])
+    life.apply(progress(5200), T0)
+    assert pipe.handle(straggler(), at(720)) == p.PUBLISHED             # step 시간을 못 구함 → hold
+    assert pipe.handle(straggler(), at(780)) == p.DUPLICATE             # 여전히 모름 → 같은 hold는 다시 안 냄
+    steps[0] = (1.6, 1.0)
+    assert pipe.handle(straggler(), at(840)) == p.PUBLISHED             # 이제 계산됨 → 재분류
+    assert [(m["type"], m["payload"]["suggested_action"]) for m in fake.sent] == [
+        ("fault.held", "hold"), ("fault.reclassified", "evacuate_preemptive")]
+    assert fake.sent[0]["payload"]["dedup_key"] == fake.sent[1]["payload"]["dedup_key"]
+    steps[0] = None
+    assert pipe.handle(straggler(), at(900)) == p.DUPLICATE             # 계산해 낸 뒤에는 고정
+    assert len(fake.sent) == 2
