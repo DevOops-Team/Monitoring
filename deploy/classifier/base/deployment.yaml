@@ -70,6 +70,7 @@ spec:
             - {name: KAFKA_BOOTSTRAP, value: "172.30.0.40:9092,172.30.0.41:9092,172.30.0.42:9092"}
             - {name: REQUIRE_KAFKA, value: "true"}     # 브로커 주소가 빠지면 표준 출력으로만 내는 로컬 모드가 된다. 그 상태로는 뜨지 않게
             - {name: MIMIR_URL, value: "http://mimir.monitoring.svc:9009"}
+            - {name: LOKI_URL, value: "http://loki.monitoring.svc:3100"}     # 작업 실패 사건의 죽은 노드를 trainer 로그에서 찾는다
             - {name: LEASE_NAME, value: classifier}    # 이 이름의 Lease를 잡은 Pod가 대장
             - name: POD_IP                             # 대장이 Lease에 적는 자기 주소. 대기 쪽이 여기로 넘겨준다
               valueFrom: {fieldRef: {fieldPath: status.podIP}}

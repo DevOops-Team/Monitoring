@@ -30,7 +30,7 @@
 | `traceparent` | W3C | trace-id · parent-id가 전부 0이면 W3C 무효 값이라 거부. 컨트롤러는 이걸 부모로 `decide` span을 연다 → 분류기 · 컨트롤러 · 학습 Job span이 한 trace로 이어짐 |
 | `ts` | UTC 시각 | **원본 신호 발생 시각** (커널 로그 시각 등). 분류기가 받은 시각 아님 → 감지 지연 = 분류기 span 시작 − `ts` |
 | `cluster` · `az` | 문자열 | 예: `eks-a`, `us-east-2a` (클러스터 이름은 ADR-32의 `eks-a` · `b` · `c`) |
-| `node` | 문자열 / null | site 이벤트는 null. **`source: pod`인데 null이면 「학습 작업 실패」 사건**이다(관리 클러스터 JobSet이 실패로 끝남, 2026-11-25 GPU-220): 죽은 Pod가 지워져 어느 노드인지 모른다. `job_id` · `generation`은 채워진다 |
+| `node` | 문자열 / null | site 이벤트는 null. **「학습 작업 실패」 사건**(관리 클러스터 JobSet이 실패로 끝남, 2026-11-25 GPU-220)은 trainer 로그에서 가장 먼저 죽은 Pod의 노드를 찾아 넣고, 못 찾으면 null이다(2026-11-26 GPU-288. 그 전에는 항상 null). 그래서 **`node`가 null인지로 이 사건을 구분하지 않는다** — 구분은 `dedup_key` 대상이 `cluster/job_id/g<세대>` 모양인지로 한다(2.1절). `job_id` · `generation`은 채워진다. 전 랭크가 같이 죽었으면 「먼저 죽은 노드」일 뿐이니 격리 근거로 쓰지 않는다(action은 `restart_in_place`) |
 | `gpu_uuid` | `GPU-…` / null | dcgm-exporter 레이블(pci_bus_id → UUID)로 채움 |
 | `job_id` | 문자열 / null | **학습 작업 ID** = 백엔드가 만드는 8자리 hex (예 `3f9a1c2e`). k8s JobSet 이름 `job-3f9a1c2e-g0003`이 아니다. 분류기는 **Mimir의 kube-state-metrics 지표**로 찾는다: `kube_pod_info{node}` → `kube_pod_labels{label_devoops_job_id, label_devoops_generation}` (각 클러스터 KSM이 remote_write로 보낸 것, KSM `--metric-labels-allowlist` 필요). EKS API를 직접 부르지 않으므로 VPN·EKS 권한이 없어도 되고, VPN이 끊겨도 마지막 매핑이 남는다 (2026-11-11 김현수 지적으로 정정). 못 찾으면 null. **site는 클러스터가 끊기기 직전에 Running이던 작업마다 이벤트 1건**(작업이 없으면 이벤트 없음, 조회 실패 · 그 시각 KSM이 안 긁히고 있었으면 null로 1건. 2026-11-24 GPU-220) |
 | `generation` | 정수 / null | 세대 번호. 원본은 DynamoDB 펜싱 테이블 `devoops-job-fencing` (ADR-6). Pod 라벨 `devoops/generation`에서 읽음 |
