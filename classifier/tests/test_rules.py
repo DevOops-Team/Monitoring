@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from classifier.publish import validate
 from classifier.rules import Rules
 from classifier.signals import Signal
 
@@ -57,6 +58,14 @@ def test_completed_ignored():
 def test_pod_exit(kw):
     v = rules.judge(signal(signal="pod_exit", source="pod", pod="p", **kw), True)
     assert (v.category, v.action) == ("app", "restart_in_place")
+
+
+def test_example_11_oom_refuse():
+    # 종료 사유는 알람 라벨이라 사건에는 raw.log_line 문구로만 남는다 → 위 test_examples와 따로 본다
+    ex = json.loads((EXAMPLES / "11-app-oom-refuse.json").read_text(encoding="utf-8"))
+    validate(ex)
+    v = rules.judge(signal(signal="pod_exit", source=ex["source"], node=ex["node"], pod="p", reason="OOMKilled"), True)
+    assert (v.category, v.action, v.confidence) == (ex["category"], ex["suggested_action"], ex["confidence"])
 
 
 def test_container_oom_is_refused():

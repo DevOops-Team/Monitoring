@@ -1,0 +1,26 @@
+{
+  "schema_version": "1",
+  "event_id": "8c2e5a71d04b4f39b6a1e7c3f590d2ab",
+  "traceparent": "00-8c2e5a71d04b4f39b6a1e7c3f590d2ab-4b9d2e7f1a6c3058-01",
+  "ts": "2026-11-18T14:02:11Z",
+  "cluster": "eks-a",
+  "az": "us-east-2a",
+  "node": "ip-10-0-1-23",
+  "gpu_uuid": null,
+  "job_id": "3f9a1c2e",
+  "generation": 3,
+  "source": "pod",
+  "raw": {
+    "xid": null,
+    "exit_code": null,
+    "metric": null,
+    "value": null,
+    "log_line": "trainer terminated: OOMKilled"
+  },
+  "correlated": [],
+  "collector_healthy": true,
+  "dedup_key": "job-3f9a1c2e-g0003-workers-0-1-ck529|pod|1795010531",
+  "category": "app",
+  "confidence": 0.9,
+  "suggested_action": "refuse"
+}

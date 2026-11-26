@@ -20,7 +20,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 모듈 | 하는 일 |
 |---|---|
 | `signals.py` | 웹훅의 알람 1건을 내부 신호로 바꾼다. `ts`는 annotation `event_ts`만 쓴다(수신 시각 금지). resolved 알람은 버린다 |
-| `enrich.py` | Mimir 조회로 신호에 없는 값을 채운다. 조회가 실패하면 모르는 값으로 둔다(`collector_healthy=false` · `job_id=null`). 아래 표. `job_failed`만 Loki도 한 번 조회한다(죽은 노드, 2026-11-26 GPU-288) — 신호가 들어오는 길은 그대로 Alertmanager 웹훅 하나다 |
+| `enrich.py` | Mimir 조회로 신호에 없는 값을 채운다. 조회가 실패하면 모르는 값으로 둔다(`collector_healthy=false` · `job_id=null`). 아래 표. `job_failed`는 Loki도 조회한다(죽은 노드, 2026-11-26 GPU-288). `pod_exit` · `job_failed`는 같은 로그에서 GPU 메모리 부족 줄도 찾는다(GPU-222) — 신호가 들어오는 길은 그대로 Alertmanager 웹훅 하나다 |
 | `intended.py` | `job.lifecycle`을 읽어 「의도된 종료」 표와 작업별 최신 세대를 유지한다(4절) |
 | `rules.py` · `rules.yaml` | 3절 표로 `category` · `suggested_action` · `confidence`를 정한다 |
 | `dedup.py` | 같은 사건을 한 번만 낸다. 규칙은 fault-event.md 2.1절(±45초 창, 키와 action이 둘 다 같으면 재발행 안 함). `pod_exit`의 대상은 노드가 아니라 Pod 이름이다(같은 노드에서 거의 동시에 끝난 다른 Pod를 삼키지 않게) |
@@ -39,6 +39,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `gpu_uuid` | 커널 로그 경로 Xid만. dcgm-exporter 지표의 `UUID` 라벨(g4dn은 노드당 GPU 1장) | 신호 발생 시각(직전 5분) | `null` → 중복 제거 대상이 `node`가 된다 |
 | `az` | `kube_node_labels`의 `label_topology_kubernetes_io_zone` | 지금 | `unknown` |
 | `job_failed`의 `node` · `raw.log_line` | **Loki**(env `LOKI_URL`): 그 클러스터 · `training` · `trainer` 컨테이너에서 Pod 이름이 `job-<job_id>-g<세대 4자리>-…`인 로그 중 `failed (exitcode`가 든 줄을 시간 순으로 1줄. 그 줄의 스트림 라벨 `k8s_node_name`이 `node`, 줄 원문이 `raw.log_line`, 그 노드의 `az`도 채운다. 조회 제한 3초 | 신호 발생 시각 −10분 ~ +1분 | `node: null` · `az: unknown`, `raw.log_line`은 알람 문구. 사건은 그대로 낸다 |
+| `pod_exit` · `job_failed`의 메모리 부족 여부 · `raw.log_line` | **Loki**: 같은 조건(클러스터 · `training` · `trainer` · 그 작업 · 세대의 모든 Pod)에서 `CUDA out of memory`가 든 줄을 시간 순으로 1줄. 있으면 `refuse`(3.3절), `job_failed`는 `node`도 이 줄의 Pod 것을 쓴다. `pod_exit`는 종료 사유가 `OOMKilled`가 아니고 작업 · 세대를 알 때만 조회. 조회 제한 3초 | 신호 발생 시각 −10분 ~ +1분 | 메모리 부족이 아닌 것으로 본다(`restart_in_place`) |
 | site의 작업 목록 | 그 클러스터의 `kube_pod_labels` 중 `kube_pod_status_phase{phase="Running"}`이 1인 Pod를 작업별로 묶고 세대는 가장 큰 값 | 신호 발생 시각 = 마지막 샘플(직전 5분) | 조회 실패 → `job_id` 없는 사건 1건(컨트롤러 HOLD). 0개 → 사건 없음(`outcome="no_jobs"`). 단 그 시각에 그 클러스터 KSM(`up{job="kube-state-metrics"}`)이 1이 아니었으면 0개가 아니라 「모름」 → 조회 실패와 같다 |
 | node_lost의 작업 | site와 같은 식에 그 노드(`kube_pod_info{node}`)로 거른다 | 신호 발생 시각 = 마지막 Ready 샘플(직전 5분) | 작업 1개 → 그 작업의 사건. 0개 → 사건 없음(예비 노드 등, KSM이 그 시각에 1이었을 때만). 조회 실패 · 작업 여럿 → `job_id` 없는 1건(컨트롤러 HOLD) |
 
@@ -112,7 +113,9 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `spot` | 회수 예고 | `infra` | `evacuate_preemptive` | 1.0 | ADR-36. 예시 05 |
 | `site` | 클러스터 수집 끊김 | `site` | `fence_evacuate` | 0.7 | **그때 돌던 작업마다 1건**(컨트롤러가 사건 1건 = 작업 1개로 대피). `job.lifecycle`로 펜싱 · 중단 · 옛 세대인 작업은 뺀다(못 읽으면 작업마다 `hold`). VPN 단절과 구분은 컨트롤러가 한다(fault-event.md 4절). 예시 06. `node` · `gpu_uuid`는 null |
 | `node_lost` | GPU 노드가 NotReady · 삭제(클러스터 지표는 계속 옴) | `infra` | `isolate_migrate` | 0.8 | **노드마다 1건, 그 노드에서 돌던 작업만**. 같은 작업의 다른 노드도 사라지면 노드마다 나가고 둘째 건부터는 컨트롤러가 이미 복구 중이라 닫는다. 자리가 없으면 디스패처가 다른 클러스터로(ADR-38). `job.lifecycle`로 펜싱 · 중단 · 옛 세대인 작업은 뺀다(못 읽으면 `hold`). 예시 10 |
-| `pod_exit` | 종료 사유가 `Completed`가 아님, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | 같은 오류 반복은 컨트롤러가 `refuse`로 올린다 |
+| `pod_exit` | 종료 사유가 `Completed`가 아님, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | 반복이어도 그대로 보낸다. 횟수는 컨트롤러만 센다(3회, 4번째는 `REJECTED`) |
+| `pod_exit` | 종료 사유가 `OOMKilled` (컨테이너 메모리 한도) | `app` | `refuse` | 0.9 | 한도는 제출본 값이라 다시 띄워도 같은 자리에서 죽는다 → 재시도 없이 실패 확정(한송이 합의 2026-11-26, GPU-222). 컨트롤러 `NEEDS_CONFIG_FIX` |
+| `pod_exit` · `job_failed` | 그 작업 · 세대 trainer 로그에 `CUDA out of memory` (GPU 메모리, 종료 사유는 `Error`) | `app` | `refuse` | 0.9 | GPU는 전부 T4 16GB라 옮겨도 같다. **Pod 하나가 아니라 작업 전체 로그**를 본다(Pod 종료 사건은 랭크마다 나가는데 한 랭크만 메모리 부족이면 판정이 갈린다). `raw.log_line` = 그 줄. 줄이 없거나 조회가 실패하면 위 행대로. 수집 경로가 죽었거나 `job.lifecycle`을 못 읽으면 `hold`가 우선 |
 | `job_failed` | 관리 클러스터 JobSet이 실패로 끝남, 의도된 종료 아님 | `app` | `restart_in_place` | 0.6 | **작업 · 세대마다 1건.** `pod_exit`와 같은 일을 다른 곳에서 본다: JobSet이 Failed가 되면 MultiKueue가 EKS 쪽 JobSet을 바로 지워 죽은 Pod가 약 14초만 보이고, 수집 15초에 한 번도 안 잡히면 `pod_exit`가 안 온다(11/25 주입에서 워커 `kill -9`를 놓침). 관리 클러스터 JobSet은 Failed로 남아 놓치지 않는다. `node`는 trainer 로그에서 찾는다(2026-11-26 GPU-288, 1절 표): 랭크마다 Pod가 따로 `torchrun`을 돌려 **죽은 Pod의 로그에만** `failed (exitcode: N)` 줄이 남는다. 여러 Pod에 줄이 있으면(전 랭크가 코드 오류로 같이 죽음) 가장 먼저 찍힌 줄의 노드다 — 「먼저 죽은 노드」이지 「원인 노드」라는 뜻은 아니다. 못 찾으면 null. `raw.exit_code`는 채우지 않는다(로그의 `-9`는 시그널 번호라 컨테이너 종료 코드 137과 뜻이 다르다). 같은 (job_id, generation)에 `pod_exit` 사건과 겹치면 먼저 낸 쪽만 사건 |
 
 ## 4. 의도된 종료 거르기
@@ -219,7 +222,7 @@ Pod 2개가 서로 다른 노드에 뜨고, 쿠버네티스 Lease `classifier`�
 - [ ] (나 · 한송이) GPU-221 실측: EKS 학습 중 `dcgmi`로 같은 Xid를 5분 간격 2번 주입 → `gpu.fault` 2건(deploy/README.md 「장애 주입」 ③)
 - [x] (나) `FailoverSiteDown`이 일부러 내린 클러스터에도 울리던 것(11/24, GPU-220): EKS OFF 절차가 붙이는 MultiKueueCluster `devoops/fenced=true`를 관리 클러스터 KSM이 지표로 내고(`deploy/agents/overlays/onprem/ksm-custom-resources.yaml`), 룰이 펜싱된 클러스터를 뺀다. 대상도 `eks-(a|b|c)`로 좁혔다. Agent 하나만 죽은 경우는 여전히 울린다
 - [x] (나) `FailoverSiteDown`이 온프레 회선이 끊길 때도 울리던 것(11/24 15:30 pve4 Wi-Fi 작업, eks-a · b 동시 발화, GPU-220): 모니터링 클러스터 → 1.1.1.1 ping(`probe_success{target_name="internet"}`)이 최근 10분 안에 실패한 적 있으면 울리지 않는다. 온프레 인터넷 · EKS VPN이 같은 회선을 지나기 때문. 그동안 난 진짜 사이트 장애는 못 본다
-- [ ] (나 · 한송이) `OOMKilled`를 따로 판정할지(지금은 `Error`와 같이 `restart_in_place`). 한송이 POD-003 · 004는 설정 수정이 필요한 실패로 다루기를 기대한다
+- [x] (나 · 한송이) `OOMKilled`를 따로 판정할지 — 2026-11-26 확정 · 구현(GPU-222): 컨테이너 `OOMKilled` · trainer 로그의 `CUDA out of memory`는 `refuse`(3.3절). **남은 것**: `CUDA out of memory` 줄 원문과 `OOMKilled` 사유가 실제로 붙는지를 EKS 주입 ⑥으로 확인 · 컨테이너 OOM인데 Pod가 지워져 사유를 못 본 경우(trainer 로그엔 `exitcode: -9`뿐)는 `restart_in_place`로 나간다
 - [x] `classifier_lifecycle_healthy == 0`이 이어지면 Slack으로 알리는 룰 — `ClassifierLifecycleUnhealthy`(2분), 분류기가 없거나 안 긁히면 `ClassifierDown`(3분). `deploy/base/mimir/rules/classifier.yml`(11/19, MON-STD-27). 0인 동안 `pod_exit`는 전부 `hold`이고, 메시지 반영 실패로 0이 되면 재시작 전까지 돌아오지 않는다
 - [ ] (나 · 한송이) `pod_exit` 대기 30초를 E2E 실측으로 조정
 - [ ] (김현수) `job.lifecycle` 토픽 보존 기간, rank별 종료 사유 `job.trainer_exited` 도입 여부
