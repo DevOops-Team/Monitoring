@@ -578,3 +578,64 @@ tests:
               log_line: 'jobset failed: job-3f9a1c2e generation 2'
               summary: '학습 작업 실패: eks-b 3f9a1c2e 세대 2'
 
+
+  # 21) 랭크 3이 5분 15초부터 1.6배 느리다 → 10분 뒤(15분 15초)부터 울리고, event_ts는 느려진 시각에서 안 움직인다
+  - name: 한 랭크가 10분째 느리면 울리고 event_ts는 느려진 시각이다
+    interval: 15s
+    input_series:
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="training", container="trainer", cluster="eks-a", node="ip-10-0-1-20", pod="job-3f9a1c2e-g0001-workers-0-0", job_id="3f9a1c2e", generation="1", rank="0"}'
+        values: '0.6x100'
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="training", container="trainer", cluster="eks-a", node="ip-10-0-1-21", pod="job-3f9a1c2e-g0001-workers-0-1", job_id="3f9a1c2e", generation="1", rank="1"}'
+        values: '0.6x100'
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="training", container="trainer", cluster="eks-a", node="ip-10-0-1-22", pod="job-3f9a1c2e-g0001-workers-0-2", job_id="3f9a1c2e", generation="1", rank="2"}'
+        values: '0.6x100'
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="training", container="trainer", cluster="eks-a", node="ip-10-0-1-23", pod="job-3f9a1c2e-g0001-workers-0-3", job_id="3f9a1c2e", generation="1", rank="3"}'
+        values: '0.6x20 0.96x80'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FailoverStraggler
+        exp_alerts: []
+      - eval_time: 15m30s
+        alertname: FailoverStraggler
+        exp_alerts: &straggler
+          - exp_labels: {pipeline: failover, signal: straggler, cluster: eks-a, node: ip-10-0-1-23, job_id: 3f9a1c2e, generation: "1", rank: "3"}
+            exp_annotations:
+              event_ts: '1970-01-01T00:05:15Z'
+              ratio: '1.60'
+              summary: '스트래글러: eks-a 3f9a1c2e 세대 1 랭크 3 (ip-10-0-1-23) — 계산 시간이 중앙값의 1.60배'
+      - eval_time: 20m
+        alertname: FailoverStraggler
+        exp_alerts: *straggler
+
+  # 22) 9분 느리다가 돌아오면 울리지 않는다
+  - name: 느린 상태가 10분을 못 채우면 울리지 않는다
+    interval: 15s
+    input_series:
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="training", container="trainer", cluster="eks-a", node="ip-10-0-1-20", pod="job-3f9a1c2e-g0001-workers-0-0", job_id="3f9a1c2e", generation="1", rank="0"}'
+        values: '0.6x100'
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="training", container="trainer", cluster="eks-a", node="ip-10-0-1-21", pod="job-3f9a1c2e-g0001-workers-0-1", job_id="3f9a1c2e", generation="1", rank="1"}'
+        values: '0.6x100'
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="training", container="trainer", cluster="eks-a", node="ip-10-0-1-23", pod="job-3f9a1c2e-g0001-workers-0-2", job_id="3f9a1c2e", generation="1", rank="2"}'
+        values: '0.6x20 0.96x36 0.6x44'
+    alert_rule_test:
+      - eval_time: 15m30s
+        alertname: FailoverStraggler
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FailoverStraggler
+        exp_alerts: []
+
+  # 23) 다른 네임스페이스 · 컨테이너가 같은 이름의 지표를 내도 보지 않는다
+  - name: 학습 컨테이너가 아닌 곳의 지표는 스트래글러로 보지 않는다
+    interval: 15s
+    input_series:
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="default", container="app", cluster="eks-a", node="ip-10-0-1-20", job_id="x", generation="1", rank="0"}'
+        values: '0.6x100'
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="default", container="app", cluster="eks-a", node="ip-10-0-1-21", job_id="x", generation="1", rank="1"}'
+        values: '0.6x100'
+      - series: 'train_rank_compute_seconds{job="annotated-pods", namespace="default", container="app", cluster="eks-a", node="ip-10-0-1-23", job_id="x", generation="1", rank="2"}'
+        values: '3x100'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FailoverStraggler
+        exp_alerts: []
