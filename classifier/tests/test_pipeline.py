@@ -454,3 +454,15 @@ def test_restore_remembers_job_failed_event(env):
     assert fresh.handle(job_failed(), at(60)) == p.DUPLICATE
     assert fresh.handle(pod_exit(rank=1), at(60)) == p.ABSORBED
     assert len(fake.sent) == 1
+
+
+def test_restore_tells_job_failed_by_dedup_key_not_by_missing_node(env):
+    """작업 실패 사건에 노드가 채워져 있어도(GPU-288) 작업 실패로 되돌린다. 구분은 dedup_key 대상의 모양이다."""
+    pipe, fake, life = env
+    pipe.handle(job_failed(), at(45))
+    sent = json.loads(json.dumps(fake.sent[0]))
+    sent["payload"]["node"] = "node-1"
+    fresh = p.Pipeline(pipe.rules, pipe.publisher, pipe.enrich, life)
+    fresh.restore(sent)
+    assert fresh.exits[(JOB, GEN)][0] == "job_failed"
+    assert fresh.handle(pod_exit(rank=1), at(60)) == p.ABSORBED
