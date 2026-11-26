@@ -34,7 +34,7 @@ train.py(노찬경, GPU-96)가 `/metrics`로 내보내는 지표의 이름 · �
 | `rank` | `0`~`3` (node rank = Pod 번호) | `$JOB_COMPLETION_INDEX` |
 | `phase` | `warmup` (step ≤ `warmup_steps`) · `steady` (그 뒤) | config.json `warmup_steps` |
 
-- `phase`는 둘뿐이다. 장애 주입 구간(`injected`)은 학습 코드가 모르고, 모니터링이 런북 「장애 주입」 시각 기록표(T0 주입 ~ 주입 해제 · `job.resumed` 중 늦은 쪽)로 걸러낸다. 기준선은 `phase="steady"`에서 주입 구간을 뺀 것 (monitoring-standard.md 2절)
+- `phase`는 둘뿐이다. 장애 주입 구간(`injected`)은 학습 코드가 모르고, 모니터링이 런북 「장애 주입」 시각 기록표(T0 주입 ~ 주입 해제 · T6 새 세대 첫 진행 step 중 늦은 쪽)로 걸러낸다. 기준선은 `phase="steady"`에서 주입 구간을 뺀 것 (monitoring-standard.md 2절)
 - 카디널리티: (job 1 × 세대 ≤ 5 × rank 4 × phase 2) × (step 버킷 15 + 대기 버킷 12 + histogram 2개의 `_sum` · `_count` 4) + gauge 5개 × 20 ≈ 1,340 시계열. 문제 없음
 
 ## 3. 히스토그램 버킷
@@ -127,7 +127,7 @@ prometheus.io/path: "/metrics"
 | 스트래글러 (노드) | 같은 구조로 `histogram_quantile(0.5, sum by (job_id, generation, rank, le) (rate(train_data_wait_seconds_bucket{phase="steady"}[5m])))` ÷ 랭크 중앙값 > 1.5 이고 그 랭크 p50 > 0.1초 for 2m(3절: 정상 대기는 ms 미만이라 비율만 보면 과장). 튀면 GPU가 아니라 노드(로더 · 디스크 · CPU) 문제 | MON-STD-08 보조 |
 | Job 저하 | `histogram_quantile(0.5, sum by (job_id, generation, le) (rate(train_step_seconds_bucket{phase="steady"}[5m])))`가 기준선 × 1.5 초과. 누가 느린지는 위 둘로 | MON-STD-08 전제 |
 | 학습 정체 | `train_stage{stage="train"}==1 and increase(train_current_step[5m])==0` | MON-STD-20 보조, 분류기 `hold`/`restart_in_place` 입력 |
-| 재개 확인 (ETTR) | 새 `generation` 라벨로 `train_current_step`이 처음 증가한 시각 = `job.resumed`와 대조 | SLO-1 recover_s |
+| 재개 확인 (ETTR) | 새 `generation` 라벨로 `train_current_step`이 마지막 승인 step을 처음 넘은 시각 = 복구의 끝. Data `v_incidents.resumed_at`(사이드카 `job.progress`의 step > 승인 step인 첫 사건, 2026-11-26 GPU-289)과 대조한다. `job.resumed`는 새 세대 Pod가 전부 Ready인 중간 단계(`pods_ready_s`)다 | SLO-1 recover_s |
 | 기준선 | `quantile_over_time`(steady, 주입 구간 제외) p50 · p95 · p99 | 표준 2절 |
 | 손실 스텝 | 장애 직전 `train_current_step` − `train_last_checkpoint_step` | 데이터 파트 `lost_steps` 대조 |
 
