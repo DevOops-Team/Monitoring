@@ -48,6 +48,12 @@ _PATTERNS: list[tuple[re.Pattern[str], str]] = [(re.compile(p), r) for p, r in [
     (r"\b((?:SeqNum|NumelIn|NumelOut)=)\d+", r"\1<SEQ>"),
     (r"\b((?:at work|NCCL work): )\d+", r"\1<SEQ>"),
     (r'("(?:offset|partition|step|approved_step|bytes|upload_ms)": )\d+', r"\1<SEQ>"),
+    # trainer 진행 줄(Data 레포 train.py가 찍는다. 문구가 바뀌면 숫자가 다시 남는다).
+    # 장애 줄의 앞뒤 문맥으로 같이 들어가므로 step 번호 · 걸린 시간을 지운다. 랭크 수 · 배치 설정(fsdp x 4)은 남긴다
+    (r"\b(step[- ])\d+", r"\1<SEQ>"),
+    (r"\b\d+(?= (?:samples|blocks|steps/epoch|steps|saves)\b)", "<SEQ>"),
+    (r"\b((?:step time|interval|in) )\d+(?:\.\d+)?s\b", r"\1<DUR>"),
+    (r"\b(expected )\d+(?:\.\d+)? min\b", r"\1<DUR>"),
 ]]
 
 
