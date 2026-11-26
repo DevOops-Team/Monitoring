@@ -87,7 +87,7 @@
       "gridPos": {
         "x": 0,
         "y": 0,
-        "w": 6,
+        "w": 8,
         "h": 4
       }
     },
@@ -151,9 +151,9 @@
       },
       "id": 2,
       "gridPos": {
-        "x": 6,
+        "x": 8,
         "y": 0,
-        "w": 6,
+        "w": 8,
         "h": 4
       }
     },
@@ -217,16 +217,82 @@
       },
       "id": 3,
       "gridPos": {
-        "x": 12,
+        "x": 16,
         "y": 0,
-        "w": 6,
+        "w": 8,
+        "h": 4
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Pod 준비 평균",
+      "description": "분류기의 원인 확정 → 새 세대 Pod가 전부 Ready(job.resumed)까지(pods_ready_s) 평균. 재배치가 끝난 때이고 학습이 실제로 이어진 때는 「복구 평균」이다",
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "postgres"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "postgres"
+          },
+          "rawSql": "SELECT avg(pods_ready_s) FROM data.v_incidents WHERE $__timeFilter(injected_at)",
+          "format": "table",
+          "rawQuery": true,
+          "editorMode": "code"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "suffix:초",
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "-",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#73BF69",
+                "value": null
+              }
+            ]
+          },
+          "mappings": [],
+          "decimals": 1
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "auto",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 36
+        }
+      },
+      "id": 26,
+      "gridPos": {
+        "x": 0,
+        "y": 4,
+        "w": 8,
         "h": 4
       }
     },
     {
       "type": "stat",
       "title": "복구 평균",
-      "description": "분류기의 원인 확정 → 학습 재개(job.resumed)까지(recover_s) 평균. 재개되지 않은 장애는 평균에서 빠진다",
+      "description": "분류기의 원인 확정 → 새 세대가 마지막 승인 step 다음 step을 실제로 진행한 때(job.progress)까지(recover_s) 평균. 학습이 다시 진행되지 않은 장애는 평균에서 빠진다",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "postgres"
@@ -283,9 +349,9 @@
       },
       "id": 4,
       "gridPos": {
-        "x": 18,
-        "y": 0,
-        "w": 6,
+        "x": 8,
+        "y": 4,
+        "w": 8,
         "h": 4
       }
     },
@@ -349,9 +415,9 @@
       },
       "id": 5,
       "gridPos": {
-        "x": 0,
+        "x": 16,
         "y": 4,
-        "w": 6,
+        "w": 8,
         "h": 4
       }
     },
@@ -419,9 +485,9 @@
       },
       "id": 6,
       "gridPos": {
-        "x": 6,
-        "y": 4,
-        "w": 6,
+        "x": 0,
+        "y": 8,
+        "w": 8,
         "h": 4
       }
     },
@@ -489,9 +555,9 @@
       },
       "id": 24,
       "gridPos": {
-        "x": 12,
-        "y": 4,
-        "w": 6,
+        "x": 8,
+        "y": 8,
+        "w": 8,
         "h": 4
       }
     },
@@ -555,9 +621,9 @@
       },
       "id": 25,
       "gridPos": {
-        "x": 18,
-        "y": 4,
-        "w": 6,
+        "x": 16,
+        "y": 8,
+        "w": 8,
         "h": 4
       }
     },
@@ -569,7 +635,7 @@
       "id": 7,
       "gridPos": {
         "x": 0,
-        "y": 8,
+        "y": 12,
         "w": 24,
         "h": 1
       }
@@ -577,7 +643,7 @@
     {
       "type": "table",
       "title": "장애 목록",
-      "description": "장애 1건 = 한 줄. 장애 시작 = 주입 기록(data.injections)이 있으면 주입한 시각, 없으면 고장의 흔적이 처음 생긴 시각(컨테이너 종료 시각 · Xid가 처음 수집된 시각). 출처 칸이 어느 쪽인지 알려 준다: 주입 기록 = 사람이 고장 낸 시각을 넣음(실험) · 자동(신호) = 기록이 없어 흔적 시각을 시작으로 봄(실제 장애는 항상 이쪽) · 옛 데이터 = fault.injected 사건. 감지 = 시작 → 분류기의 첫 알림(gpu.fault). 분류 = 시작 → 분류기가 원인을 확정해 알린 때. 분류기가 처음부터 원인을 알면 사건 한 건으로 끝나 감지와 분류가 같은 값이고, 보류(fault.held)했다가 나중에 원인을 확정(fault.reclassified)한 경우에만 달라진다. 복구 = 원인 확정 → 학습 재개. 신호→첫 알림 = 흔적이 생긴 시각 → 분류기의 첫 알림(수집 · 룰 평가 · 분류기 대기를 합친, 우리 시스템이 쓴 시간). 감지에서 이 값을 빼면 고장이 나고 흔적이 생기기까지의 시간이다",
+      "description": "장애 1건 = 한 줄. 장애 시작 = 주입 기록(data.injections)이 있으면 주입한 시각, 없으면 고장의 흔적이 처음 생긴 시각(컨테이너 종료 시각 · Xid가 처음 수집된 시각). 출처 칸이 어느 쪽인지 알려 준다: 주입 기록 = 사람이 고장 낸 시각을 넣음(실험) · 자동(신호) = 기록이 없어 흔적 시각을 시작으로 봄(실제 장애는 항상 이쪽) · 옛 데이터 = fault.injected 사건. 감지 = 시작 → 분류기의 첫 알림(gpu.fault). 분류 = 시작 → 분류기가 원인을 확정해 알린 때. 분류기가 처음부터 원인을 알면 사건 한 건으로 끝나 감지와 분류가 같은 값이고, 보류(fault.held)했다가 나중에 원인을 확정(fault.reclassified)한 경우에만 달라진다. Pod 준비 = 원인 확정 → 새 세대 Pod가 전부 Ready(job.resumed, 재배치 완료). 복구 = 원인 확정 → 새 세대가 마지막 승인 step 다음 step을 실제로 진행한 때(재개 시각 칸). Pod 준비만 있고 복구가 비면 Pod는 떴지만 학습이 이어지지 않은 것이다. 신호→첫 알림 = 흔적이 생긴 시각 → 분류기의 첫 알림(수집 · 룰 평가 · 분류기 대기를 합친, 우리 시스템이 쓴 시간). 감지에서 이 값을 빼면 고장이 나고 흔적이 생기기까지의 시간이다",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "postgres"
@@ -589,7 +655,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "postgres"
           },
-          "rawSql": "SELECT injected_at, start_source, node, job_id, detect_s, classify_s, recover_s, signal_lag_s, resumed_at FROM data.v_incidents WHERE $__timeFilter(injected_at) ORDER BY injected_at DESC LIMIT 200",
+          "rawSql": "SELECT injected_at, start_source, node, job_id, detect_s, classify_s, pods_ready_s, recover_s, signal_lag_s, resumed_at FROM data.v_incidents WHERE $__timeFilter(injected_at) ORDER BY injected_at DESC LIMIT 200",
           "format": "table",
           "rawQuery": true,
           "editorMode": "code"
@@ -609,9 +675,10 @@
               "job_id": "작업",
               "detect_s": "감지 (시작→첫 알림)",
               "classify_s": "분류 (시작→원인 확정)",
-              "recover_s": "복구 (원인 확정→재개)",
+              "recover_s": "복구 (원인 확정→학습 진행)",
               "signal_lag_s": "신호→첫 알림",
-              "resumed_at": "재개 시각"
+              "resumed_at": "재개 시각",
+              "pods_ready_s": "Pod 준비 (원인 확정→Pod Ready)"
             },
             "indexByName": {
               "injected_at": 0,
@@ -620,9 +687,10 @@
               "job_id": 3,
               "detect_s": 4,
               "classify_s": 5,
-              "recover_s": 6,
-              "signal_lag_s": 7,
-              "resumed_at": 8
+              "pods_ready_s": 6,
+              "recover_s": 7,
+              "signal_lag_s": 8,
+              "resumed_at": 9
             }
           }
         }
@@ -638,7 +706,7 @@
           {
             "matcher": {
               "id": "byRegexp",
-              "options": "^(감지|분류|복구|신호).*"
+              "options": "^(감지|분류|Pod 준비|복구|신호).*"
             },
             "properties": [
               {
@@ -690,7 +758,7 @@
       "id": 8,
       "gridPos": {
         "x": 0,
-        "y": 9,
+        "y": 13,
         "w": 24,
         "h": 9
       }
@@ -698,7 +766,7 @@
     {
       "type": "timeseries",
       "title": "감지 · 분류 · 복구 시간",
-      "description": "장애 1건 = 점 하나(시작 시각 위치). 감지 = 시작 → 분류기 첫 알림, 분류 = 시작 → 원인 확정, 복구 = 원인 확정 → 재개. 분류기가 처음부터 원인을 알면 사건 한 건으로 끝나 감지와 분류가 같은 값이고, 보류(fault.held)했다가 나중에 원인을 확정(fault.reclassified)한 경우에만 달라진다. 목표와 비교는 SLO-1 측정 때",
+      "description": "장애 1건 = 점 하나(시작 시각 위치). 감지 = 시작 → 분류기 첫 알림, 분류 = 시작 → 원인 확정, Pod 준비 = 원인 확정 → 새 세대 Pod 전부 Ready, 복구 = 원인 확정 → 새 세대가 승인 step 다음 step을 실제로 진행. 분류기가 처음부터 원인을 알면 사건 한 건으로 끝나 감지와 분류가 같은 값이고, 보류(fault.held)했다가 나중에 원인을 확정(fault.reclassified)한 경우에만 달라진다. 목표와 비교는 SLO-1 측정 때",
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "postgres"
@@ -710,7 +778,7 @@
             "type": "grafana-postgresql-datasource",
             "uid": "postgres"
           },
-          "rawSql": "SELECT injected_at AS time, detect_s AS \"감지\", classify_s AS \"분류\", recover_s AS \"복구\" FROM data.v_incidents WHERE $__timeFilter(injected_at) ORDER BY 1",
+          "rawSql": "SELECT injected_at AS time, detect_s AS \"감지\", classify_s AS \"분류\", pods_ready_s AS \"Pod 준비\", recover_s AS \"복구\" FROM data.v_incidents WHERE $__timeFilter(injected_at) ORDER BY 1",
           "format": "time_series",
           "rawQuery": true,
           "editorMode": "code"
@@ -764,7 +832,7 @@
       "id": 9,
       "gridPos": {
         "x": 0,
-        "y": 18,
+        "y": 22,
         "w": 24,
         "h": 8
       }
@@ -777,7 +845,7 @@
       "id": 10,
       "gridPos": {
         "x": 0,
-        "y": 26,
+        "y": 30,
         "w": 24,
         "h": 1
       }
@@ -849,7 +917,7 @@
       "id": 11,
       "gridPos": {
         "x": 0,
-        "y": 27,
+        "y": 31,
         "w": 14,
         "h": 9
       }
@@ -920,7 +988,7 @@
       "id": 12,
       "gridPos": {
         "x": 14,
-        "y": 27,
+        "y": 31,
         "w": 10,
         "h": 9
       }
@@ -933,7 +1001,7 @@
       "id": 21,
       "gridPos": {
         "x": 0,
-        "y": 36,
+        "y": 40,
         "w": 24,
         "h": 1
       }
@@ -1013,7 +1081,7 @@
       "id": 22,
       "gridPos": {
         "x": 0,
-        "y": 37,
+        "y": 41,
         "w": 12,
         "h": 8
       }
@@ -1084,7 +1152,7 @@
       "id": 23,
       "gridPos": {
         "x": 12,
-        "y": 37,
+        "y": 41,
         "w": 12,
         "h": 8
       }
@@ -1097,7 +1165,7 @@
       "id": 13,
       "gridPos": {
         "x": 0,
-        "y": 45,
+        "y": 49,
         "w": 24,
         "h": 1
       }
@@ -1168,7 +1236,7 @@
       "id": 14,
       "gridPos": {
         "x": 0,
-        "y": 46,
+        "y": 50,
         "w": 12,
         "h": 8
       }
@@ -1239,7 +1307,7 @@
       "id": 15,
       "gridPos": {
         "x": 12,
-        "y": 46,
+        "y": 50,
         "w": 12,
         "h": 8
       }
@@ -1328,7 +1396,7 @@
       "id": 16,
       "gridPos": {
         "x": 0,
-        "y": 54,
+        "y": 58,
         "w": 12,
         "h": 8
       }
@@ -1417,7 +1485,7 @@
       "id": 17,
       "gridPos": {
         "x": 12,
-        "y": 54,
+        "y": 58,
         "w": 12,
         "h": 8
       }
@@ -1430,7 +1498,7 @@
       "id": 18,
       "gridPos": {
         "x": 0,
-        "y": 62,
+        "y": 66,
         "w": 24,
         "h": 1
       }
@@ -1505,7 +1573,7 @@
       "id": 19,
       "gridPos": {
         "x": 0,
-        "y": 63,
+        "y": 67,
         "w": 12,
         "h": 8
       }
@@ -1585,7 +1653,7 @@
       "id": 20,
       "gridPos": {
         "x": 12,
-        "y": 63,
+        "y": 67,
         "w": 12,
         "h": 8
       }

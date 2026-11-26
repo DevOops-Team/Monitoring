@@ -21,7 +21,7 @@
 | **논문 · 트레이스** | 공개 장애 트레이스 · 논문의 빈도 · 분포 | 발표 근거용, 임계값에는 보조 | Llama 3 54일 419회 중단, Philly / Acme 장애 분포 |
 | **운영 경험** | exporter 기본 룰 · 커뮤니티 룰 · 일반 운영 관행. 근거가 약하므로 기준선 · 실험으로 대체 대상 | 지금부터, 교체 예정 표시 | postgres_exporter 기본 룰, `absent(up)` 2분, 디스크 80/90% |
 
-기준선을 누적으로 모을 수 있게 학습 Job 지표에 `phase` 라벨(`warmup` = step ≤ warmup_steps · `steady`)을 붙인다 (학습 Job 계측 규약, 노찬경에게 11/05 전달). 주입 구간은 학습 코드가 모르고, 측정 측이 런북(`deploy/README.md`) 「장애 주입」 시각 기록표로 제외한다: **T0 주입 ~ (주입 해제와 T5 `job.resumed` 중 늦은 쪽)** (2026-11-05 변경: 이전 `injected` 라벨 계획 폐기. 2026-11-20 변경: Kafka `fault.injection` 토픽 삭제 — 주입은 사람이 CLI로 하고(ADR-33) 그 사건을 내는 곳이 없음). 모델 · 배치 크기 · 데이터셋이 바뀌면 기준선은 다시 모은다.
+기준선을 누적으로 모을 수 있게 학습 Job 지표에 `phase` 라벨(`warmup` = step ≤ warmup_steps · `steady`)을 붙인다 (학습 Job 계측 규약, 노찬경에게 11/05 전달). 주입 구간은 학습 코드가 모르고, 측정 측이 런북(`deploy/README.md`) 「장애 주입」 시각 기록표로 제외한다: **T0 주입 ~ (주입 해제와 T6 새 세대 첫 진행 step 중 늦은 쪽)** (2026-11-05 변경: 이전 `injected` 라벨 계획 폐기. 2026-11-20 변경: Kafka `fault.injection` 토픽 삭제 — 주입은 사람이 CLI로 하고(ADR-33) 그 사건을 내는 곳이 없음. 2026-11-26 변경: 끝을 T5 `job.resumed`에서 T6으로 — `job.resumed`는 새 세대 Pod가 전부 Ready인 때일 뿐이고, 복구의 끝은 새 세대가 마지막 승인 step 다음 step을 실제로 진행한 때다(Data `v_incidents.resumed_at`, GPU-283 · GPU-289)). 모델 · 배치 크기 · 데이터셋이 바뀌면 기준선은 다시 모은다.
 
 ## 3. 표 열 정의
 
