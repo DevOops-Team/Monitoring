@@ -53,10 +53,32 @@ def test_completed_ignored():
     assert rules.judge(signal(signal="pod_exit", source="pod", reason="Completed", pod="p"), True) is None
 
 
-@pytest.mark.parametrize("kw", [{"reason": "Error"}, {"reason": "OOMKilled"}, {"reason": "Error", "exit_code": 137}])
+@pytest.mark.parametrize("kw", [{"reason": "Error"}, {"reason": "Error", "exit_code": 137}])
 def test_pod_exit(kw):
     v = rules.judge(signal(signal="pod_exit", source="pod", pod="p", **kw), True)
     assert (v.category, v.action) == ("app", "restart_in_place")
+
+
+def test_container_oom_is_refused():
+    # 메모리 한도는 제출본 값이라 다시 띄워도 같은 자리에서 죽는다 → 재시도 없이 실패 확정(GPU-222)
+    v = rules.judge(signal(signal="pod_exit", source="pod", pod="p", reason="OOMKilled"), True)
+    assert (v.category, v.action, v.confidence) == ("app", "refuse", 0.9)
+
+
+@pytest.mark.parametrize("kw", [dict(signal="pod_exit", pod="p", reason="Error"),
+                                dict(signal="job_failed", node=None, job_id="3f9a1c2e", generation=3)])
+def test_oom_found_outside_the_signal_is_refused(kw):
+    v = rules.judge(signal(source="pod", **kw), True, oom=True)
+    assert (v.category, v.action) == ("app", "refuse")
+
+
+def test_oom_does_not_touch_other_signals():
+    assert rules.judge(signal(xid=79), True, oom=True).action == "isolate_migrate"
+
+
+def test_oom_with_collector_down_is_hold():
+    v = rules.judge(signal(signal="pod_exit", source="pod", pod="p", reason="OOMKilled"), False)
+    assert (v.category, v.action) == ("app", "hold")
 
 
 def test_job_failed_is_judged_like_pod_exit():

@@ -33,6 +33,10 @@ signal:
   # 학습 작업(JobSet)이 실패로 끝남. Pod 종료와 같은 일인데 죽은 Pod가 지워져 Pod 종료 알람이 못 본 경우를 잡는다(GPU-220)
   job_failed: {category: app, action: restart_in_place, confidence: 0.6}
 
+# 학습이 메모리 부족으로 끝남(컨테이너 OOMKilled · trainer 로그의 CUDA out of memory).
+# 다시 띄워도 같은 자리에서 죽으므로 재시도 없이 실패로 확정한다(GPU-222, 한송이 합의 11/26)
+oom: {category: app, action: refuse, confidence: 0.9}
+
 # 표에 없는 Xid
 unmatched: {category: hw, action: hold, confidence: 0.3}
 
