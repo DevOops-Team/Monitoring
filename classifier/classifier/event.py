@@ -14,7 +14,7 @@ DCGM_XID_METRIC = "DCGM_FI_DEV_XID_ERRORS"
 
 @dataclass(frozen=True)
 class Context:
-    """신호에 없어 Mimir에서 채우는 값 (enrich.py)."""
+    """신호에 없어 Mimir(작업 실패의 node · log_line은 Loki)에서 채우는 값 (enrich.py)."""
     az: str
     collector_healthy: bool
     job_id: str | None = None
@@ -22,6 +22,9 @@ class Context:
     gpu_uuid: str | None = None     # 커널 로그 경로는 PCI 주소만 알아서 dcgm-exporter 라벨로 찾은 값
     # site · node_lost 전용: 끊기기 직전까지 그 클러스터(node_lost는 그 노드)에서 Running이던 (작업, 세대). 조회가 실패하면 None
     jobs: tuple[tuple[str, int | None], ...] | None = None
+    # job_failed 전용: trainer 로그에서 찾은, 가장 먼저 죽은 Pod의 노드와 그 로그 줄. 못 찾으면 None
+    node: str | None = None
+    log_line: str | None = None
 
 
 def iso_z(ts: datetime) -> str:
@@ -54,7 +57,7 @@ def build(s: Signal, v: Verdict, ctx: Context, dedup_key: str,
         "ts": iso_z(s.ts),
         "cluster": s.cluster,
         "az": ctx.az,
-        "node": s.node,
+        "node": s.node or ctx.node,
         "gpu_uuid": None if s.signal == "site" else (s.gpu_uuid or ctx.gpu_uuid),
         "job_id": ctx.job_id,
         "generation": ctx.generation,
@@ -64,7 +67,7 @@ def build(s: Signal, v: Verdict, ctx: Context, dedup_key: str,
             "exit_code": s.exit_code,
             "metric": DCGM_XID_METRIC if from_dcgm else None,
             "value": s.xid if from_dcgm else None,
-            "log_line": s.log_line,
+            "log_line": ctx.log_line or s.log_line,
         },
         "correlated": correlated or [],
         "collector_healthy": ctx.collector_healthy,

@@ -4,6 +4,7 @@
   KAFKA_BOOTSTRAP  브로커 주소. 없으면 표준 출력으로만 낸다(로컬 확인용)
   REQUIRE_KAFKA    true면 KAFKA_BOOTSTRAP 없이 시작하지 않는다. 배포 매니페스트는 항상 true
   MIMIR_URL        예 http://mimir:9009. 없으면 수집 경로를 확인할 수 없어 전부 hold로 낸다
+  LOKI_URL         예 http://loki:3100. 작업 실패 사건의 죽은 노드를 trainer 로그에서 찾는다. 없으면 노드 없이 낸다
   RULE_VERSION     rules.yaml의 git SHA 앞 7자 (이미지 빌드 때 넣음). Kafka 헤더로 나간다
   LEASE_NAME       대장 선출에 쓸 Lease 이름. 있으면 Lease를 잡은 Pod만 알람을 처리한다(7절). 없으면 혼자 도는 것으로 본다
   POD_IP           LEASE_NAME과 같이 쓴다. 대기 쪽이 받은 알람을 넘겨줄 대장 주소로 Lease에 적힌다
@@ -26,7 +27,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, Gauge, generate_latest
 
 from . import dedup, intended
 from . import pipeline as p
-from .enrich import Enricher, mimir_query
+from .enrich import Enricher, loki_first_line, mimir_query
 from .event import Context
 from .kafka_reader import TopicReader, kafka_consumer
 from .lease import Elector, LeaseApi
@@ -54,9 +55,10 @@ def pipeline_from_env() -> tuple[p.Pipeline, Callable[[], None]]:
         raise RuntimeError("REQUIRE_KAFKA=true인데 KAFKA_BOOTSTRAP이 없다")
     producer = kafka_producer(bootstrap) if bootstrap else StdoutProducer()
     mimir = os.environ.get("MIMIR_URL")
-    enrich = Enricher(mimir_query(mimir)) if mimir else _unknown_context
+    loki = os.environ.get("LOKI_URL")
+    enrich = Enricher(mimir_query(mimir), loki_first_line(loki) if loki else None) if mimir else _unknown_context
     signals = enabled_signals()
-    p.log("startup", kafka=bootstrap or "stdout", mimir=mimir or "none", signals=sorted(signals))
+    p.log("startup", kafka=bootstrap or "stdout", mimir=mimir or "none", loki=loki or "none", signals=sorted(signals))
     lifecycle = intended.Lifecycle()
     pipeline = p.Pipeline(Rules.load(), Publisher(producer, os.environ.get("RULE_VERSION", "dev")), enrich, lifecycle,
                           signals)

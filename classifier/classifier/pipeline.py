@@ -123,8 +123,8 @@ class Pipeline:
                 self.dedup.record(e["dedup_key"], e["suggested_action"])
                 if e["source"] != "pod":
                     self._remember_cause(e["job_id"], e["generation"], e["suggested_action"], ts)
-                else:       # source=pod 가운데 node가 없는 것이 작업 실패 사건이다
-                    self._remember_exit("job_failed" if e["node"] is None else "pod_exit",
+                else:       # source=pod 가운데 대상이 「cluster/작업/g세대」인 것이 작업 실패 사건이다(Pod 이름에는 /가 없다)
+                    self._remember_exit("job_failed" if "/" in e["dedup_key"].split("|")[0] else "pod_exit",
                                         e["job_id"], e["generation"], e["suggested_action"], ts)
         except (KeyError, TypeError, ValueError) as err:    # 분류기가 낸 v1 이벤트가 아니다. 기억에 넣지 않는다
             log("restore.skipped", reason=repr(err))
@@ -245,7 +245,7 @@ class Pipeline:
             self.alerts.labels(ABSORBED).inc()
         self.published.labels(env["type"], v.category, v.action).inc()
         log("event.published", event_id=event["event_id"], type=env["type"], dedup_key=d.key,
-            category=v.category, action=v.action, node=s.node, job_id=ctx.job_id, correlated=len(correlated))
+            category=v.category, action=v.action, node=event["node"], job_id=ctx.job_id, correlated=len(correlated))
         return PUBLISHED
 
     def _absorbable(self, s: Signal, ctx: Context, v: Verdict) -> list[Pending]:
