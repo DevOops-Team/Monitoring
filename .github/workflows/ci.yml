@@ -120,6 +120,16 @@ jobs:
             grep -q "mimir/rules/$(basename "$f")" deploy/base/kustomization.yaml || { echo "::error file=$f::deploy/base/kustomization.yaml의 mimir-rules에 없다 — 클러스터에 실리지 않는다"; missing=1; }
           done
           exit $missing
+      # Loki 룰은 promtool로 못 본다 → 로컬 Loki에 올려 합성 줄로 알람 모양과 분류기 파싱까지 본다 (GPU-218)
+      - name: Loki 룰 (로컬 Loki에 올려 확인)
+        run: scripts/loki-rules-e2e.sh
+      - name: 룰 파일이 loki-rules ConfigMap에 등록됐는지
+        run: |
+          missing=0
+          for f in deploy/base/loki/rules/*.yml; do
+            grep -q "loki/rules/$(basename "$f")" deploy/base/kustomization.yaml || { echo "::error file=$f::deploy/base/kustomization.yaml의 loki-rules에 없다 — 클러스터에 실리지 않는다"; missing=1; }
+          done
+          exit $missing
 
   image:
     name: classifier · image
