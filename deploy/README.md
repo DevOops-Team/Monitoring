@@ -1,6 +1,6 @@
 # 모니터링 스택 (k8s) — 런북
 
-모니터링 클러스터(monitoring1~3, `docs/monitoring-cluster.md`)에 올리는 스택. `compose/`(VM 1대)를 대체한다. 이 문서가 MON-STD-22 "모니터링 클러스터 복구 런북"이다. 부 담당이 이 절차만으로 다시 올릴 수 있어야 한다.
+모니터링 클러스터(monitoring1~3, `docs/monitoring-cluster.md`)에 올리는 스택. 옛 VM 1대 docker compose 구성을 대체했다(`compose/`는 v1.51.0까지 레포에 있었다). 이 문서가 MON-STD-22 "모니터링 클러스터 복구 런북"이다. 부 담당이 이 절차만으로 다시 올릴 수 있어야 한다.
 
 상태(11/24): ADR-18 목표 구성 — 저장소 **×3**(Mimir · Loki RF 3, Tempo 분산형), Alertmanager · Agent · 분류기 **×2**, Grafana ×1(계획 · 결과 `docs/monitoring-ha.md`, GPU-227). 블록 · 청크는 **S3**(11/16 전환, 버킷 `devoops-prod-monitoring-947027666399-us-east-2`의 `mimir/` · `loki/` · `tempo/`), 배포는 **ArgoCD**(11/17, 아래 「적용」). 클러스터에 붙이는 수집 층은 `agents/`(아래 절).
 
