@@ -584,8 +584,12 @@ ID=$(aws ec2 describe-instances --profile devoops --region us-east-2 \
 date '+%T'; aws ec2 terminate-instances --instance-ids $ID --profile devoops --region us-east-2
 ```
 
-기대: 1 ~ 2분 뒤 `FailoverGpuNodeLost`(NotReady 1분 또는 Node 삭제) → `infra` · `isolate_migrate` → 새 세대. 볼 것: 옮겨 간 곳(같은 클러스터 예비 노드인지 다른 클러스터인지),
-인스턴스 종료 때 Pod 종료 사유가 남아 `FailoverPodExit` · `FailoverJobFailed`가 먼저 `restart_in_place`를 내는지(JobSet 실패가 노드 소실 알람보다 먼저 올 수 있다).
+기대: 약 1분 뒤 `FailoverGpuNodeLost`(NotReady 15초 또는 Node 삭제) → `gpu.fault`는 `infra` · `isolate_migrate` **1건** → 새 세대. 그 작업의 Pod 종료 · 작업 실패 신호는 따로 나가지 않고 그 사건의 `correlated`에 들어간다(GPU-220, `docs/classifier.md` 4절).
+11/26 시험(고치기 전)에서는 작업 실패 신호가 먼저 `restart_in_place`로 나가 죽은 노드에 다시 제출됐다. 볼 것:
+
+- `gpu.fault`가 1건인지, `correlated`가 채워졌는지, 마지막 Ready 샘플에서 발행까지 몇 초인지(고치기 전 약 100초)
+- 분류기 로그 `exit.waiting_node_lost`(종료 신호가 노드 사건을 기다림)가 찍혔는지, `enrich.failed` `nodes_not_ready`(조회 시간 초과)가 없는지
+- 옮겨 간 곳(같은 클러스터 예비 노드인지 다른 클러스터인지)
 
 ### ⑤ 클러스터 전체 (아직 실행 전 — 절차 초안, 11/25. 김성모 R6와 같이)
 
