@@ -36,7 +36,7 @@
 `base/mimir/rules/training.yml` 1개(MON-STD-30): `TrainingStalled` = trainer는 떠 있는데 step이 10분째 안 늘거나 지표가 없음. 단위 테스트는 `base/mimir/tests/training_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 `base/mimir/rules/workloads.yml` 3개(MON-STD-31): `WorkloadReplicasDegraded` · `WorkloadDown` = 관리 · 모니터링 클러스터 워크로드의 Ready 수가 원하는 수보다 적음 · 0개, `EksWorkloadDown` = EKS 워크로드 0개(펜싱된 EKS 제외). 지표를 안 긁는 워크로드(dispatcher · relocator · collector 등)가 죽어도 울린다. 단위 테스트는 `base/mimir/tests/workloads_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 
-`base/mimir/rules/failover.yml` 6개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown` · `FailoverGpuNodeLost` · `FailoverJobFailed` · `FailoverStraggler`). `FailoverStraggler`(11/26, GPU-296)는 한 랭크가 10분째 느릴 때 울리고 느린 동안 계속 떠 있다. 11/26부터 분류기로 간다(아래 「분류기」). `FailoverJobFailed`(11/25, GPU-220)는 관리 클러스터 JobSet이 실패로 끝난 것을 본다: 죽은 Pod가 MultiKueue 정리로 약 14초 만에 지워져 `FailoverPodExit`이 못 보는 경우를 잡는다. 라우트와 분류기 `ENABLED_SIGNALS`에 `job_failed`가 들어가 11/25부터 사건으로 나간다(작업 · 세대마다 `restart_in_place` 1건). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료 · GPU 노드 소실 · 사이트는 분류기 웹훅(수신자 `classifier`, 사이트는 11/25부터). 펜싱 안 된 EKS가 사라지면 실제 대피가 나가므로 EKS를 끌 때는 fence부터. 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
+`base/mimir/rules/failover.yml` 7개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown` · `FailoverGpuNodeLost` · `FailoverJobFailed` · `FailoverStraggler` · `FailoverSpotNotice`). `FailoverSpotNotice`(11/27, GPU-219)는 GPU 노드의 `spot-notice-exporter`가 스팟 회수 예고(2분 전)를 본 동안 울린다. 라우트와 `ENABLED_SIGNALS`에 `spot`이 아직 없어 Alertmanager 화면에만 보인다(켜는 것은 「장애 주입」 ⑨). `FailoverStraggler`(11/26, GPU-296)는 한 랭크가 10분째 느릴 때 울리고 느린 동안 계속 떠 있다. 11/26부터 분류기로 간다(아래 「분류기」). `FailoverJobFailed`(11/25, GPU-220)는 관리 클러스터 JobSet이 실패로 끝난 것을 본다: 죽은 Pod가 MultiKueue 정리로 약 14초 만에 지워져 `FailoverPodExit`이 못 보는 경우를 잡는다. 라우트와 분류기 `ENABLED_SIGNALS`에 `job_failed`가 들어가 11/25부터 사건으로 나간다(작업 · 세대마다 `restart_in_place` 1건). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료 · GPU 노드 소실 · 사이트는 분류기 웹훅(수신자 `classifier`, 사이트는 11/25부터). 펜싱 안 된 EKS가 사라지면 실제 대피가 나가므로 EKS를 끌 때는 fence부터. 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
 `base/loki/rules/xid.yml` 1개(MON-STD-04, 11/27 GPU-218): `FailoverXidKernel` = EKS 커널 로그의 `NVRM: Xid` 줄마다 원인 알람(`signal=xid` · `source=dmesg`). Loki ruler가 평가하고 같은 Alertmanager · 분류기 라우트로 간다. 같은 Xid의 `FailoverXidDcgm`과는 분류기가 한 사건으로 묶는다. promtool 대상이 아니라 `scripts/loki-rules-e2e.sh`(로컬 Loki + 합성 줄)로 검사한다. 실제 드라이버 줄로는 아직 확인 전(「장애 주입」 ⑧).
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
 `recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 복구 컨트롤러 Pod의 수집 어노테이션은 11/19에 들어갔다(Gitops `onprem/controllers/recovery-controller`, 그 전까지는 `recovery_hold_total`이 수집되지 않아 울릴 수 없었다). 확인: `up{cluster="onprem-manager", namespace="platform"}` 3. HOLD가 한 번도 없으면 `recovery_hold_total` 시계열 자체가 없다.
@@ -386,6 +386,7 @@ EKS는 비용 때문에 켰다 끈다. 그래서 **클러스터 이름을 파일
 | Fluent Bit · node-exporter | 전 노드 | 어떤 taint든 통과 |
 | dcgm-exporter 4.8.4 | GPU 노드 (`devoops/gpu=true`) | 수집 5초. Agent의 `annotated-pods` 잡이 긁는다(`job="annotated-pods"`). 메모리는 내장 엔진일 때 T4에서 약 435MiB(한도 1Gi, 256Mi에서는 OOMKilled 반복) |
 | ↳ 사이드카 `nv-hostengine` (11/20~) | dcgm-exporter Pod 안 | DCGM 엔진(`ghcr.io/devoops-team/dcgm-hostengine`). exporter는 `-r localhost:5555`로 여기에 붙는다. `dcgmi`로 Xid를 주입하려고 뺐다(아래 「장애 주입」 ③). 이미지가 비공개라 `monitoring/ghcr-pull`이 필요하다(IaC가 EKS를 만들 때 넣는다) |
+| spot-notice-exporter (11/27, GPU-219) | GPU 노드 (`devoops/gpu=true`) | 그 노드 IMDS `spot/instance-action`을 5초마다 읽어 스팟 회수 예고를 :9105로 낸다(`spot_interruption_notice_timestamp_seconds`는 예고가 있을 때만, `spot_notice_imds_ok`는 늘). 스크립트는 ConfigMap(`deploy/agents/gpu/spot-notice-exporter/exporter.py`), 이미지는 공개 `python`. 같은 `annotated-pods` 잡. **실제 EKS에서는 아직 안 떠 봤다** |
 | 학습 Pod의 trainer 지표 (`train_*`, :8000) | 학습 Pod (`training` 네임스페이스) | 같은 `annotated-pods` 잡. 어노테이션은 Backend가 JobSet Pod 템플릿에 붙인다(Backend v1.7.0부터). 우리 쪽 설정은 없다 |
 
 **올라가는 길**
@@ -692,6 +693,32 @@ kubectl -n monitoring delete pod xid-test       # 끝나면 지운다
 | 4 | dcgm 알람 | Alertmanager | `FailoverXidDcgm`, 같은 `xid` · `node` |
 | 5 | 한 건으로 묶임 | `gpu.fault` · 분류기 로그(`kubectl logs`) | 사건 1건, 나머지는 `duplicate`. 2건이면 두 경로의 `event_ts` 차이가 45초를 넘었는지 본다 |
 | 6 | 어느 경로가 빨랐나 | 두 알람의 시작 시각 − Pod 로그 `inject` 시각 | 커널 로그 쪽이 먼저일 것(평가 15초). 값을 측정 노트에 |
+
+### ⑨ 스팟 회수 예고 (아직 실행 전 — 절차 초안, 11/27, GPU-219)
+
+스팟 인스턴스에 회수 예고(2분 전)를 보내 `FailoverSpotNotice` → 분류기 → `gpu.fault`(`source: spot`, `evacuate_preemptive`)가 2분 안에 나가는지 본다. 2분 뒤 **그 노드는 실제로 종료된다**(노드그룹이 새 노드를 채운다). 복구 컨트롤러는 그 작업을 예비 노드로 옮긴다(`moveToSpare`).
+
+먼저(주입 없이 되는 것): exporter가 GPU 노드마다 떠서 IMDS를 읽는지 본다. `spot_notice_imds_ok{cluster="eks-a"}`가 GPU 노드 수만큼 1이어야 한다. 0이면 Pod에서 IMDS가 안 닿는 것이다(런치 템플릿 hop limit) → `kubectl -n monitoring logs ds/spot-notice-exporter`.
+
+켜기(한송이에게 `source=spot` 사건을 받는 모양을 확인한 뒤)
+
+1. `deploy/values/alertmanager.yaml` 분류기 라우트의 `signal` 목록에 `spot` 추가 → main 머지 → Alertmanager `/api/v2/status`의 설정에서 라우트 확인
+2. Gitops `monitoring/onprem/classifier/kustomization.yaml`의 `ENABLED_SIGNALS`에 `spot` 추가
+
+주입(콘솔 메뉴 이름은 미확인 — 실행 때 맞춘다): AWS FIS 액션 `aws:ec2:send-spot-instance-interruptions`(ADR-33)를 학습 Pod가 도는 GPU 노드의 인스턴스에, 예고 시간 2분으로. 시작한 시각을 적는다(T0). FIS는 주입 즉시 rebalance 권고도 보낸다.
+
+볼 것
+
+| # | 무엇 | 어디서 | 기대 |
+|---|---|---|---|
+| 1 | 예고 지표 | `spot_interruption_notice_timestamp_seconds{cluster="eks-a"}` | 그 노드에 시계열 하나, 값 = 예고를 처음 본 시각. `spot_interruption_scheduled_timestamp_seconds` − 값 ≈ 120 |
+| 2 | 알람 | Alertmanager | `FailoverSpotNotice`, `signal="spot"` · `node`, annotation `event_ts`. 노드가 종료되면 꺼진다 |
+| 3 | 사건 | `gpu.fault` | `source: spot` · `category: infra` · `suggested_action: evacuate_preemptive` 1건, `job_id` · `generation` 채워짐 |
+| 4 | 시간 | `gpu.fault` 발행 시각 − T0 | 2분 안(예상 최대 약 50초: 조회 5 + 수집 15 + 룰 15 + 평가 지연 15). 값을 측정 노트에 |
+| 5 | 중복 | `gpu.fault` · 분류기 로그(`kubectl logs`) | 같은 작업에 사건이 더 안 나간다: 노드가 종료된 뒤의 `FailoverGpuNodeLost`, EKS가 노드를 비우며 죽은 Pod의 `FailoverPodExit` · `FailoverJobFailed` |
+| 6 | 순서 | 학습 Pod 종료 시각 vs 알람 시작 시각 | EKS가 rebalance 권고만으로 노드를 먼저 비우는지. 먼저 비우면 예고 알람보다 Pod 종료가 앞선다 → 적어 둔다 |
+
+주입 직후 `data.injections`에 `kind='spot'`으로 넣는다.
 
 ### HOLD가 나면
 
