@@ -646,3 +646,72 @@ def test_straggler_hold_without_a_computed_gain_is_judged_again(env):
     steps[0] = None
     assert pipe.handle(straggler(), at(900)) == p.DUPLICATE             # 계산해 낸 뒤에는 고정
     assert len(fake.sent) == 2
+
+
+# ---------- 노드가 죽는 중에 온 종료 신호: 노드 소실 사건을 기다렸다 거기에 묶는다 (GPU-220) ----------
+def dying_pipe(not_ready):
+    """not_ready = 가짜 Mimir 답(리스트 한 칸, 테스트가 바꾼다): 그 작업의 노드 중 Ready가 아닌 것. None = 조회 실패"""
+    fake, life = FakeProducer(), Lifecycle()
+    life.healthy = True
+    enrich = lambda s: Context(az="us-east-2a", collector_healthy=True, job_id=None if s.signal == "node_lost" else JOB,
+                               generation=None if s.signal == "node_lost" else GEN,
+                               jobs=((JOB, GEN),) if s.signal == "node_lost" else None)
+    pipe = p.Pipeline(Rules.load(), Publisher(fake, "abc1234"), enrich, life,
+                      node_check=lambda cluster, job, gen: not_ready[0])
+    return pipe, fake
+
+
+def test_exits_while_node_is_dying_are_merged_into_the_node_lost_event():
+    """11/26 노드 종료 시험: 노드 소실 알람이 종료 신호보다 늦게 온다. restart_in_place가 먼저 나가면 죽은 노드에 다시 제출된다."""
+    pipe, fake = dying_pipe([("node-0",)])
+    assert pipe.handle(pod_exit(ts=at(8)), at(25)) == p.DEFERRED
+    assert pipe.handle(job_failed(ts=at(44)), at(55)) == p.DEFERRED
+    pipe.flush(at(38))      # Pod 종료의 30초 대기가 끝남
+    pipe.flush(at(74))      # 작업 실패의 30초 대기가 끝남
+    assert fake.sent == [] and len(pipe.pending) == 2
+    assert pipe.handle(job_failed(ts=at(44)), at(76)) == p.DEFERRED and len(pipe.pending) == 2     # 재전송
+    assert pipe.handle(node_lost(), at(80)) == p.PUBLISHED
+    (e,) = [m["payload"] for m in fake.sent]
+    assert (e["category"], e["suggested_action"], e["node"], e["job_id"]) == ("infra", "isolate_migrate", "node-0", JOB)
+    assert sorted(c["alert"] for c in e["correlated"]) == ["FailoverJobFailed", "TrainerExited"]
+    assert pipe.pending == []
+    pipe.flush(at(200))
+    assert len(fake.sent) == 1
+
+
+def test_late_exit_while_node_is_dying_also_waits():
+    pipe, fake = dying_pipe([("node-0",)])
+    assert pipe.handle(job_failed(), at(45)) == p.DEFERRED and len(pipe.pending) == 1
+    assert pipe.handle(node_lost(), at(60)) == p.PUBLISHED
+    assert [m["payload"]["suggested_action"] for m in fake.sent] == ["isolate_migrate"] and pipe.pending == []
+
+
+def test_exit_is_held_when_node_lost_never_comes():
+    """노드는 여전히 Ready가 아닌데 노드 사건이 없다. 다시 제출해도 같은 실패라 사람이 본다."""
+    pipe, fake = dying_pipe([("node-0",)])
+    pipe.handle(job_failed(), at(10))
+    pipe.flush(at(30))
+    pipe.flush(at(119))
+    assert fake.sent == []
+    pipe.flush(at(120))
+    assert [(m["type"], m["payload"]["suggested_action"]) for m in fake.sent] == [("fault.held", "hold")]
+    assert pipe.pending == []
+
+
+def test_exit_is_judged_normally_when_the_node_comes_back():
+    not_ready = [("node-0",)]
+    pipe, fake = dying_pipe(not_ready)
+    pipe.handle(job_failed(), at(10))
+    pipe.flush(at(30))
+    not_ready[0] = ()
+    pipe.flush(at(120))
+    assert [m["payload"]["suggested_action"] for m in fake.sent] == ["restart_in_place"]
+
+
+@pytest.mark.parametrize("answer", [(), None])
+def test_exit_is_not_delayed_when_nodes_are_ready_or_unknown(answer):
+    """노드가 멀쩡하면(또는 조회가 실패하면) 지금까지처럼 30초 뒤에 판정한다."""
+    pipe, fake = dying_pipe([answer])
+    pipe.handle(job_failed(), at(10))
+    pipe.flush(at(30))
+    assert [m["payload"]["suggested_action"] for m in fake.sent] == ["restart_in_place"]

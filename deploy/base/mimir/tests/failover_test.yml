@@ -369,9 +369,9 @@ tests:
               summary: '클러스터 수집 끊김: eks-a'
 
   # --- FailoverGpuNodeLost. g1 = GPU 노드, c1 = CPU 노드. KSM은 계속 긁힌다(따로 적은 경우 제외) ---
-  # 11) GPU 노드 g1이 5분에 지워진다(KSM이 지표를 더 안 냄 → Agent가 stale 표시). 1분 뒤 울리고 event_ts = 마지막 Ready 샘플,
+  # 11) GPU 노드 g1이 5분에 지워진다(KSM이 지표를 더 안 냄 → Agent가 stale 표시). 15초 뒤 울리고 event_ts = 마지막 Ready 샘플,
   #     최근 10분 안에 Ready였던 동안(15분 전까지)만 울린다
-  - name: GPU 노드가 지워지면 1분 뒤 울리고 10분 뒤 꺼진다
+  - name: GPU 노드가 지워지면 15초 뒤 울리고 10분 뒤 꺼진다
     interval: 15s
     input_series:
       - series: 'kube_node_status_condition{job="kube-state-metrics", cluster="eks-a", node="g1", condition="Ready", status="true"}'
@@ -381,10 +381,10 @@ tests:
       - series: 'up{job="kube-state-metrics", cluster="eks-a", instance="ksm:8080"}'
         values: '1x80'
     alert_rule_test:
-      - eval_time: 6m
+      - eval_time: 5m15s
         alertname: FailoverGpuNodeLost
         exp_alerts: []
-      - eval_time: 6m15s
+      - eval_time: 5m30s
         alertname: FailoverGpuNodeLost
         exp_alerts: &nodelost
           - exp_labels: {pipeline: failover, signal: node_lost, cluster: eks-a, node: g1}
@@ -410,7 +410,7 @@ tests:
       - series: 'up{job="kube-state-metrics", cluster="eks-a", instance="ksm:8080"}'
         values: '1x100'
     alert_rule_test:
-      - eval_time: 6m15s
+      - eval_time: 5m30s
         alertname: FailoverGpuNodeLost
         exp_alerts: *nodelost
       - eval_time: 14m45s
@@ -420,21 +420,21 @@ tests:
         alertname: FailoverGpuNodeLost
         exp_alerts: []
 
-  # 13) 45초만 NotReady였다가 돌아온다. 1분이 안 돼 울리지 않는다
-  - name: 1분 안에 돌아온 노드는 울리지 않는다
+  # 13) 샘플 하나(15초)만 NotReady였다가 돌아온다. 15초를 못 채워 울리지 않는다
+  - name: 샘플 하나만 NotReady였던 노드는 울리지 않는다
     interval: 15s
     input_series:
       - series: 'kube_node_status_condition{job="kube-state-metrics", cluster="eks-a", node="g1", condition="Ready", status="true"}'
-        values: '1x20 0 0 0 1x60'
+        values: '1x20 0 1x60'
       - series: 'kube_node_status_allocatable{job="kube-state-metrics", cluster="eks-a", node="g1", resource="nvidia_com_gpu"}'
         values: '1x80'
       - series: 'up{job="kube-state-metrics", cluster="eks-a", instance="ksm:8080"}'
         values: '1x80'
     alert_rule_test:
-      - eval_time: 5m45s
+      - eval_time: 5m30s
         alertname: FailoverGpuNodeLost
         exp_alerts: []
-      - eval_time: 6m15s
+      - eval_time: 5m45s
         alertname: FailoverGpuNodeLost
         exp_alerts: []
 
