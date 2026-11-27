@@ -102,7 +102,7 @@ groups:
           log_line: 'jobset failed: job-{{ $labels.job_id }} generation {{ $labels.generation }}'
           summary: '학습 작업 실패: {{ $labels.cluster }} {{ $labels.job_id }} 세대 {{ $labels.generation }}'
 
-      # GPU 노드가 사라졌다: 최근 10분 안에 Ready였는데 지금은 Ready가 아니다(NotReady · Unknown · Node 삭제). 1분 이어지면 울린다.
+      # GPU 노드가 사라졌다: 최근 10분 안에 Ready였는데 지금은 Ready가 아니다(NotReady · Unknown · Node 삭제). 15초 이어지면 울린다.
       # GPU 노드만 죽고 CPU 노드(Agent · KSM)가 살아 있을 때를 위한 것이다. 이때 FailoverSiteDown은 지표가 계속 와서 안 울리고,
       #   FailoverPodExit은 Pod가 종료 사유 없이 사라져서 안 울린다(11/24 kind 재현). 지표까지 끊기면 FailoverSiteDown 몫이다.
       # 분류기가 노드마다 isolate_migrate 1건을 낸다(그 노드에 학습 작업이 있었을 때만). 같은 작업의 둘째 건부터는 컨트롤러가 닫는다.
@@ -110,7 +110,8 @@ groups:
       # 조건:
       #  - 그 클러스터 KSM이 지금 긁히고 있을 때만(up == 1). KSM이 죽으면 노드 지표가 한꺼번에 사라져 모든 노드가 죽은 것처럼 보인다
       #  - 일부러 내린 클러스터는 뺀다(FailoverSiteDown과 같은 식). 11/24 17:10 eks-a OFF 때 GPU 노드가 CPU 노드보다 12분 먼저 사라졌다
-      #  - for 1m: kubelet이 잠깐 끊겼다 돌아오는 것은 울리지 않는다
+      #  - for 15s: 평가 한 번만 다시 확인한다. 1분이었는데 줄였다(GPU-220, 11/27): 쿠버네티스가 kubelet 응답이 수십 초 끊겨야 NotReady로 바꾸므로
+      #    짧은 끊김은 지표에 안 나타나고, 7일 동안 1분 대기가 거른 것이 0건이었다. 1분이면 사건이 약 100초 뒤에 나가 종료 신호(30초 대기)보다 늦는다
       # job="kube-state-metrics"로 출처를 고정한다(위 Xid 룰과 같은 이유)
       - alert: FailoverGpuNodeLost
         expr: >
@@ -125,7 +126,7 @@ groups:
           (max by (cluster) (up{job="kube-state-metrics", cluster=~"eks-(a|b|c)"}) == 1)
           unless on (cluster)
           label_replace(kube_customresource_multikueuecluster_info{fenced="true"}, "cluster", "$1", "name", "(.+)")
-        for: 1m
+        for: 15s
         labels:
           pipeline: failover
           signal: node_lost
