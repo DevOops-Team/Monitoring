@@ -93,7 +93,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | 번호 | 대상 | 지표 | 정상 | 경고 | 위험 | 가설 (미확정) | 근거 출처 | 조치 | 상태 |
 |---|---|---|---|---|---|---|---|---|---|
 | MON-STD-18 | 사이트 | VPN 터널을 우회하는 별도 경로(공인 엔드포인트 경유. pfSense · 회선은 VPN과 공유, 물리적 독립 아님): DynamoDB `devoops-job-fencing.heartbeat_at` 경과 · `devoops-job-progress` 갱신 경과 (분류기가 폴링해 지표로 노출, 계측 필요) + EC2 `DescribeInstanceStatus` + VPN 경로 `up`. blackbox_exporter는 터널 내부 IP · pfSense(`172.30.0.1`) · 공인 DNS(`1.1.1.1`) 확인용 | | | | 위험: VPN `up==0` 2분 + **조회에 성공한** 하트비트의 경과 > 하트비트 주기 × 3 | 운영 경험 + 실험 (tc netem · VPN 단절 · FIS AZ 중단) | 판정 재료: VPN 끊김 + 조회 성공 + 하트비트 멈춤 → `fence_evacuate` (SiteDown) / VPN만 끊기고 하트비트 계속 → `hold` (VpnDown) / VPN 끊김 + **DynamoDB 조회 실패** → AWS 상태를 알 수 없으므로 `hold`: 공인 DNS ping도 실패하면 온프레 인터넷 장애, 성공하면 AWS 쪽 의심. 인터넷 복구 뒤 하트비트를 다시 읽어 재판정. 워커는 프라이빗 서브넷 · EKS API 비공개라 공인망에서 직접 probe 불가 (2026-11-05 정정). 온프레 → DynamoDB가 VPN이 아닌 pfSense WAN 인터넷 경로임은 2026-11-15 박기현 확인(AWS VPN 삭제 상태, 재구축 뒤 재확인 예정) | 가설 |
-| MON-STD-19 | 인프라 | 스팟 중단 통보 (aws-node-termination-handler 또는 IMDS `instance-action`) | | | | 통보 즉시 위험 (회수까지 2분) | 벤더 (AWS 스팟 2분 규칙) | `evacuate_preemptive` | 가설 |
+| MON-STD-19 | 인프라 | 스팟 중단 통보 (IMDS `instance-action` → spot-notice-exporter `spot_interruption_notice_timestamp_seconds`, 룰 `FailoverSpotNotice`, GPU-219. 실제 주입 전) | | | | 통보 즉시 위험 (회수까지 2분) | 벤더 (AWS 스팟 2분 규칙) | `evacuate_preemptive` | 가설 |
 
 ### 4.7 서비스 층
 
