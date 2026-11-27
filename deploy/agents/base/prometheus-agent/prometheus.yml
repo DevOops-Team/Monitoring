@@ -3,7 +3,7 @@
 global:
   scrape_interval: 15s             # dcgm-exporter 내부 수집 5s + scrape 15s 전제 (fault-event ±45s 창)
   external_labels:
-    cluster: ${CLUSTER_NAME}       # 예: onprem-manager · worker-a
+    cluster: ${CLUSTER_NAME}       # 예: onprem-manager · eks-a
     site: ${SITE}                  # onprem · aws
     # Agent를 2개 두는 클러스터(관리 클러스터)에서만 값이 들어온다. Mimir가 같은 agent_group 안에서 한 Agent 것만 받고,
     # __replica__는 저장 전에 지운다(모니터링 클러스터 mimir.yaml의 ha_tracker). env가 없으면 값이 비어

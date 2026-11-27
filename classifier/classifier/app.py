@@ -62,7 +62,7 @@ def pipeline_from_env() -> tuple[p.Pipeline, Callable[[], None]]:
     p.log("startup", kafka=bootstrap or "stdout", mimir=mimir or "none", loki=loki or "none", signals=sorted(signals))
     lifecycle = intended.Lifecycle()
     pipeline = p.Pipeline(Rules.load(), Publisher(producer, os.environ.get("RULE_VERSION", "dev")), enrich, lifecycle,
-                          signals)
+                          signals, enrich.nodes_not_ready if mimir else None)
     if not bootstrap:
         return pipeline, lambda: None
     return pipeline, lambda: restore_from_kafka(bootstrap, pipeline, lifecycle)

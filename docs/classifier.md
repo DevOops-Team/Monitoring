@@ -43,6 +43,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | `straggler`의 step 시간 두 개 | 그 작업 · 세대의 5분 평균 step 시간 `sum(rate(train_step_seconds_sum{phase="steady"}[5m])) / sum(rate(train_step_seconds_count{phase="steady"}[5m]))`. FSDP는 랭크가 같이 나아가 step 시간이 랭크마다 같으므로 작업 전체로 본다. `job_id` · `generation` · `node`는 알람 라벨에서, `gpu_uuid`는 Xid와 같은 식으로 노드에서 찾는다 | 느린 값 = 지금, 정상 값 = 신호 발생 시각(느려진 시각) 1분 전 | 하나라도 없으면(시작부터 느렸음 · 조회 실패) 이득을 계산할 수 없다 → `hold`, `straggler_evidence` 없이 낸다 |
 | site의 작업 목록 | 그 클러스터의 `kube_pod_labels` 중 `kube_pod_status_phase{phase="Running"}`이 1인 Pod를 작업별로 묶고 세대는 가장 큰 값 | 신호 발생 시각 = 마지막 샘플(직전 5분) | 조회 실패 → `job_id` 없는 사건 1건(컨트롤러 HOLD). 0개 → 사건 없음(`outcome="no_jobs"`). 단 그 시각에 그 클러스터 KSM(`up{job="kube-state-metrics"}`)이 1이 아니었으면 0개가 아니라 「모름」 → 조회 실패와 같다 |
 | node_lost의 작업 | site와 같은 식에 그 노드(`kube_pod_info{node}`)로 거른다 | 신호 발생 시각 = 마지막 Ready 샘플(직전 5분) | 작업 1개 → 그 작업의 사건. 0개 → 사건 없음(예비 노드 등, KSM이 그 시각에 1이었을 때만). 조회 실패 · 작업 여럿 → `job_id` 없는 1건(컨트롤러 HOLD) |
+| `pod_exit` · `job_failed`: 그 작업의 노드가 죽는 중인가 | 그 작업 · 세대의 Pod가 있던 노드(`kube_pod_info` + `kube_pod_labels`, 최근 10분) 가운데 `kube_node_status_condition{condition="Ready", status="true"}`가 1이 아닌 노드. 그 클러스터 KSM이 긁히고 있을 때만(`FailoverGpuNodeLost`와 같은 조건). 4절 표에서 쓴다(GPU-220) | 지금(판정 시점) | 조회 실패 → 확인하지 못한 것으로 보고 바로 판정한다 |
 
 ## 2. 알람 → 분류기 라벨 계약
 
@@ -142,6 +143,7 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 | 신호의 generation < 그 작업의 최신 세대 | 버림 (`stale_generation`, 옛 세대의 뒤늦은 종료) |
 | 같은 (job_id, generation)에 원인 사건을 이미 냄 | 버림 (`absorbed`) |
 | 같은 (job_id, generation)에 다른 종류의 종료 사건(`pod_exit` ↔ `job_failed`)을 이미 냄 | 버림 (`absorbed`). 같은 종류끼리는 그대로다(여러 랭크의 `pod_exit`는 Pod마다 나간다) |
+| 그 작업 · 세대의 노드 중 Ready가 아닌 노드가 있음(1절 표, Mimir 조회) | 내지 않고 **신호 발생 시각 + 120초**까지 더 기다린다. 그 사이 `node_lost` 사건이 나가면 거기에 묶인다(아래). 120초에 다시 물어 여전히 Ready가 아니면 `hold`, 돌아왔으면 아래 행으로 간다 |
 | `job.lifecycle` 읽기가 끊겨 있음 | `hold`로 낸다 (확인할 수 없음) |
 | 위에 해당 없음 | 3.3절 `pod_exit`(또는 `job_failed`) 행으로 낸다 |
 
@@ -150,12 +152,14 @@ Alertmanager 웹훅 ─▶ signals ─▶ enrich ─▶ intended ─▶ rules �
 - 원인 사건 = `xid` · `spot` · `site` · `node_lost` 신호로 낸 이벤트 중 action이 `hold` · `none`이 아닌 것. Xid 63처럼 기록만 하는 사건은 원인으로 치지 않는다(그 뒤의 Pod 종료는 따로 판정해야 함).
 - 원인 사건을 낼 때 같은 (job_id, generation)의 `pod_exit`가 기다리고 있으면 그 이벤트의 `correlated`에 넣고 대기에서 뺀다.
 - 원인 사건을 낸 뒤에 오는 같은 (job_id, generation)의 `pod_exit` · `job_failed`도 버린다. 그 세대는 이미 복구 대상이라 새 사건이 아니다.
+- **노드가 죽을 때**(GPU-220): `node_lost` 알람은 마지막 Ready 샘플 뒤 약 55초에 오고(수집 15초 + `for` 15초 + 평가 지연 15초), 그 작업의 종료 신호는 30초 대기 뒤에 먼저 판정된다. 그대로 내면 `restart_in_place`가 먼저 나가 컨트롤러가 죽은 노드에 다시 제출한다(11/26 노드 종료 시험 두 번, 새 세대가 rendezvous 시간 초과로 실패). 그래서 판정할 때 노드 상태를 묻고(위 표), 죽는 중이면 `node_lost` 사건을 기다려 `isolate_migrate` 1건으로 낸다. 종료 신호는 그 사건의 `correlated`에 들어간다.
 - `site` 사건도 작업마다 원인 사건으로 기억한다. 다만 클러스터가 안 보이는 상황이라 그 클러스터의 `pod_exit` 알람은 보통 오지 않는다.
 
 **알아 둘 것**
 
 - 감시기는 JobSet 삭제를 보는 순간 발행하므로 보통 Pod 종료보다 먼저 온다. 감시기가 재연결 중이면 늦을 수 있어 대기 시간을 둔다.
 - 30초는 분류기 · 복구 컨트롤러를 연결한 E2E에서 실제 간격을 재서 고친다.
+- 노드가 예고 없이 끊기면 쿠버네티스가 NotReady로 바꾸기까지 수십 초가 걸린다. 그 전에 판정되는 종료 신호(다른 노드의 랭크가 먼저 죽은 경우)는 노드 상태를 물어도 Ready로 보여 묶지 못하고 `restart_in_place`로 나간다. 인스턴스 종료는 약 25초 안에 NotReady가 보였다(11/26). 예고 없는 끊김은 노드 종료 주입에서 실측한 뒤 대기 시간을 늘릴지 정한다.
 - 기다리는 신호는 메모리에만 있다. 그 사이 분류기가 재시작하거나 대장이 바뀌면 사라지고, 알람이 아직 켜져 있어 Alertmanager가 다시 보내야 판정된다.
 
 ## 5. 표에 없는 신호

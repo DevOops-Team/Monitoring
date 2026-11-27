@@ -311,3 +311,18 @@ def test_straggler_without_both_step_times_is_none(slow, normal):
                 raise rows
             return rows
     assert Enricher(Mimir(slow, normal, up=UP))(straggler()).step_seconds is None
+
+
+def test_nodes_not_ready_lists_the_jobs_nodes_that_are_not_ready():
+    """종료 신호를 판정할 때 묻는다(GPU-220). 지금 시각으로, 그 작업 · 세대의 노드만, KSM이 긁힐 때만."""
+    mimir = FakeMimir(kube_node_status_condition=[{"node": "n2", "__value__": 1.0}, {"node": "n1", "__value__": 1.0}])
+    assert Enricher(mimir).nodes_not_ready("eks-a", "3f9a1c2e", 3) == ("n1", "n2")
+    (expr, at), = mimir.calls
+    assert at is None and 'label_devoops_job_id="3f9a1c2e", label_devoops_generation="3"' in expr
+    assert 'unless on (node) (kube_node_status_condition{cluster="eks-a", condition="Ready", status="true"} == 1)' in expr
+    assert 'up{cluster="eks-a", job="kube-state-metrics"}' in expr
+
+
+def test_nodes_not_ready_is_empty_when_all_ready_and_none_when_the_query_fails():
+    assert Enricher(FakeMimir()).nodes_not_ready("eks-a", "3f9a1c2e", 3) == ()
+    assert Enricher(FakeMimir(kube_node_status_condition=RuntimeError("down"))).nodes_not_ready("eks-a", "3f9a1c2e", 3) is None
