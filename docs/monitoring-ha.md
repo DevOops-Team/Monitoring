@@ -36,7 +36,7 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 ## 3. 대상별 바꿀 것
 
 ### 3.1 Alertmanager ×2 (차트 prometheus-community/alertmanager 2.3.1)
-- `deploy/values/alertmanager.yaml`: `replicaCount: 2`. 차트가 `--cluster.listen-address` · `--cluster.peer=<이름>-<i>.<이름>-headless:9094`를 넣고 headless Service에 9094 TCP/UDP를 연다
+- `deploy/monitoring-cluster/values/alertmanager.yaml`: `replicaCount: 2`. 차트가 `--cluster.listen-address` · `--cluster.peer=<이름>-<i>.<이름>-headless:9094`를 넣고 headless Service에 9094 TCP/UDP를 연다
 - 차트 기본이 꺼져 있어 직접 켠다: `podAntiAffinity` · PodDisruptionBudget
 - 알람을 보내는 쪽(AM 공식 README: 로드밸런서 말고 AM 전부에게 보낼 것)
   - Mimir: `ruler.alertmanager_url`(3.2.4에서 폐기 예정) → `limits.ruler_alertmanager_client_config.alertmanager_url: dnssrvnoa+http://_http._tcp.alertmanager-headless.monitoring.svc.cluster.local.`
@@ -45,14 +45,14 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 
 ### 3.2 Mimir ×3 (자체 StatefulSet, 3.2.4 모놀리식)
 - 링은 이미 전부 memberlist → 추가 설정 없음
-- `deploy/base/mimir/mimir.yaml`: `ingester.ring.replication_factor` · `store_gateway.sharding_ring.replication_factor` 1 → 3 (기본값이 3이라 줄을 지워도 된다)
-- `deploy/base/mimir/statefulset.yaml`: replicas 3, 필수 anti-affinity(hostname), PDB `maxUnavailable: 1`, 메모리 한도 3Gi
+- `deploy/monitoring-cluster/storage/mimir/mimir.yaml`: `ingester.ring.replication_factor` · `store_gateway.sharding_ring.replication_factor` 1 → 3 (기본값이 3이라 줄을 지워도 된다)
+- `deploy/monitoring-cluster/storage/mimir/statefulset.yaml`: replicas 3, 필수 anti-affinity(hostname), PDB `maxUnavailable: 1`, 메모리 한도 3Gi
 - 쓰기는 3개 중 2개가 받으면 성공. 수신 한도(50k/s)는 클러스터 전체 값을 distributor들이 나눠 씀 → 그대로
 - compactor · ruler는 링으로 자동 분담. ruler는 Pod마다 같은 룰 파일(지금 ConfigMap 마운트)이면 분담된다
 - 늘릴 때는 그냥 늘려도 안전. **줄일 때만** 절차: `/ingester/prepare-instance-ring-downscale` → `/ingester/shutdown` → 종료
 
 ### 3.3 Loki ×3 (차트 grafana-community/loki 21.0.0, Monolithic)
-- `deploy/values/loki.yaml`: `singleBinary.replicas: 3`, `commonConfig.replication_factor: 3`
+- `deploy/monitoring-cluster/values/loki.yaml`: `singleBinary.replicas: 3`, `commonConfig.replication_factor: 3`
 - 차트가 memberlist(`join_members` + headless Service) · 노드당 하나 anti-affinity · 종료 때 WAL flush를 자동으로 넣는다(렌더링으로 확인)
 - **`rulerConfig.enable_sharding: true` 추가 필수**: 기본 false라 그대로면 3개가 모든 룰을 각자 평가해 알람이 3배로 나간다. 켜면 로컬 파일 룰도 링으로 나눈다
 - compactor는 링으로 하나만 동작 → 그대로
@@ -71,7 +71,7 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
   - 원안은 「대기 쪽은 readiness를 실패시켜 Service에서 뺀다」였다. Ready가 아닌 Pod가 늘 있으면 Deployment 교체가 멈추고 Argo CD가 비정상으로 봐서 바꿨다
 - 대장이 죽으면 Lease 만료(약 15초) 뒤 대기 쪽이 대장이 된다. 넘겨받을 때 지금 시작 절차와 같이 `gpu.fault` 1시간 · `job.lifecycle` 24시간을 다시 읽어 중복 기억을 복원한다
 - 넘겨받는 동안 들어온 알람은 Alertmanager가 재시도한다. 옛 대장이 들고 있던 「Pod 종료 대기(30초)」 신호는 사라진다 → 같은 알람이 `repeat_interval`(1분)로 다시 오므로 그때 처리
-- 바꿀 것: `classifier/`(Lease · readiness), `deploy/classifier/base`(replicas 2 · anti-affinity · Lease RBAC), 테스트 + kind 종단 검증에 「대장 죽임 → 넘겨받음 → 같은 알람 1건만」 장면
+- 바꿀 것: `classifier/`(Lease · readiness), `deploy/monitoring-cluster/classifier`(replicas 2 · anti-affinity · Lease RBAC), 테스트 + kind 종단 검증에 「대장 죽임 → 넘겨받음 → 같은 알람 1건만」 장면
 - `docs/classifier.md` 7절 「복제본은 1개다」 줄 교체
 
 ### 3.6 Tempo 분산형 (tempo-distributed + Kafka)
@@ -79,7 +79,7 @@ EKS Agent는 CPU 노드가 1대라 2개를 둬도 같은 노드에 뜬다 → 1 
 - 구조: `앱 → distributor → Kafka(토픽) → block-builder → S3` / `Kafka → live-store(최근 데이터)`, 조회는 `query-frontend → querier → S3 + live-store`, 압축은 `backend-scheduler · backend-worker`
 - 차트: `grafana-community/tempo-distributed` **3.25.0**(app 3.1.1, 11/05 출시). 3.29.1은 11/18 출시라 2주 규칙에 걸린다
 - Kafka 토픽(현수가 생성 11/20, 데이터 파트 설계 · Kafka 흐름 문서 토픽 표에 있음): `tempo.ingest`, 파티션 3 · 복제 3 · `min.insync.replicas` 2, 보존 24시간 + 파티션당 1GB 상한(`retention.bytes`, 브로커 디스크를 학습 사건과 같이 써서 트레이스가 몰려도 못 채우게). 접속 `172.30.0.40~42:9092`(PLAINTEXT, 인증 없음), 컨슈머 그룹은 Tempo 이름으로. live-store 수 = 파티션 수(3)
-- values: `deploy/values/tempo-distributed.yaml`(옛 `tempo.yaml`은 전환이 끝나면 지운다). 이미지 tempo 3.1.1 · rollout-operator v0.41.1
+- values: `deploy/monitoring-cluster/values/tempo-distributed.yaml`(옛 `tempo.yaml`은 전환이 끝나면 지운다). 이미지 tempo 3.1.1 · rollout-operator v0.41.1
 - 개수(11/24 kind 검증으로 확정):
 
   | 구성 요소 | 개수 | 이유 |

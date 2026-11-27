@@ -41,7 +41,7 @@ curl -sG "http://$V:3100/loki/api/v1/query" --data-urlencode 'query=sum by (serv
 - 유닛 이름은 라벨이 아니다. 리소스 속성에는 고정 값만 넣을 수 있어서(레코드 필드 참조 불가) 구조화 메타데이터로 조회한다: `{service_namespace="pve-host", service_name="journal"} | _SYSTEMD_UNIT="corosync.service"`
 - `_CMDLINE` · `_EXE`(실행 명령줄 · 경로)는 보내지 않는다. 인자로 넘긴 비밀번호 · 토큰이 Loki에 남는 것을 막는다
 - Fluent Bit 자기 로그도 보내지 않는다(전송 실패 로그가 다시 수집돼 도는 것 방지). 상태는 호스트에서 `curl 127.0.0.1:2020/api/v1/health` · `journalctl -u fluent-bit`
-- 설치는 apt 저장소 없이 deb를 버전 · sha256 고정으로 받는다. 올릴 땐 `roles/fluent_bit/defaults/main.yml`의 버전 · sha256과 DaemonSet 이미지(`deploy/agents/base/fluent-bit`)를 같이 바꾼다
+- 설치는 apt 저장소 없이 deb를 버전 · sha256 고정으로 받는다. 올릴 땐 `roles/fluent_bit/defaults/main.yml`의 버전 · sha256과 DaemonSet 이미지(`deploy/cluster-common/fluent-bit`)를 같이 바꾼다
 - Loki가 죽어 있는 동안은 `/var/lib/monitoring-agents/fluent-bit/storage`에 쌓고(상한 1G) 살아나면 보낸다
 
 ## 왜 이렇게 됐나 (11/10)
