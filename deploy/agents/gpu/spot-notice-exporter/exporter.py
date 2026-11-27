@@ -42,9 +42,9 @@ def poll():
             if notice is None:
                 state.update(first_seen=None, scheduled=None)
             elif state["first_seen"] is None:      # 처음 본 시각은 예고가 있는 동안 바꾸지 않는다(분류기 중복 제거 기준)
-                scheduled = datetime.fromisoformat(notice["time"].replace("Z", "+00:00")).timestamp()
-                state.update(first_seen=time.time(), scheduled=scheduled)
+                state.update(first_seen=time.time())    # 예고부터 올린다. 아래 시각 해석이 실패해도 예고는 나간다
                 print(f"spot notice: {notice}", flush=True)
+                state["scheduled"] = datetime.fromisoformat(notice["time"].replace("Z", "+00:00")).timestamp()
             state["ok"] = 1
         except Exception as e:      # IMDS가 안 닿아도 죽지 않고 imds_ok 0으로 알린다
             if state["ok"] != 0:    # 계속 실패하는 동안은 처음 한 번만 적는다
@@ -57,8 +57,9 @@ def render():
     lines = ["# TYPE spot_notice_imds_ok gauge", f"spot_notice_imds_ok {state['ok'] or 0}"]
     if state["first_seen"] is not None:
         lines += ["# TYPE spot_interruption_notice_timestamp_seconds gauge",
-                  f"spot_interruption_notice_timestamp_seconds {state['first_seen']:.3f}",
-                  "# TYPE spot_interruption_scheduled_timestamp_seconds gauge",
+                  f"spot_interruption_notice_timestamp_seconds {state['first_seen']:.3f}"]
+    if state["scheduled"] is not None:
+        lines += ["# TYPE spot_interruption_scheduled_timestamp_seconds gauge",
                   f"spot_interruption_scheduled_timestamp_seconds {state['scheduled']:.3f}"]
     return ("\n".join(lines) + "\n").encode()
 
