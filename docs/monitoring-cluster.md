@@ -1,6 +1,6 @@
 # 모니터링 클러스터 (monitoring1~3, Kubespray) 구축 기록
 
-ADR-18의 저장 층(Mimir · Loki ×3, Tempo 분산형, Alertmanager ×2, 분류기 ×2, Grafana ×1 — 11/24 모두 운영 반영, `docs/monitoring-ha.md`)을 올린 **전용 k8s 3노드**. VM 1대 docker compose(`compose/`)를 대체했다. 이 문서는 클러스터 자체(VM · Kubespray · VIP)만 다룬다. 스택 배포는 `deploy/`(Argo CD가 적용)를 본다.
+ADR-18의 저장 층(Mimir · Loki ×3, Tempo 분산형, Alertmanager ×2, 분류기 ×2, Grafana ×1 — 11/24 모두 운영 반영, `docs/monitoring-ha.md`)을 올린 **전용 k8s 3노드**. VM 1대 docker compose를 대체했다(`compose/`는 v1.51.0까지 레포에 있었다). 이 문서는 클러스터 자체(VM · Kubespray · VIP)만 다룬다. 스택 배포는 `deploy/`(Argo CD가 적용)를 본다.
 
 - 구축: 2026-11-09 12:53 ~ 13:10 KST (Kubespray 1회, 실패 0)
 - 역할: VM 생성 · VIP 예약 · inventory = 박기현(IaC PR #7 · #8 · #9) / Kubespray 실행 · 운영 = 이태림

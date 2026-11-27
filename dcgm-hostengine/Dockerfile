@@ -1,4 +1,4 @@
-# DCGM 엔진(nv-hostengine)과 dcgmi만 담은 이미지. dcgm-exporter Pod의 사이드카로 쓴다(deploy/agents/gpu/dcgm-exporter).
+# DCGM 엔진(nv-hostengine)과 dcgmi만 담은 이미지. dcgm-exporter Pod의 사이드카로 쓴다(deploy/eks/dcgm-exporter).
 # exporter가 이 엔진을 보게 하면 dcgmi test --inject로 넣은 가짜 Xid가 exporter 지표에 나온다(내장 엔진이면 안 보임).
 # 공식 nvcr.io/nvidia/cloud-native/dcgm을 쓰지 않는 이유: 진단용 CUDA 묶음까지 들어 있어 받으면 약 7.3GB를 차지한다.
 #   GPU 노드 루트 디스크는 21.4GB(11/19 최소 여유 3.6GB)라 받다가 학습 Pod가 축출될 수 있다. core 패키지만이면 설치 49MB

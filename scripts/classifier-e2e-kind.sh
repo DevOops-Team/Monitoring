@@ -5,7 +5,7 @@
 #
 # 무엇이 진짜이고 무엇이 임시인가
 #   - Kafka: kind 안의 임시 브로커 1대. 실제 브로커(.40~.42)에는 쓰지 않는다
-#   - Mimir: 실제 모니터링 클러스터(172.30.0.35). kind의 수집 층(overlays/kind)이 cluster="kind-test"로 지표 · 로그를 보내고,
+#   - Mimir: 실제 모니터링 클러스터(172.30.0.35). kind의 수집 층(deploy/kind/agents)이 cluster="kind-test"로 지표 · 로그를 보내고,
 #            분류기는 그것을 읽어 job_id · collector_healthy를 채운다 (deploy-k8s.sh --agents-kind와 같은 방식)
 #   - kubeconfig: 따로 둔다. 평소 쓰는 ~/.kube/config의 현재 컨텍스트를 바꾸지 않는다
 set -euo pipefail
@@ -15,7 +15,7 @@ NAME=clf-e2e
 NODE="$NAME-worker"                     # Xid가 났다고 할 노드. 작업 e2e00001의 Pod만 여기 둔다
 OTHER_NODE="$NAME-worker2"              # 나머지 가짜 Pod. 한 노드에 작업이 둘이면 Xid의 job_id를 특정할 수 없다(의도한 동작)
 LOST_NODE="$NAME-worker3"               # 9단계에서 멈추고 지울 GPU 노드(taint로 다른 Pod는 안 올라감)
-CLUSTER=kind-test                       # deploy/agents/overlays/kind의 CLUSTER_NAME
+CLUSTER=kind-test                       # deploy/kind/agents의 CLUSTER_NAME
 MIMIR=http://172.30.0.35:9009
 PORT=18080
 WORK="${TMPDIR:-/tmp}/classifier-e2e"
@@ -73,7 +73,7 @@ if kind get clusters 2>/dev/null | grep -qx "$NAME"; then
   for n in $(kind get nodes --name "$NAME"); do docker start "$n" > /dev/null; done   # 앞 실행의 9단계가 멈춘 노드
   kubectl wait --for=condition=ready node --all --timeout=180s > /dev/null
 else
-  kind create cluster --name "$NAME" --kubeconfig "$KUBECONFIG" --config deploy/classifier/overlays/kind/kind-cluster.yaml
+  kind create cluster --name "$NAME" --kubeconfig "$KUBECONFIG" --config deploy/kind/classifier/kind-cluster.yaml
 fi
 # kind 노드에는 /var/log/journal이 없어 Fluent Bit(systemd 입력)가 뜨지 못한다. 수집 경로 판정(up{job="fluent-bit"})에 필요하다
 for n in $(kind get nodes --name "$NAME"); do
@@ -87,11 +87,11 @@ docker build -q -f classifier/Dockerfile -t classifier:kind \
 docker save classifier:kind -o "$WORK/classifier.tar"
 kind load image-archive "$WORK/classifier.tar" --name "$NAME"
 
-step "수집 층 (deploy/agents/overlays/kind) — 지표가 실제 Mimir로 간다"
+step "수집 층 (deploy/kind/agents) — 지표가 실제 Mimir로 간다"
 scripts/deploy-k8s.sh --agents-kind > "$WORK/agents.log" 2>&1 || { tail -20 "$WORK/agents.log"; fail "수집 층 적용"; }
 
-step "분류기 + 임시 Kafka (deploy/classifier/overlays/kind)"
-kubectl apply -k deploy/classifier/overlays/kind > /dev/null
+step "분류기 + 임시 Kafka (deploy/kind/classifier)"
+kubectl apply -k deploy/kind/classifier > /dev/null
 $K rollout status deploy/kafka --timeout=300s > /dev/null
 $K wait --for=condition=complete job/kafka-topics --timeout=180s > /dev/null
 $K rollout restart deploy/classifier > /dev/null        # 다시 돌릴 때도 방금 빌드한 이미지로
@@ -226,7 +226,7 @@ echo "   $LOST_NODE 멈춤 + Node 삭제. 룰 식이 이 노드를 잡을 때까
 # 실제 룰 식에서 대상 클러스터만 kind-test로 바꾼다. 실제 ruler는 eks-a · b · c만 보므로 kind는 실제 알람이 되지 않는다
 rule_expr=$("$PY" -c '
 import sys, yaml
-r = yaml.safe_load(open("deploy/base/mimir/rules/failover.yml"))
+r = yaml.safe_load(open("deploy/monitoring-cluster/storage/mimir/rules/failover.yml"))
 e = next(x for g in r["groups"] for x in g["rules"] if x.get("alert") == "FailoverGpuNodeLost")["expr"]
 print(e.replace("cluster=~\"eks-(a|b|c)\"", "cluster=\"" + sys.argv[1] + "\""))' "$CLUSTER")
 for _ in $(seq 1 36); do
