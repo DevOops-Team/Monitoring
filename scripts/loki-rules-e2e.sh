@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Loki 알람 룰 검증 (GPU-218): 로컬 Loki 컨테이너에 deploy/base/loki/rules를 그대로 올리고 합성 커널 로그 줄을 넣어
+# Loki 알람 룰 검증 (GPU-218): 로컬 Loki 컨테이너에 deploy/monitoring-cluster/storage/loki/rules를 그대로 올리고 합성 커널 로그 줄을 넣어
 #   ① 울려야 할 줄만 알람이 되는지 ② 라벨 · annotation이 분류기 계약(docs/classifier.md 2절)과 맞는지 본다.
 # 사용: scripts/loki-rules-e2e.sh
 #
@@ -9,7 +9,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-IMAGE=grafana/loki:3.7.9                # deploy/values/loki.yaml과 같은 버전
+IMAGE=grafana/loki:3.7.9                # deploy/monitoring-cluster/values/loki.yaml과 같은 버전
 NAME=loki-rules-e2e
 PORT=13100
 WORK=$(mktemp -d)
@@ -37,7 +37,7 @@ EOF
 docker rm -f "$NAME" > /dev/null 2>&1 || true
 # 운영과 같은 자리(/etc/loki/rules/fake = 테넌트 fake)에 룰 디렉터리를 통째로 마운트한다
 docker run -d --name "$NAME" -p "127.0.0.1:$PORT:3100" \
-  -v "$WORK/loki.yaml:/etc/loki/local-config.yaml:ro" -v "$PWD/deploy/base/loki/rules:/etc/loki/rules/fake:ro" \
+  -v "$WORK/loki.yaml:/etc/loki/local-config.yaml:ro" -v "$PWD/deploy/monitoring-cluster/storage/loki/rules:/etc/loki/rules/fake:ro" \
   "$IMAGE" -config.file=/etc/loki/local-config.yaml > /dev/null
 for _ in $(seq 1 60); do curl -s -m 2 "localhost:$PORT/ready" | grep -q '^ready' && break; sleep 2; done
 curl -s -m 2 "localhost:$PORT/ready" | grep -q '^ready' || { docker logs "$NAME" 2>&1 | tail -20; echo "Loki가 뜨지 않았다" >&2; exit 1; }

@@ -40,7 +40,7 @@ loki:
   compactor:
     retention_enabled: true
     delete_request_store: s3
-  # LogQL 알람 룰은 레포 deploy/base/loki/rules/*.yml → ConfigMap loki-rules → 아래 singleBinary.extraVolumeMounts로 Pod 안 파일
+  # LogQL 알람 룰은 레포 deploy/monitoring-cluster/storage/loki/rules/*.yml → ConfigMap loki-rules → 아래 singleBinary.extraVolumeMounts로 Pod 안 파일
   rulerConfig:
     # Service 하나가 아니라 Alertmanager Pod 전부에게 보낸다: headless Service의 SRV 레코드로 Pod 목록을 찾는다 (docs/monitoring-ha.md 3.1)
     alertmanager_url: http://_http._tcp.alertmanager-headless.monitoring.svc.cluster.local
@@ -96,7 +96,7 @@ singleBinary:
     - name: s3-cert
       secret: {secretName: loki-s3-cert}   # scripts/create-secrets.sh s3-certs
     - name: rules
-      configMap: {name: loki-rules}        # deploy/base(kustomization.yaml)가 만든다. 차트의 ruler.directories는 모놀리식에서 ConfigMap을 안 만들어 쓰지 않는다
+      configMap: {name: loki-rules}        # deploy/monitoring-cluster/storage(kustomization.yaml)가 만든다. 차트의 ruler.directories는 모놀리식에서 ConfigMap을 안 만들어 쓰지 않는다
   extraVolumeMounts:
     - {name: rules, mountPath: /etc/loki/rules/fake, readOnly: true}
   # Service는 차트 기본(ClusterIP). 밖으로는 base/external/services.yaml의 loki-external이 3100만 연다

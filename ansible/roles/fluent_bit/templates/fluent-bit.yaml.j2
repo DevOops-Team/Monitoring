@@ -1,5 +1,5 @@
 # {{ ansible_managed }} — Monitoring 레포 ansible/roles/fluent_bit. 손으로 고치지 말 것
-# 호스트 journald 전체 → Loki OTLP 직접. service · 출력 블록은 DaemonSet 설정(deploy/agents/base/fluent-bit/fluent-bit.yaml)과 같은 값
+# 호스트 journald 전체 → Loki OTLP 직접. service · 출력 블록은 DaemonSet 설정(deploy/cluster-common/fluent-bit/fluent-bit.yaml)과 같은 값
 {# 리소스 속성은 고정 값만 넣을 수 있다(레코드 필드 참조 불가, 5.1.1에서 확인) → service.name이 다른 것은 입력을 나눈다 #}
 {% macro resource(service_name) %}
           - name: opentelemetry_envelope

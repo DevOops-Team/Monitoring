@@ -3,7 +3,7 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../base
+  - ../cluster-common
   - prometheus-agent-statefulset.yaml
 configMapGenerator:
   # KSM 사용자 정의 리소스 지표 설정(MultiKueueCluster 펜싱 라벨 · JobSet 실패 시각). 관리 클러스터에만 있는 리소스라 base가 아니라 여기
