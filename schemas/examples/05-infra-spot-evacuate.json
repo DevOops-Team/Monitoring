@@ -3,7 +3,7 @@
   "event_id": "eb645846a4543e5b64de4677dd1a2f92",
   "traceparent": "00-eb645846a4543e5b64de4677dd1a2f92-dc327708d7e2cee9-01",
   "ts": "2026-11-18T14:02:11Z",
-  "cluster": "worker-a",
+  "cluster": "eks-a",
   "az": "ap-northeast-2a",
   "node": "ip-10-0-1-23",
   "gpu_uuid": null,

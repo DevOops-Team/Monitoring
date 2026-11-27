@@ -3,7 +3,7 @@
   "event_id": "d180880cf3fb3d1cf052c9aafa7233a4",
   "traceparent": "00-d180880cf3fb3d1cf052c9aafa7233a4-cefce2c8b0c5e7dd-01",
   "ts": "2026-11-18T14:02:11Z",
-  "cluster": "worker-a",
+  "cluster": "eks-a",
   "az": "ap-northeast-2a",
   "node": null,
   "gpu_uuid": null,
@@ -30,7 +30,7 @@
     }
   ],
   "collector_healthy": false,
-  "dedup_key": "worker-a|site|1795010531",
+  "dedup_key": "eks-a|site|1795010531",
   "category": "site",
   "confidence": 0.7,
   "suggested_action": "fence_evacuate"
