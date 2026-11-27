@@ -127,6 +127,23 @@ class Enricher:
             oom=oom is not None,
         )
 
+    def nodes_not_ready(self, cluster: str, job_id: str, generation: int) -> tuple[str, ...] | None:
+        """그 작업 · 세대의 Pod가 최근 10분 안에 있던 노드 가운데 지금 Ready가 아닌(NotReady · Unknown · 삭제) 노드. 조회 실패는 None.
+        종료 신호를 판정할 때 묻는다: 노드가 죽는 중이면 곧 노드 소실 사건이 온다(pipeline.py _pod_exit, GPU-220).
+        KSM이 안 긁히면 노드 지표가 한꺼번에 사라져 전부 죽은 것처럼 보이므로, 그때는 빈 답을 낸다(FailoverGpuNodeLost와 같은 조건)."""
+        c = _q(cluster)
+        expr = (f'group by (node) (last_over_time(kube_pod_info{{cluster="{c}", namespace="training"}}[10m])'
+                f' and on (namespace, pod) last_over_time(kube_pod_labels{{cluster="{c}", namespace="training",'
+                f' label_devoops_job_id="{_q(job_id)}", label_devoops_generation="{generation}"}}[10m]))'
+                f' unless on (node) (kube_node_status_condition{{cluster="{c}", condition="Ready", status="true"}} == 1)'
+                f' and on () (max(up{{cluster="{c}", job="kube-state-metrics"}}) == 1)')
+        try:
+            rows = self.query(expr, None)
+        except Exception as e:
+            log("enrich.failed", what="nodes_not_ready", reason=str(e), cluster=cluster, job_id=job_id)
+            return None
+        return tuple(sorted(n for r in rows if (n := r.get("node"))))
+
     def _try(self, what: str, s: Signal, expr: str, at: datetime | None) -> list[dict[str, Any]] | None:
         try:
             return self.query(expr, at)

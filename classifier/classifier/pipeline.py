@@ -27,6 +27,9 @@ from .signals import RejectError, Signal, parse_alert
 logger = logging.getLogger("classifier")
 
 POD_EXIT_WAIT = timedelta(seconds=30)       # 임시값. E2E에서 job.fenced와 Pod 종료의 실제 간격을 재서 고친다
+# 종료 신호를 판정할 때 그 작업의 노드가 죽는 중이면 신호 시각부터 이만큼까지 노드 소실 사건을 기다린다.
+# 노드 사건은 마지막 Ready 샘플 뒤 약 55초에 나간다(수집 15 + for 15 + 평가 지연 15 + 여유). 그 두 배
+NODE_WAIT = timedelta(seconds=120)
 MAX_PENDING = 1000                          # 기다리는 신호의 상한. 넘으면 기다리지 않고 hold로 낸다(메모리 보호)
 RETRY_AFTER = timedelta(seconds=5)          # 기다리던 신호의 발행이 실패했을 때 다시 해 볼 간격
 NO_RECOVERY = ("hold", "none")              # 복구를 부르지 않는 action. 원인 사건으로 치지 않는다
@@ -40,7 +43,7 @@ DUPLICATE = "duplicate"             # 이미 낸 사건
 PUBLISHED = "published"
 INVALID = "invalid"                 # 스키마 검증 실패
 PUBLISH_FAILED = "publish_failed"   # Kafka 전달 실패. 웹훅이 503을 돌려줘 Alertmanager가 다시 보낸다
-DEFERRED = "deferred"               # Pod 종료. 30초 뒤 판정
+DEFERRED = "deferred"               # Pod 종료. 30초 뒤 판정(그 작업의 노드가 죽는 중이면 노드 사건을 더 기다린다)
 INTENDED = "intended"               # Pod 종료. 펜싱 · 사용자 중단
 STALE = "stale_generation"          # Pod 종료. 옛 세대의 뒤늦은 종료
 ABSORBED = "absorbed"               # Pod 종료. 같은 작업 · 세대의 원인 사건에 묶임
@@ -60,11 +63,13 @@ class Pending:
 
 class Pipeline:
     def __init__(self, rules: Rules, publisher: Publisher, enrich: Callable[[Signal], Context],
-                 lifecycle: Lifecycle | None = None, signals: frozenset[str] | None = None):
+                 lifecycle: Lifecycle | None = None, signals: frozenset[str] | None = None,
+                 node_check: Callable[[str, str, int], tuple[str, ...] | None] | None = None):
         self.rules = rules
         self.signals = signals              # 받을 신호 종류. None이면 전부. 라우팅(Alertmanager)이 틀려도 여기서 막는다
         self.publisher = publisher
         self.enrich = enrich
+        self.node_check = node_check        # (cluster, 작업, 세대) → 지금 Ready가 아닌 그 작업의 노드. 없으면 확인하지 않는다
         self.lifecycle = lifecycle or Lifecycle()   # 읽는 쪽이 없으면 healthy=False라 Pod 종료는 전부 hold
         self.dedup = dedup.Dedup()
         self.pending: list[Pending] = []
@@ -103,6 +108,9 @@ class Pipeline:
                 outcome = self._pod_exit(p.s, p.ctx, now)
                 if outcome == PUBLISH_FAILED:       # 웹훅 응답은 이미 나갔다. 여기서 다시 해 본다
                     p.due = now + RETRY_AFTER
+                    continue
+                if outcome == DEFERRED:             # 그 작업의 노드가 죽는 중이다. 노드 사건이 오면 거기에 묶인다(_absorbable)
+                    p.due = p.s.ts + NODE_WAIT
                     continue
                 self.pending.remove(p)
                 self.alerts.labels(outcome).inc()
@@ -161,14 +169,17 @@ class Pipeline:
             return self._straggler(s, ctx, now)
         if s.signal not in EXIT_SIGNALS:
             return self._emit(s, ctx, now)
+        if any(p.s == s for p in self.pending):             # Alertmanager 재전송
+            return DEFERRED
         if now < s.ts + POD_EXIT_WAIT:
-            if any(p.s == s for p in self.pending):         # Alertmanager 재전송
-                return DEFERRED
             if len(self.pending) >= MAX_PENDING:
                 return self._emit(s, ctx, now, hold=True)
             self.pending.append(Pending(s, ctx, s.ts + POD_EXIT_WAIT))
             return DEFERRED
-        return self._pod_exit(s, ctx, now)
+        outcome = self._pod_exit(s, ctx, now)
+        if outcome == DEFERRED:
+            self.pending.append(Pending(s, ctx, s.ts + NODE_WAIT))
+        return outcome
 
     def _site(self, s: Signal, ctx: Context, now: datetime) -> str:
         """작업마다 사건 1건. 조회가 실패하면 job_id 없는 1건(컨트롤러가 HOLD → 사람이 본다)."""
@@ -242,6 +253,15 @@ class Pipeline:
         other = self.exits.get((ctx.job_id, ctx.generation))
         if other is not None and other[0] != s.signal:      # Pod 종료와 작업 실패가 같은 일을 가리킨다. 먼저 낸 쪽만 사건
             return ABSORBED
+        # 그 작업의 노드가 죽는 중이면 이 종료는 결과다. 여기서 restart_in_place를 내면 죽은 노드에 다시 제출된다(11/26 노드 종료 시험).
+        # 노드 소실 사건을 기다리고, 끝까지 안 오면(작업을 특정 못 했거나 hold로 나감) 사람이 보게 hold로 낸다.
+        # 조회 실패(None)는 확인하지 못한 것이라 지금까지처럼 판정한다
+        dying = self.node_check(s.cluster, ctx.job_id, ctx.generation) if self.node_check else None
+        if dying:
+            if now < s.ts + NODE_WAIT:
+                log("exit.waiting_node_lost", alert=s.alert, job_id=ctx.job_id, generation=ctx.generation, nodes=dying)
+                return DEFERRED
+            return self._emit(s, ctx, now, hold=True)
         return self._emit(s, ctx, now, hold=not self.lifecycle.healthy)
 
     def _emit(self, s: Signal, ctx: Context, now: datetime, hold: bool = False) -> str:
