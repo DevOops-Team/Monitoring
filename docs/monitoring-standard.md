@@ -148,7 +148,7 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 | MON-STD-01 | | | 「GPU」 타일 온도 여유, 그래프 GPU 온도(한계 3단 점선) | 2026-11-20 |
 | MON-STD-02 | | | 「GPU」 타일 감속 GPU, 그래프 감속 사유 · 감속 시간 비율 · SM 클럭 | 2026-11-20 |
 | MON-STD-03 | | | 「GPU」 타일 ECC DBE · 폐기 대기, 그래프 ECC SBE 증가 · 페이지 폐기 | 2026-11-20 |
-| MON-STD-04 | (Loki 룰 본문 미구현, GPU-218) · 보조 `FailoverXidDcgm` (`deploy/base/mimir/rules/failover.yml`) | | 「GPU」 타일 Xid GPU, 그래프 Xid · 커널 Xid 로그 (Xid가 난 적이 없어 비어 있음) | 2026-11-20 |
+| MON-STD-04 | `FailoverXidKernel` (`deploy/base/loki/rules/xid.yml`, 2026-11-27 GPU-218 — 합성 줄로만 검증, 실제 줄 확인 전) · 보조 `FailoverXidDcgm` (`deploy/base/mimir/rules/failover.yml`) | | 「GPU」 타일 Xid GPU, 그래프 Xid · 커널 Xid 로그 (Xid가 난 적이 없어 비어 있음) | 2026-11-20 |
 | MON-STD-05 | | | 「GPU」 GPU 사용률 · GPU 메모리 | 2026-11-20 |
 | MON-STD-08 | | | 「학습 작업」 타일 스트래글러 · 데이터 대기, 그래프 스트래글러 비율(1.5 · 2.0 선) · 랭크 계산 · 통신 · 데이터 대기(0.1초 선) | 2026-11-20 |
 | 나머지 09 · 11 · 12 · 14 · 17 · 19 · 21 | | | | |
