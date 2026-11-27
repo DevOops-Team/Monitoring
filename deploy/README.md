@@ -668,6 +668,30 @@ kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- nvidia-smi -rgc
 # 확인: 비율이 1.0 근처로 돌아오고 FailoverStraggler가 꺼진다
 ```
 
+### ⑧ 실제 Xid 내기 — 커널 로그 경로 확인 (아직 실행 전 — 절차 초안, 11/27, GPU-218)
+
+③의 `dcgmi` 주입은 커널 로그를 안 남겨 커널 로그 경로 룰(`FailoverXidKernel`, `deploy/base/loki/rules/xid.yml`)을 시험하지 못한다. 이 Pod는 GPU에서 잘못된 주소에 써서 드라이버가 **진짜 Xid**(기대 31)를 보고하게 한다. 하드웨어는 안 건드리고, 죽는 것은 시험 Pod의 프로세스뿐이다.
+두 경로가 다 울리고 분류기까지 간다(31 · 13 · 43 = `restart_in_place`). **GPU를 1장 요청하므로 학습이 안 도는 GPU 노드(예비 노드 등)에서 한다.** T4에서 실제로 Xid가 나는지는 미검증이다.
+
+```bash
+NODE=<학습 Pod가 없는 GPU 노드>
+date '+%T'; sed "s/NODE_NAME/$NODE/" deploy/fault-injection/xid-pod.yaml | kubectl apply -f -
+kubectl -n monitoring logs -f xid-test          # `inject` 줄의 시각(UTC) = 주입 시각. 이미지가 없던 노드면 받는 데 몇 분 걸린다
+kubectl -n monitoring delete pod xid-test       # 끝나면 지운다
+# Xid가 안 나면: 매니페스트의 METHOD를 assert로 바꿔 한 번 더(비교용)
+```
+
+볼 것
+
+| # | 무엇 | 어디서 | 기대 |
+|---|---|---|---|
+| 1 | **원문** | Loki `{k8s_cluster_name="eks-a", service_name="kernel"} \|= "NVRM"` | `NVRM: Xid (PCI:…): 31, pid=…` 줄. **원문 그대로 측정 노트에 보관**(몇 줄이 몇 초 사이에 찍히는지도) |
+| 2 | 룰 형식 | 1번 줄과 `xid.yml`의 정규식 | 줄이 `NVRM: Xid (PCI:주소): 번호`로 시작한다. 다르면 정규식 · `scripts/loki-rules-e2e.sh`의 합성 줄 · `classifier/classifier/normalize.py`의 Xid 패턴을 원문에 맞춘다. 같으면 정규식을 줄 맨 앞(`^`)에 고정한다 |
+| 3 | 커널 로그 알람 | Alertmanager | `FailoverXidKernel`, `source="dmesg"` · `xid` · `node`, annotation `event_ts` · `log_line`. 2분 울린다. 줄이 여러 개면 알람도 그만큼(몇 개인지 적는다 — 묶을지 결정의 근거) |
+| 4 | dcgm 알람 | Alertmanager | `FailoverXidDcgm`, 같은 `xid` · `node` |
+| 5 | 한 건으로 묶임 | `gpu.fault` · 분류기 로그(`kubectl logs`) | 사건 1건, 나머지는 `duplicate`. 2건이면 두 경로의 `event_ts` 차이가 45초를 넘었는지 본다 |
+| 6 | 어느 경로가 빨랐나 | 두 알람의 시작 시각 − Pod 로그 `inject` 시각 | 커널 로그 쪽이 먼저일 것(평가 15초). 값을 측정 노트에 |
+
 ### HOLD가 나면
 
 `RecoveryHold` 알람이 Slack `#alerts-gpu`에 와야 한다(Slack 화면은 사용자가 확인). `recovery_hold_total{job_id, reason}`가 늘었는지 같이 적는다.
