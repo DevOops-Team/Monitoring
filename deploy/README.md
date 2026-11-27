@@ -1,16 +1,16 @@
 # 모니터링 스택 (k8s) — 런북
 
-모니터링 클러스터(monitoring1~3, `docs/monitoring-cluster.md`)에 올리는 스택. `compose/`(VM 1대)를 대체한다. 이 문서가 MON-STD-22 "모니터링 클러스터 복구 런북"이다. 부 담당이 이 절차만으로 다시 올릴 수 있어야 한다.
+모니터링 클러스터(monitoring1~3, `docs/monitoring-cluster.md`)에 올리는 스택. 옛 VM 1대 docker compose 구성을 대체했다(`compose/`는 v1.51.0까지 레포에 있었다). 이 문서가 MON-STD-22 "모니터링 클러스터 복구 런북"이다. 부 담당이 이 절차만으로 다시 올릴 수 있어야 한다.
 
-상태(11/24): ADR-18 목표 구성 — 저장소 **×3**(Mimir · Loki RF 3, Tempo 분산형), Alertmanager · Agent · 분류기 **×2**, Grafana ×1(계획 · 결과 `docs/monitoring-ha.md`, GPU-227). 블록 · 청크는 **S3**(11/16 전환, 버킷 `devoops-prod-monitoring-947027666399-us-east-2`의 `mimir/` · `loki/` · `tempo/`), 배포는 **ArgoCD**(11/17, 아래 「적용」). 클러스터에 붙이는 수집 층은 `agents/`(아래 절).
+상태(11/24): ADR-18 목표 구성 — 저장소 **×3**(Mimir · Loki RF 3, Tempo 분산형), Alertmanager · Agent · 분류기 **×2**, Grafana ×1(계획 · 결과 `docs/monitoring-ha.md`, GPU-227). 블록 · 청크는 **S3**(11/16 전환, 버킷 `devoops-prod-monitoring-947027666399-us-east-2`의 `mimir/` · `loki/` · `tempo/`), 배포는 **ArgoCD**(11/17, 아래 「적용」). 클러스터에 붙이는 수집 층은 `cluster-common/` · `manager-cluster/` · `eks/`(아래 절).
 
 ## 구성
 
 | 구성물 | 방법 | 개수 | PVC | 배치 (11/24) | 클러스터 안 주소 | 밖 주소 (서비스 VIP) |
 |---|---|---|---|---|---|---|
 | StorageClass `local-path` | Helm `containeroo/local-path-provisioner` | 1 | - | - | - | - |
-| Mimir 3.2.4 (지표 저장 · 룰 평가) | `base/mimir/` | 3 (RF 3) | 10Gi × 3 | 노드마다 하나 | `mimir.monitoring.svc:9009` | `172.30.0.35:9009` |
-| Prometheus Agent v3.15.1 (스크레이프 → Mimir) | `base/prometheus-agent/` | 2 (HA tracker) | 2Gi (WAL) × 2 | 서로 다른 노드 | `prometheus-agent:9090` | - |
+| Mimir 3.2.4 (지표 저장 · 룰 평가) | `monitoring-cluster/storage/mimir/` | 3 (RF 3) | 10Gi × 3 | 노드마다 하나 | `mimir.monitoring.svc:9009` | `172.30.0.35:9009` |
+| Prometheus Agent v3.15.1 (스크레이프 → Mimir) | `monitoring-cluster/storage/prometheus-agent/` | 2 (HA tracker) | 2Gi (WAL) × 2 | 서로 다른 노드 | `prometheus-agent:9090` | - |
 | Loki 3.7.9 | Helm `grafana-community/loki` | 3 (RF 3) | 10Gi × 3 | 노드마다 하나 | `loki.monitoring.svc:3100` | `172.30.0.35:3100` |
 | Tempo 3.1.1 분산형 | Helm `grafana-community/tempo-distributed` | 구성 요소 7종 · 17 Pod + rollout-operator 1 (아래) | 없음 | 흩어짐 | `tempo-query-frontend.monitoring.svc:3200`(조회) | `172.30.0.35:4317` · `:4318` (OTLP만) |
 | Alertmanager v0.34.2 | Helm `prometheus-community/alertmanager` | 2 (클러스터링) | 1Gi × 2 | 서로 다른 노드 | `alertmanager.monitoring.svc:9093` | `172.30.0.35:9093` |
@@ -25,19 +25,19 @@
 - Tempo 분산형: distributor · query-frontend · querier 각 2, block-builder 3 · live-store 3 × 존 2(= Kafka `tempo.ingest` 파티션 3), backend-scheduler · backend-worker 각 1, rollout-operator 1. 쓰기는 Kafka를 거친다(`docs/monitoring-ha.md` 3.6)
 - PVC는 local-path라 **만들어진 노드에 묶인다.** 노드 하나가 죽으면 남은 복제본으로 버티고, 노드를 새로 만들 때만 옛 PVC를 지워야 한다(`docs/monitoring-ha.md` 6절). Tempo 분산형은 PVC가 없어 묶이지 않는다. cAdvisor는 따로 안 깔고 kubelet 내장 것을 긁는다
 - Mimir · Loki의 PVC에는 WAL · 아직 안 올린 최근 데이터 · 캐시만 있다(Tempo는 같은 역할을 Kafka가 한다). 오래 두는 데이터는 S3에 있고 보존 30일은 각 앱 설정이 지킨다(버킷에는 수명 규칙 없음). S3 키는 Pod 안 `aws-credentials` 사이드카가 인증서(IAM Roles Anywhere)로 1시간짜리를 받아 준다
-- 밖으로 나가는 문은 전부 `type: LoadBalancer` + `kube-vip.io/loadbalancerIPs: "172.30.0.35"`, 포트로 공유. Loki · Tempo는 차트 Service를 내부용으로 두고 `base/external/services.yaml`이 필요한 포트만 연다
+- 밖으로 나가는 문은 전부 `type: LoadBalancer` + `kube-vip.io/loadbalancerIPs: "172.30.0.35"`, 포트로 공유. Loki · Tempo는 차트 Service를 내부용으로 두고 `monitoring-cluster/storage/external/services.yaml`이 필요한 포트만 연다
 
-수집 대상(Agent `base/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`) · Kafka · DB VM 4대(`job="vm-host"`) · kafka_exporter · postgres_exporter(아래 「Kafka · DB VM 수집」) · pfSense 2대(`job="pfsense-host"`, 아래 「pfSense 수집」) · 분류기(`job="classifier"`, Pod를 찾아 긁는다).
-룰: `base/mimir/rules/self.yml` 알람 11개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown · MonitoringReplicasDegraded/AllDown · MonitoringAgentAbsent · MonitoringKsmAbsent(MON-STD-15) · LogShippingDropping · LogShippingStopped · LokiIngestStopped(MON-STD-32)), Mimir ruler가 15초마다 평가.
-`base/mimir/rules/recovery.yml` 6개(MON-STD-25 · 28 · 29): `RecoveryHold` = 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화 · `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` = 펜싱 하트비트 멈춤 · 조회 실패 · `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` = 복구 컨트롤러 자체가 없음 · 재시작 반복 · `gpu.fault`를 못 읽음(울렸을 때 볼 것은 아래 「알람이 울리면」). 단위 테스트는 `base/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
-`base/mimir/rules/records.yml` 레코딩 룰 7개: 대시보드용(OOM kill · OTel 거절 · dcgm 감속 시간 · ECC SBE · PCIe 재시도). `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
-`base/mimir/rules/infra.yml` 5개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka 브로커 다운 · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `base/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
-`base/mimir/rules/classifier.yml` 2개(MON-STD-27): 분류기가 없거나 안 긁힘 · `job.lifecycle`을 못 읽음. 단위 테스트는 `base/mimir/tests/classifier_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
-`base/mimir/rules/training.yml` 1개(MON-STD-30): `TrainingStalled` = trainer는 떠 있는데 step이 10분째 안 늘거나 지표가 없음. 단위 테스트는 `base/mimir/tests/training_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
-`base/mimir/rules/workloads.yml` 3개(MON-STD-31): `WorkloadReplicasDegraded` · `WorkloadDown` = 관리 · 모니터링 클러스터 워크로드의 Ready 수가 원하는 수보다 적음 · 0개, `EksWorkloadDown` = EKS 워크로드 0개(펜싱된 EKS 제외). 지표를 안 긁는 워크로드(dispatcher · relocator · collector 등)가 죽어도 울린다. 단위 테스트는 `base/mimir/tests/workloads_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
+수집 대상(Agent `monitoring-cluster/storage/prometheus-agent/prometheus.yml`): kubelet 3 · cAdvisor 3 · node-exporter 3 · kube-state-metrics 1 · 스택 자신 · blackbox probe(pfSense 172.30.0.1 · 인터넷 1.1.1.1) · **Proxmox 호스트 5대(`job="pve-host"`)** · Kafka JMX(`job="kafka-jmx"`) · Kafka · DB VM 4대(`job="vm-host"`) · kafka_exporter · postgres_exporter(아래 「Kafka · DB VM 수집」) · pfSense 2대(`job="pfsense-host"`, 아래 「pfSense 수집」) · 분류기(`job="classifier"`, Pod를 찾아 긁는다).
+룰: `monitoring-cluster/storage/mimir/rules/self.yml` 알람 11개(Watchdog · MonitoringNodeDiskWarning/Critical · MonitoringTargetDown · MonitoringReplicasDegraded/AllDown · MonitoringAgentAbsent · MonitoringKsmAbsent(MON-STD-15) · LogShippingDropping · LogShippingStopped · LokiIngestStopped(MON-STD-32)), Mimir ruler가 15초마다 평가.
+`monitoring-cluster/storage/mimir/rules/recovery.yml` 6개(MON-STD-25 · 28 · 29): `RecoveryHold` = 복구 컨트롤러의 `recovery_hold_total`이 늘거나 새로 생기면 약 5분 발화 · `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` = 펜싱 하트비트 멈춤 · 조회 실패 · `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` = 복구 컨트롤러 자체가 없음 · 재시작 반복 · `gpu.fault`를 못 읽음(울렸을 때 볼 것은 아래 「알람이 울리면」). 단위 테스트는 `monitoring-cluster/storage/mimir/tests/recovery_test.yml`(lint 단계가 돌림, 클러스터에는 안 실림).
+`monitoring-cluster/storage/mimir/rules/records.yml` 레코딩 룰 7개: 대시보드용(OOM kill · OTel 거절 · dcgm 감속 시간 · ECC SBE · PCIe 재시도). `_total` 없는 카운터의 `increase()` · `rate()`를 미리 계산해 Grafana 안내 아이콘이 타일 제목을 가리지 않게 한다.
+`monitoring-cluster/storage/mimir/rules/infra.yml` 5개(MON-STD-13 · 23 · 26): PostgreSQL 접속 · 수집기 lag · Kafka 브로커 다운 · Kafka/DB VM과 pfSense의 루트 디스크. 단위 테스트는 `monitoring-cluster/storage/mimir/tests/infra_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
+`monitoring-cluster/storage/mimir/rules/classifier.yml` 2개(MON-STD-27): 분류기가 없거나 안 긁힘 · `job.lifecycle`을 못 읽음. 단위 테스트는 `monitoring-cluster/storage/mimir/tests/classifier_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
+`monitoring-cluster/storage/mimir/rules/training.yml` 1개(MON-STD-30): `TrainingStalled` = trainer는 떠 있는데 step이 10분째 안 늘거나 지표가 없음. 단위 테스트는 `monitoring-cluster/storage/mimir/tests/training_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
+`monitoring-cluster/storage/mimir/rules/workloads.yml` 3개(MON-STD-31): `WorkloadReplicasDegraded` · `WorkloadDown` = 관리 · 모니터링 클러스터 워크로드의 Ready 수가 원하는 수보다 적음 · 0개, `EksWorkloadDown` = EKS 워크로드 0개(펜싱된 EKS 제외). 지표를 안 긁는 워크로드(dispatcher · relocator · collector 등)가 죽어도 울린다. 단위 테스트는 `monitoring-cluster/storage/mimir/tests/workloads_test.yml`. 울렸을 때 볼 것은 아래 「알람이 울리면」.
 
-`base/mimir/rules/failover.yml` 7개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown` · `FailoverGpuNodeLost` · `FailoverJobFailed` · `FailoverStraggler` · `FailoverSpotNotice`). `FailoverSpotNotice`(11/27, GPU-219)는 GPU 노드의 `spot-notice-exporter`가 스팟 회수 예고(2분 전)를 본 동안 울린다. 라우트와 `ENABLED_SIGNALS`에 `spot`이 아직 없어 Alertmanager 화면에만 보인다(켜는 것은 「장애 주입」 ⑨). `FailoverStraggler`(11/26, GPU-296)는 한 랭크가 10분째 느릴 때 울리고 느린 동안 계속 떠 있다. 11/26부터 분류기로 간다(아래 「분류기」). `FailoverJobFailed`(11/25, GPU-220)는 관리 클러스터 JobSet이 실패로 끝난 것을 본다: 죽은 Pod가 MultiKueue 정리로 약 14초 만에 지워져 `FailoverPodExit`이 못 보는 경우를 잡는다. 라우트와 분류기 `ENABLED_SIGNALS`에 `job_failed`가 들어가 11/25부터 사건으로 나간다(작업 · 세대마다 `restart_in_place` 1건). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료 · GPU 노드 소실 · 사이트는 분류기 웹훅(수신자 `classifier`, 사이트는 11/25부터). 펜싱 안 된 EKS가 사라지면 실제 대피가 나가므로 EKS를 끌 때는 fence부터. 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `base/mimir/tests/failover_test.yml`.
-`base/loki/rules/xid.yml` 1개(MON-STD-04, 11/27 GPU-218): `FailoverXidKernel` = EKS 커널 로그의 `NVRM: Xid` 줄마다 원인 알람(`signal=xid` · `source=dmesg`). Loki ruler가 평가하고 같은 Alertmanager · 분류기 라우트로 간다. 같은 Xid의 `FailoverXidDcgm`과는 분류기가 한 사건으로 묶는다. promtool 대상이 아니라 `scripts/loki-rules-e2e.sh`(로컬 Loki + 합성 줄)로 검사한다. 실제 드라이버 줄로는 아직 확인 전(「장애 주입」 ⑧).
+`monitoring-cluster/storage/mimir/rules/failover.yml` 7개: 분류기가 읽는 원인 알람(`FailoverXidDcgm` · `FailoverPodExit` · `FailoverSiteDown` · `FailoverGpuNodeLost` · `FailoverJobFailed` · `FailoverStraggler` · `FailoverSpotNotice`). `FailoverSpotNotice`(11/27, GPU-219)는 GPU 노드의 `spot-notice-exporter`가 스팟 회수 예고(2분 전)를 본 동안 울린다. 라우트와 `ENABLED_SIGNALS`에 `spot`이 아직 없어 Alertmanager 화면에만 보인다(켜는 것은 「장애 주입」 ⑨). `FailoverStraggler`(11/26, GPU-296)는 한 랭크가 10분째 느릴 때 울리고 느린 동안 계속 떠 있다. 11/26부터 분류기로 간다(아래 「분류기」). `FailoverJobFailed`(11/25, GPU-220)는 관리 클러스터 JobSet이 실패로 끝난 것을 본다: 죽은 Pod가 MultiKueue 정리로 약 14초 만에 지워져 `FailoverPodExit`이 못 보는 경우를 잡는다. 라우트와 분류기 `ENABLED_SIGNALS`에 `job_failed`가 들어가 11/25부터 사건으로 나간다(작업 · 세대마다 `restart_in_place` 1건). Slack으로 가지 않고 Alertmanager의 `pipeline=failover` 라우트로 간다: Xid · Pod 종료 · GPU 노드 소실 · 사이트는 분류기 웹훅(수신자 `classifier`, 사이트는 11/25부터). 펜싱 안 된 EKS가 사라지면 실제 대피가 나가므로 EKS를 끌 때는 fence부터. 떴는지는 Alertmanager 화면(`http://172.30.0.35:9093`)에서 본다. 라벨 계약과 한계는 `docs/classifier.md` 2절 · 8절, 단위 테스트는 `monitoring-cluster/storage/mimir/tests/failover_test.yml`.
+`monitoring-cluster/storage/loki/rules/xid.yml` 1개(MON-STD-04, 11/27 GPU-218): `FailoverXidKernel` = EKS 커널 로그의 `NVRM: Xid` 줄마다 원인 알람(`signal=xid` · `source=dmesg`). Loki ruler가 평가하고 같은 Alertmanager · 분류기 라우트로 간다. 같은 Xid의 `FailoverXidDcgm`과는 분류기가 한 사건으로 묶는다. promtool 대상이 아니라 `scripts/loki-rules-e2e.sh`(로컬 Loki + 합성 줄)로 검사한다. 실제 드라이버 줄로는 아직 확인 전(「장애 주입」 ⑧).
 라우팅: Watchdog → healthchecks.io · `RecoveryHold` → Slack `slack-event`(해결 알림 없음: 꺼짐이 해결이 아니라서) · 나머지 → Slack `slack`.
 `recovery.yml`과 `slack-event`는 11/11 19:36 클러스터에 적용했다. 복구 컨트롤러 Pod의 수집 어노테이션은 11/19에 들어갔다(Gitops `onprem/controllers/recovery-controller`, 그 전까지는 `recovery_hold_total`이 수집되지 않아 울릴 수 없었다). 확인: `up{cluster="onprem-manager", namespace="platform"}` 3. HOLD가 한 번도 없으면 `recovery_hold_total` 시계열 자체가 없다.
 
@@ -46,8 +46,8 @@
 **평소: ArgoCD.** 이 레포 `main`에 머지하면 관리 클러스터의 ArgoCD가 모니터링 클러스터에 반영한다(11/17부터). 손으로 돌릴 명령이 없다.
 
 - Application 11개는 Gitops 레포 `bootstrap/onprem/applications/gpu-monitoring-*.yaml`(프로젝트 `gpu-monitoring`, 대상 클러스터 `monitoring`). **새 Application은 같은 폴더 `kustomization.yaml`의 resources에도 넣는다**(파일만 두면 gpu-root가 만들지 않는다, 11/17 kafka-exporter에서 겪음)
-  - `gpu-monitoring-base`: 이 레포 `deploy/base`(kustomize: Mimir · Prometheus Agent · 밖으로 여는 Service · 룰 · 대시보드)
-  - 나머지 10개(`local-path` · `node-exporter` · `kube-state-metrics` · `loki` · `tempo` · `blackbox` · `alertmanager` · `grafana` · `kafka-exporter` · `postgres-exporter`): 차트 버전은 Gitops Application의 `targetRevision`, 값은 이 레포 `deploy/values/*.yaml`
+  - `gpu-monitoring-base`: 이 레포 `deploy/monitoring-cluster/storage`(kustomize: Mimir · Prometheus Agent · 밖으로 여는 Service · 룰 · 대시보드)
+  - 나머지 10개(`local-path` · `node-exporter` · `kube-state-metrics` · `loki` · `tempo` · `blackbox` · `alertmanager` · `grafana` · `kafka-exporter` · `postgres-exporter`): 차트 버전은 Gitops Application의 `targetRevision`, 값은 이 레포 `deploy/monitoring-cluster/values/*.yaml`
 - 자동 sync이고 `prune` · `selfHeal`은 끈다. 저장소 리소스를 자동으로 지우지 않고, 아래 비상 경로로 넣은 변경을 ArgoCD가 되돌리지 않는다(Git이 바뀔 때만 반영)
 - prune을 꺼서 **이름이 바뀐 옛 리소스는 남는다.** `mimir.yaml` · `prometheus.yml`을 고치면 ConfigMap 이름(해시)이 바뀌고 옛 ConfigMap이 남아 Application이 OutOfSync로 보일 수 있다. 확인한 뒤 옛 것을 손으로 지운다
 - Secret은 ArgoCD가 다루지 않는다. 지금처럼 `scripts/create-secrets.sh`
@@ -120,7 +120,7 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 
 ## 대시보드 (Grafana 폴더 「인프라」 · 「GPU」 · 「학습」)
 
-레포의 JSON이 원본이다. `base/grafana/dashboards/<폴더>/*.json` → kustomize가 폴더마다 ConfigMap `grafana-dashboards-<폴더>`(`infra` · `gpu` · `training`)로 만들고 → Grafana 차트(`values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`)가 디렉터리로 마운트한다. Grafana가 디렉터리를 주기적으로 다시 읽어 **재시작 없이 약 1분 안에 반영**된다(sidecar 안 씀).
+레포의 JSON이 원본이다. `monitoring-cluster/storage/grafana/dashboards/<폴더>/*.json` → kustomize가 폴더마다 ConfigMap `grafana-dashboards-<폴더>`(`infra` · `gpu` · `training`)로 만들고 → Grafana 차트(`monitoring-cluster/values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`)가 디렉터리로 마운트한다. Grafana가 디렉터리를 주기적으로 다시 읽어 **재시작 없이 약 1분 안에 반영**된다(sidecar 안 씀).
 
 아래 표에서 `gpu`는 「GPU」 폴더, `training-jobs` · `kueue` · `failover`는 「학습」 폴더, 나머지는 「인프라」 폴더다.
 
@@ -142,11 +142,11 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 
 - **화면에서 고친 것은 저장되지 않는다**(`allowUiUpdates: false`). 고치는 흐름: 화면에서 편집 → 「Export → JSON」 → 레포 파일 교체 → 커밋 → 적용
 - 새 대시보드는 `kustomization.yaml`에서 그 폴더 ConfigMap(`grafana-dashboards-<폴더>`)의 files에도 넣는다. lint가 JSON 문법 · `uid` · `title` · uid 중복을 본다
-- 새 폴더는 `values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`와 `kustomization.yaml`의 ConfigMap을 **같은 커밋**에 넣는다(없는 ConfigMap을 마운트하면 Grafana Pod가 뜨지 못한다). 폴더를 추가하면 Grafana Pod가 한 번 다시 뜬다
+- 새 폴더는 `monitoring-cluster/values/grafana.yaml`의 `dashboardProviders` · `dashboardsConfigMaps`와 `kustomization.yaml`의 ConfigMap을 **같은 커밋**에 넣는다(없는 ConfigMap을 마운트하면 Grafana Pod가 뜨지 못한다). 폴더를 추가하면 Grafana Pod가 한 번 다시 뜬다
 - 레코딩 룰은 만든 뒤부터만 계산된다. 「GPU」의 감속 시간 비율 · ECC SBE 증가 · PCIe 재시도는 2026-11-20 저녁 이전 구간이 비어 있다
 - 「장애 복구」의 PostgreSQL 패널은 `grafana_ro` 계정으로 읽는다. HOLD 목록은 `recovery.held` 사건만 보이는 뷰 `data.v_recovery_held`를 읽는다(Data `db/008_recovery_held_view.sql`, GPU-252). 장애 목록의 「Pod 준비」는 원인 확정 → 새 세대 Pod 전부 Ready(`job.resumed`), 「복구」는 원인 확정 → 새 세대가 마지막 승인 step 다음 step을 실제로 진행한 때다(Data `db/010_incident_resume.sql`, GPU-289). Pod 준비만 있고 복구가 비면 Pod는 떴지만 학습이 이어지지 않은 것
 - uid를 바꾸거나 파일을 지우면 옛 대시보드가 Grafana에 남을 수 있다(11/11 `mon-self` → 분리 때). 남아 있으면 화면에서 지운다
-- 타일(폭 4칸) 제목은 한 줄로만 나오고 넘치면 "…"로 잘린다. 제목은 짧게, 자세한 뜻은 설명(ⓘ)에 둔다. 이름이 `_total`로 안 끝나는 카운터에 `increase()` · `rate()`를 쓰면 PromQL 안내 아이콘이 제목 칸을 차지하므로, 타일에서는 레코딩 룰(`base/mimir/rules/records.yml`)을 읽는다
+- 타일(폭 4칸) 제목은 한 줄로만 나오고 넘치면 "…"로 잘린다. 제목은 짧게, 자세한 뜻은 설명(ⓘ)에 둔다. 이름이 `_total`로 안 끝나는 카운터에 `increase()` · `rate()`를 쓰면 PromQL 안내 아이콘이 제목 칸을 차지하므로, 타일에서는 레코딩 룰(`monitoring-cluster/storage/mimir/rules/records.yml`)을 읽는다
 - 색: 정상 `#73BF69` · 경고 `#FF9830` · 위험 `#F2495C` · 좋고 나쁨이 없는 값 `#8AB8FF`. 점선 임계선은 MON-STD에 값이 있는 패널에만 긋는다
 
 ## 설정을 바꿀 때
@@ -155,14 +155,14 @@ Alertmanager가 뜨면: healthchecks.io 체크가 Up, `http://172.30.0.35:9093`�
 
 | 바꾸는 것 | 파일 | 반영 |
 |---|---|---|
-| 스크레이프 대상 | `base/prometheus-agent/prometheus.yml` | ConfigMap 이름이 바뀌어 Agent가 다시 뜸(WAL은 PVC에 남음) |
-| 알람 · 레코딩 룰 | `base/mimir/rules/*.yml` (+ `kustomization.yaml`의 files, `scripts/deploy-k8s.sh` lint의 파일 목록, 테스트는 `base/mimir/tests/`) | Mimir가 1분 안에 다시 읽음(재시작 없음) |
-| Loki 알람 룰 (LogQL) | `base/loki/rules/*.yml` (+ `kustomization.yaml`의 `loki-rules` files) | Loki ruler가 1분 안에 다시 읽음(재시작 없음). 확인 `:3100/loki/api/v1/rules` |
-| 대시보드 | `base/grafana/dashboards/<폴더>/*.json` (+ `kustomization.yaml`의 files) | Grafana가 1분 안에 다시 읽음(재시작 없음) |
-| Mimir 설정 | `base/mimir/mimir.yaml` | Mimir 재시작(복제 1이라 그동안 수신 중단, Agent WAL이 버팀) |
-| Alertmanager 라우팅 | `values/alertmanager.yaml`의 `config` | Pod 재시작 |
-| 데이터소스 | `values/grafana.yaml` | Grafana 재시작 |
-| 이미지 버전 | `base/` YAML의 image (+ `versions.env`) | kind에서 먼저 |
+| 스크레이프 대상 | `monitoring-cluster/storage/prometheus-agent/prometheus.yml` | ConfigMap 이름이 바뀌어 Agent가 다시 뜸(WAL은 PVC에 남음) |
+| 알람 · 레코딩 룰 | `monitoring-cluster/storage/mimir/rules/*.yml` (+ `kustomization.yaml`의 files, `scripts/deploy-k8s.sh` lint의 파일 목록, 테스트는 `monitoring-cluster/storage/mimir/tests/`) | Mimir가 1분 안에 다시 읽음(재시작 없음) |
+| Loki 알람 룰 (LogQL) | `monitoring-cluster/storage/loki/rules/*.yml` (+ `kustomization.yaml`의 `loki-rules` files) | Loki ruler가 1분 안에 다시 읽음(재시작 없음). 확인 `:3100/loki/api/v1/rules` |
+| 대시보드 | `monitoring-cluster/storage/grafana/dashboards/<폴더>/*.json` (+ `kustomization.yaml`의 files) | Grafana가 1분 안에 다시 읽음(재시작 없음) |
+| Mimir 설정 | `monitoring-cluster/storage/mimir/mimir.yaml` | Mimir 재시작(복제 1이라 그동안 수신 중단, Agent WAL이 버팀) |
+| Alertmanager 라우팅 | `monitoring-cluster/values/alertmanager.yaml`의 `config` | Pod 재시작 |
+| 데이터소스 | `monitoring-cluster/values/grafana.yaml` | Grafana 재시작 |
+| 이미지 버전 | `monitoring-cluster/storage/` YAML의 image (+ `versions.env`) | kind에서 먼저 |
 | 차트 버전 | `versions.env` **와** Gitops Application의 `targetRevision` 두 곳 | kind에서 먼저. 한쪽만 올리면 비상 경로와 ArgoCD가 서로 다른 버전을 깐다 |
 
 ## Kafka · DB VM 수집 (11/17)
@@ -244,12 +244,12 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=node_t
 - Agent의 RBAC는 읽기 전용(nodes · nodes/metrics · services · pods · endpointslices). `nodes/proxy` · secrets 없음
 - Secret 값은 레포 · 셸 기록에 남기지 않는다(`create-secrets.sh`의 `read -s`)
 
-## 분류기 (`classifier/` · `deploy/classifier/`, 11/18)
+## 분류기 (`classifier/` · `deploy/monitoring-cluster/classifier/`, 11/18)
 
 Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. 설계와 판정 표는 `docs/classifier.md`.
-**실 클러스터(모니터링 클러스터 `monitoring` 네임스페이스)에는 Argo CD가 올린다**(11/18): Application `gpu-monitoring-classifier` → Gitops 레포 `monitoring/onprem/classifier`. 그 overlay가 이 레포의 `deploy/classifier/base`를 릴리스 태그로 참조하고 이미지 태그를 고정한다.
+**실 클러스터(모니터링 클러스터 `monitoring` 네임스페이스)에는 Argo CD가 올린다**(11/18): Application `gpu-monitoring-classifier` → Gitops 레포 `monitoring/onprem/classifier`. 그 overlay가 이 레포의 `deploy/monitoring-cluster/classifier`를 릴리스 태그로 참조하고 이미지 태그를 고정한다.
 
-- **버전을 올릴 때**: 손으로 할 일이 없다(배포 봇 연결 11/19). `classifier/` · `schemas/fault-event.v1.json` · `.dockerignore` · `.github/workflows/ci.yml`이 바뀐 main 머지에서 `ci.yml`의 `deploy`가 Gitops overlay의 `newTag` · `digest`와 `?ref=vX.Y.Z`(매니페스트 base)를 같은 릴리스로 바꾼다. `deploy/classifier/base`만 바뀐 머지는 이미지가 안 올라가 `deploy`도 돌지 않는다: 그때만 Gitops overlay의 `?ref=`를 손으로 올린다
+- **버전을 올릴 때**: 손으로 할 일이 없다(배포 봇 연결 11/19). `classifier/` · `schemas/fault-event.v1.json` · `.dockerignore` · `.github/workflows/ci.yml`이 바뀐 main 머지에서 `ci.yml`의 `deploy`가 Gitops overlay의 `newTag` · `digest`와 `?ref=vX.Y.Z`(매니페스트 base)를 같은 릴리스로 바꾼다. `deploy/monitoring-cluster/classifier`만 바뀐 머지는 이미지가 안 올라가 `deploy`도 돌지 않는다: 그때만 Gitops overlay의 `?ref=`를 손으로 올린다
   - **릴리스 노트 문구는 짧게**: 릴리스 설명(항목 요약을 이은 것)이 이미지 라벨 `org.opencontainers.image.description`으로 들어간다. 11/24 v1.32.0은 한글 670바이트에서 GHCR push가 500으로 4번 실패했고, 380바이트로 줄이자 성공했다(성공한 최대는 608바이트, 정확한 한도는 모름). 실패하면 main PR 본문 문구를 줄이고 **전체 재실행**(실패한 job만 재실행하면 설명이 그대로다)
 - **pull secret**: 이미지 패키지가 비공개라 Secret `ghcr-pull`이 필요하다. Git에 없다. 관리 클러스터 `platform`의 것을 복사한다(값이 화면에 나오지 않는다):
   ```bash
@@ -263,14 +263,14 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
 - **작업 실패 사건의 죽은 노드**(11/26, GPU-288): `job_failed` 알람이 오면 분류기가 Loki(`LOKI_URL`)에 한 번 물어 그 작업 · 세대 trainer 로그에서 가장 먼저 찍힌 `failed (exitcode` 줄을 찾고, 그 줄의 노드를 사건 `node`에 넣는다. 못 찾거나 Loki가 3초 안에 답하지 않으면 노드 없이 낸다(사건은 그대로 나간다). 사건에 노드가 비어 있으면 대장 Pod 로그의 `enrich.failed`(`what=failed_pod`)와 Grafana Explore에서 `{k8s_namespace_name="training", k8s_container_name="trainer", k8s_pod_name=~"job-<작업>-g<세대 4자리>-.+"} |= "failed (exitcode"`를 본다. 알람은 여전히 Alertmanager 웹훅으로만 들어온다
 - **확인**: `kubectl -n monitoring get deploy classifier`(2/2) · `kubectl -n monitoring get lease classifier`(`HOLDER` = 지금 대장) · `kubectl -n monitoring logs <대장 Pod>` · 아래 지표
 - **2개 중 하나만 처리한다**(대장, `docs/classifier.md` 7.1절). 대기 쪽은 받은 웹훅을 대장에게 넘기므로 `svc/classifier`로 보내면 어느 Pod에 닿든 대장이 처리한다. 로그 `event.published`는 대장에만 남는다
-- **끄기**: 웹훅만 끊으려면 `values/alertmanager.yaml`의 수신자 `classifier`에서 `webhook_configs`를 지운다. 분류기는 떠 있어도 알람이 안 오면 아무것도 내지 않는다
+- **끄기**: 웹훅만 끊으려면 `monitoring-cluster/values/alertmanager.yaml`의 수신자 `classifier`에서 `webhook_configs`를 지운다. 분류기는 떠 있어도 알람이 안 오면 아무것도 내지 않는다
 
 | 무엇 | 어디 |
 |---|---|
 | 코드 · 판정 표 | `classifier/classifier/` (`rules.yaml`이 표) |
 | 단위 테스트 | `cd classifier && .venv/bin/python -m pytest` (처음엔 `python3.12 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt`) |
 | 이미지 | `classifier/Dockerfile`, 빌드 컨텍스트는 레포 루트 |
-| 매니페스트 | `deploy/classifier/base` (복제본 2 · 노드마다 하나 · 하나씩 교체 · Lease용 ServiceAccount와 Role · ClusterIP), `overlays/kind` (임시 Kafka 포함) |
+| 매니페스트 | `deploy/monitoring-cluster/classifier` (복제본 2 · 노드마다 하나 · 하나씩 교체 · Lease용 ServiceAccount와 Role · ClusterIP), `deploy/kind/classifier` (임시 Kafka 포함) |
 | 종단 검증 | `scripts/classifier-e2e-kind.sh` |
 
 **종단 검증이 하는 일** (약 5분, 끝나면 `--delete`로 클러스터 삭제):
@@ -290,7 +290,7 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
 
 분류기 자체를 볼 지표(`/metrics`): `classifier_alerts_total{outcome}` · `classifier_events_published_total` · `classifier_lifecycle_healthy`(0이면 Pod 종료 신호가 전부 `hold`로 나간다) · `classifier_pending_pod_exits` · `classifier_leader`(1 = 대장. 대기 쪽은 0이고 `classifier_lifecycle_healthy`도 0이다). 모니터링 클러스터 Agent가 긁어(`job="classifier"`) Mimir에서 조회한다. 이상 알람은 위 「알람이 울리면」.
 
-## 수집 층 (`deploy/agents/`) — 관리 클러스터 · EKS · 모니터링 클러스터(Fluent Bit만)에 올리는 것
+## 수집 층 (`deploy/cluster-common/` + 클러스터별 폴더) — 관리 클러스터 · EKS · 모니터링 클러스터(Fluent Bit만)에 올리는 것
 
 저장소(위)가 아니라 **클러스터마다 하나씩 붙이는 쪽**. 배치 규약과 이유는 `docs/worker-agents.md`.
 
@@ -302,8 +302,8 @@ Alertmanager가 보낸 원인 알람을 판정해 Kafka `gpu.fault`로 낸다. �
 | node-exporter 1.12.1 | DaemonSet (toleration Exists, hostNetwork · 노드 IP:9100) | - | Agent가 긁음 |
 | OTel Collector contrib 0.164.0 | Deployment ×1 | file_storage 큐 `otel-gateway/` | Loki `172.30.0.35:3100/otlp` · Tempo `172.30.0.35:4317` |
 
-- `base/`는 모든 클러스터 공통. 다른 것(cluster · site 이름, nodeSelector, 버퍼 디스크)만 `overlays/<클러스터>/`에서 patch. 클러스터 이름은 Deployment env `CLUSTER_NAME` · `SITE`로 들어가 Agent `external_labels` · 게이트웨이 `resource` 프로세서가 읽는다
-- 적용은 **ArgoCD**(Gitops 레포 Application `gpu-monitoring-agents` → Monitoring main `deploy/agents/overlays/onprem`, automated). 이 스크립트는 kind만: `scripts/deploy-k8s.sh --agents-kind`(`kind create cluster --name agents-test` 뒤, 컨텍스트 kind-*만 허용). kind에서도 데이터는 실제 저장소로 간다(cluster 라벨 `kind-test`)
+- `monitoring-cluster/storage/`는 모든 클러스터 공통. 다른 것(cluster · site 이름, nodeSelector, 버퍼 디스크)만 `overlays/<클러스터>/`에서 patch. 클러스터 이름은 Deployment env `CLUSTER_NAME` · `SITE`로 들어가 Agent `external_labels` · 게이트웨이 `resource` 프로세서가 읽는다
+- 적용은 **ArgoCD**(Gitops 레포 Application `gpu-monitoring-agents` → Monitoring main `deploy/manager-cluster`, automated). 이 스크립트는 kind만: `scripts/deploy-k8s.sh --agents-kind`(`kind create cluster --name agents-test` 뒤, 컨텍스트 kind-*만 허용). kind에서도 데이터는 실제 저장소로 간다(cluster 라벨 `kind-test`)
 - lint(`--lint-only`)가 수집 층도 본다: promtool(Agent 설정) · `fluent-bit --dry-run` · `otelcol-contrib validate` · overlay 렌더
 - Loki 라벨 이름은 `cluster`가 아니라 **`k8s_cluster_name`**(OTel 리소스 속성 `k8s.cluster.name`을 Loki가 그대로 인덱싱). 함께 라벨이 되는 것: `k8s_namespace_name` · `k8s_pod_name` · `k8s_container_name` · `service_name`(= 컨테이너 이름, 커널 로그는 `kernel`). `k8s_node_name` · `site` · `stream`은 structured metadata
 
@@ -316,7 +316,7 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=otelco
 
 ### Kueue 지표 수집 (11/17)
 
-Agent의 `kueue` 잡(`base/prometheus-agent/prometheus.yml`)이 `kueue-system`의 Kueue 컨트롤러 Pod `:8443/metrics`를 긁는다. base에 있어서 Kueue가 있는 클러스터면 그대로 붙고, 없으면 타깃이 0개다.
+Agent의 `kueue` 잡(`monitoring-cluster/storage/prometheus-agent/prometheus.yml`)이 `kueue-system`의 Kueue 컨트롤러 Pod `:8443/metrics`를 긁는다. base에 있어서 Kueue가 있는 클러스터면 그대로 붙고, 없으면 타깃이 0개다.
 
 - 8443은 HTTPS + 토큰 인증이다. Agent ServiceAccount에 `/metrics` 읽기 권한(`rbac.yaml`의 nonResourceURLs)이 이미 있어 RBAC는 바꾸지 않았다
 - 인증서 검증은 건너뛴다(kubelet 잡과 같은 방식). 검증하려면 Kueue 쪽에 cert-manager 연동을 켜야 한다. 토큰은 읽기 전용이다
@@ -334,7 +334,7 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_
 
 ### MultiKueueCluster 펜싱 라벨 (11/24, GPU-220)
 
-관리 클러스터 KSM만 CustomResourceState로 MultiKueueCluster를 읽는다(`overlays/onprem/ksm-custom-resources.yaml`). EKS를 끄기 전 OFF 절차(K8s `scheduling/ops/README.md`, `eks_gate.py fence`)가 붙이는 `devoops/fenced=true`를 사이트 알람(`FailoverSiteDown`)이 보고, 펜싱된 클러스터는 수집이 끊겨도 울리지 않는다.
+관리 클러스터 KSM만 CustomResourceState로 MultiKueueCluster를 읽는다(`manager-cluster/ksm-custom-resources.yaml`). EKS를 끄기 전 OFF 절차(K8s `scheduling/ops/README.md`, `eks_gate.py fence`)가 붙이는 `devoops/fenced=true`를 사이트 알람(`FailoverSiteDown`)이 보고, 펜싱된 클러스터는 수집이 끊겨도 울리지 않는다.
 
 - 객체마다 한 줄 `kube_customresource_multikueuecluster_info{name="eks-a"}`. 라벨이 있을 때만 `fenced="true"`가 붙는다. `fenced`를 info 안에 두면 라벨 없는 객체는 줄 자체가 안 나와 「안 붙음」과 「수집 안 됨」을 못 가린다(kind에서 확인)
 - KSM 권한에 `multikueueclusters` · `customresourcedefinitions` 읽기를 overlay에서 더했다. `--resources` 목록이 있어도 사용자 정의 리소스는 켜진다
@@ -345,11 +345,11 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kueue_
 curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=kube_customresource_multikueuecluster_info{cluster="onprem-manager"}'   # eks-a · b · c 3줄, 펜싱된 것만 fenced="true"
 ```
 
-### 모니터링 클러스터 자신의 로그 (`overlays/monitoring`)
+### 모니터링 클러스터 자신의 로그 (`monitoring-cluster/logs`)
 
-모니터링 클러스터에는 수집 층 중 **Fluent Bit만** 올린다. 지표 쪽(Agent · kube-state-metrics · node-exporter)은 저장 층(`deploy/base` · `values/`)에 이미 있다.
+모니터링 클러스터에는 수집 층 중 **Fluent Bit만** 올린다. 지표 쪽(Agent · kube-state-metrics · node-exporter)은 저장 층(`deploy/monitoring-cluster/storage` · `monitoring-cluster/values/`)에 이미 있다.
 
-- OTel 게이트웨이를 두지 않고 Loki OTLP(`172.30.0.35:3100/otlp`)로 직접 보낸다: 트레이스를 내는 앱이 없고 Loki가 같은 클러스터라 버퍼 이득이 작다. 그래서 설정 파일을 따로 둔다(`overlays/monitoring/fluent-bit.yaml`, 입력 · 필터는 base와 같고 출력만 다름)
+- OTel 게이트웨이를 두지 않고 Loki OTLP(`172.30.0.35:3100/otlp`)로 직접 보낸다: 트레이스를 내는 앱이 없고 Loki가 같은 클러스터라 버퍼 이득이 작다. 그래서 설정 파일을 따로 둔다(`monitoring-cluster/logs/fluent-bit.yaml`, 입력 · 필터는 `cluster-common`과 같고 출력만 다름)
 - 라벨은 `k8s_cluster_name="monitoring"` · `service_name`(`pod` | `kernel` | `journal`) 둘뿐이다. Fluent Bit은 리소스 속성에 고정 값만 넣을 수 있어서, 네임스페이스 · Pod · 컨테이너 이름은 structured metadata(`kubernetes_namespace_name` · `kubernetes_pod_name` · `kubernetes_container_name` · `kubernetes_host`)로 들어간다 → **관리 클러스터와 조회 방법이 다르다**
 - 적용은 ArgoCD(Gitops 레포 Application `gpu-monitoring-logs`, 자동 sync · prune/selfHeal 끔). `deploy-k8s.sh`는 lint(`--dry-run` · overlay 렌더)만 하고 적용하지 않는다
 - kind 노드는 journald가 `/run/log/journal`에 있고 커널 메시지가 없다 → kind에서 볼 때는 렌더 결과의 `path`를 바꾸고 `systemd_filter`를 떼야 저널 출력 경로를 확인할 수 있다
@@ -375,7 +375,7 @@ curl -sG "http://$V:9009/prometheus/api/v1/query" --data-urlencode 'query=up{clu
 | Loki 메타데이터에 `_p` · `time` | cri 파서 잔여 필드 | 게이트웨이 transform에서 `delete_key` |
 | Fluent Bit 첫 10초 `no upstream connections` | 게이트웨이보다 먼저 떴음 | 정상. 재시도 뒤 전부 전송(버퍼가 일하는 모습) |
 
-## EKS 수집 층 (`deploy/agents/overlays/eks`, 11/18)
+## EKS 수집 층 (`deploy/eks`, 11/18)
 
 EKS 워커 클러스터(eks-a · eks-b · eks-c)에 올리는 묶음. 공통 수집 층(`base`) + dcgm-exporter(`gpu`). 배치 규약은 `docs/worker-agents.md`.
 EKS는 비용 때문에 켰다 끈다. 그래서 **클러스터 이름을 파일에 적지 않고** ConfigMap `monitoring/monitoring-cluster-info`의 `CLUSTER_NAME`으로 받는다.
@@ -386,7 +386,7 @@ EKS는 비용 때문에 켰다 끈다. 그래서 **클러스터 이름을 파일
 | Fluent Bit · node-exporter | 전 노드 | 어떤 taint든 통과 |
 | dcgm-exporter 4.8.4 | GPU 노드 (`devoops/gpu=true`) | 수집 5초. Agent의 `annotated-pods` 잡이 긁는다(`job="annotated-pods"`). 메모리는 내장 엔진일 때 T4에서 약 435MiB(한도 1Gi, 256Mi에서는 OOMKilled 반복) |
 | ↳ 사이드카 `nv-hostengine` (11/20~) | dcgm-exporter Pod 안 | DCGM 엔진(`ghcr.io/devoops-team/dcgm-hostengine`). exporter는 `-r localhost:5555`로 여기에 붙는다. `dcgmi`로 Xid를 주입하려고 뺐다(아래 「장애 주입」 ③). 이미지가 비공개라 `monitoring/ghcr-pull`이 필요하다(IaC가 EKS를 만들 때 넣는다) |
-| spot-notice-exporter (11/27, GPU-219) | GPU 노드 (`devoops/gpu=true`) | 그 노드 IMDS `spot/instance-action`을 5초마다 읽어 스팟 회수 예고를 :9105로 낸다(`spot_interruption_notice_timestamp_seconds`는 예고가 있을 때만, `spot_notice_imds_ok`는 늘). 스크립트는 ConfigMap(`deploy/agents/gpu/spot-notice-exporter/exporter.py`), 이미지는 공개 `python`. 같은 `annotated-pods` 잡. **실제 EKS에서는 아직 안 떠 봤다** |
+| spot-notice-exporter (11/27, GPU-219) | GPU 노드 (`devoops/gpu=true`) | 그 노드 IMDS `spot/instance-action`을 5초마다 읽어 스팟 회수 예고를 :9105로 낸다(`spot_interruption_notice_timestamp_seconds`는 예고가 있을 때만, `spot_notice_imds_ok`는 늘). 스크립트는 ConfigMap(`deploy/eks/spot-notice-exporter/exporter.py`), 이미지는 공개 `python`. 같은 `annotated-pods` 잡. **실제 EKS에서는 아직 안 떠 봤다** |
 | 학습 Pod의 trainer 지표 (`train_*`, :8000) | 학습 Pod (`training` 네임스페이스) | 같은 `annotated-pods` 잡. 어노테이션은 Backend가 JobSet Pod 템플릿에 붙인다(Backend v1.7.0부터). 우리 쪽 설정은 없다 |
 
 **올라가는 길**
@@ -396,7 +396,7 @@ EKS는 비용 때문에 켰다 끈다. 그래서 **클러스터 이름을 파일
 
 ```bash
 # KUBECONFIG는 그 EKS 것. 이름은 eks-a · eks-b · eks-c 중 하나
-kubectl kustomize deploy/agents/overlays/eks | sed 's/CLUSTER_NAME: unset/CLUSTER_NAME: eks-a/' | kubectl apply -f -
+kubectl kustomize deploy/eks | sed 's/CLUSTER_NAME: unset/CLUSTER_NAME: eks-a/' | kubectl apply -f -
 ```
 
 이름이 안 들어간 채로 뜨면 지표가 `cluster="unset"`으로 들어온다 → `count(up{cluster="unset"})`이 0인지 본다.
@@ -672,12 +672,12 @@ kubectl -n monitoring exec "$DCGM" -c nv-hostengine -- nvidia-smi -rgc
 
 ### ⑧ 실제 Xid 내기 — 커널 로그 경로 확인 (아직 실행 전 — 절차 초안, 11/27, GPU-218)
 
-③의 `dcgmi` 주입은 커널 로그를 안 남겨 커널 로그 경로 룰(`FailoverXidKernel`, `deploy/base/loki/rules/xid.yml`)을 시험하지 못한다. 이 Pod는 GPU에서 잘못된 주소에 써서 드라이버가 **진짜 Xid**(기대 31)를 보고하게 한다. 하드웨어는 안 건드리고, 죽는 것은 시험 Pod의 프로세스뿐이다.
+③의 `dcgmi` 주입은 커널 로그를 안 남겨 커널 로그 경로 룰(`FailoverXidKernel`, `deploy/monitoring-cluster/storage/loki/rules/xid.yml`)을 시험하지 못한다. 이 Pod는 GPU에서 잘못된 주소에 써서 드라이버가 **진짜 Xid**(기대 31)를 보고하게 한다. 하드웨어는 안 건드리고, 죽는 것은 시험 Pod의 프로세스뿐이다.
 두 경로가 다 울리고 분류기까지 간다(31 · 13 · 43 = `restart_in_place`). **GPU를 1장 요청하므로 학습이 안 도는 GPU 노드(예비 노드 등)에서 한다.** T4에서 실제로 Xid가 나는지는 미검증이다.
 
 ```bash
 NODE=<학습 Pod가 없는 GPU 노드>
-date '+%T'; sed "s/NODE_NAME/$NODE/" deploy/fault-injection/xid-pod.yaml | kubectl apply -f -
+date '+%T'; sed "s/NODE_NAME/$NODE/" deploy/eks/fault-injection/xid-pod.yaml | kubectl apply -f -
 kubectl -n monitoring logs -f xid-test          # `inject` 줄의 시각(UTC) = 주입 시각. 이미지가 없던 노드면 받는 데 몇 분 걸린다
 kubectl -n monitoring delete pod xid-test       # 끝나면 지운다
 # Xid가 안 나면: 매니페스트의 METHOD를 assert로 바꿔 한 번 더(비교용)
@@ -702,7 +702,7 @@ kubectl -n monitoring delete pod xid-test       # 끝나면 지운다
 
 켜기(한송이에게 `source=spot` 사건을 받는 모양을 확인한 뒤)
 
-1. `deploy/values/alertmanager.yaml` 분류기 라우트의 `signal` 목록에 `spot` 추가 → main 머지 → Alertmanager `/api/v2/status`의 설정에서 라우트 확인
+1. `deploy/monitoring-cluster/values/alertmanager.yaml` 분류기 라우트의 `signal` 목록에 `spot` 추가 → main 머지 → Alertmanager `/api/v2/status`의 설정에서 라우트 확인
 2. Gitops `monitoring/onprem/classifier/kustomization.yaml`의 `ENABLED_SIGNALS`에 `spot` 추가
 
 주입(콘솔 메뉴 이름은 미확인 — 실행 때 맞춘다): AWS FIS 액션 `aws:ec2:send-spot-instance-interruptions`(ADR-33)를 학습 Pod가 도는 GPU 노드의 인스턴스에, 예고 시간 2분으로. 시작한 시각을 적는다(T0). FIS는 주입 즉시 rebalance 권고도 보낸다.

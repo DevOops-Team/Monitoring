@@ -129,26 +129,26 @@ GPU 지표 이름은 **dcgm-exporter 4.8.4** 기준이다 (2026-11-16 결정: 4.
 |---|---|---|---|---|
 | MON-STD-06 · 07 | | | 「Kubernetes 노드」 CPU · 메모리 · 루트 디스크 · 네트워크 (지금은 온프레 노드만, EKS GPU 노드는 overlay 연결 뒤) | 2026-11-13 |
 | MON-STD-10 | | | 「수집 파이프라인」 타일 전송 실패 · 전송 지연, 그래프 실패 샘플 · 전송 지연(30초 선) · 대기 샘플 | 2026-11-13 |
-| MON-STD-15 | `MonitoringAgentAbsent` · `MonitoringKsmAbsent` (`deploy/base/mimir/rules/self.yml`, 테스트 `tests/self_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「수집 파이프라인」 타일 Agent | 2026-11-25 |
+| MON-STD-15 | `MonitoringAgentAbsent` · `MonitoringKsmAbsent` (`deploy/monitoring-cluster/storage/mimir/rules/self.yml`, 테스트 `tests/self_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「수집 파이프라인」 타일 Agent | 2026-11-25 |
 | MON-STD-16 | | | 「수집 파이프라인」 WAL 크기 | 2026-11-13 |
 | MON-STD-18 | | | 「모니터링 스택」 ping 성공 여부 · 응답 시간 (pfSense · 인터넷만, VPN 대상은 AWS 재구축 뒤) | 2026-11-13 |
 | MON-STD-20 | | | 「Kubernetes 워크로드」 마지막 종료 · 학습 Pod | 2026-11-13 |
-| MON-STD-22 | `Watchdog` · `MonitoringNodeDiskWarning` · `MonitoringNodeDiskCritical` · `MonitoringTargetDown` (`deploy/base/mimir/rules/self.yml`) | | 「모니터링 스택」 타일 다운 대상 · Watchdog · 디스크 최대, 그래프 노드 루트 디스크 사용률(80 · 90% 선) | 2026-11-13 |
-| MON-STD-13 | `PostgresDown` (`deploy/base/mimir/rules/infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「PostgreSQL」 전체 | 2026-11-18 |
+| MON-STD-22 | `Watchdog` · `MonitoringNodeDiskWarning` · `MonitoringNodeDiskCritical` · `MonitoringTargetDown` (`deploy/monitoring-cluster/storage/mimir/rules/self.yml`) | | 「모니터링 스택」 타일 다운 대상 · Watchdog · 디스크 최대, 그래프 노드 루트 디스크 사용률(80 · 90% 선) | 2026-11-13 |
+| MON-STD-13 | `PostgresDown` (`deploy/monitoring-cluster/storage/mimir/rules/infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「PostgreSQL」 전체 | 2026-11-18 |
 | MON-STD-23 | `CollectorLagHigh` · `KafkaBrokerDown` (`infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kafka 브로커」 전체 · 「수집기 lag」 행(1000 선) | 2026-11-18 |
 | MON-STD-24 | | | 「Proxmox 호스트」 전체 (온도는 5분 평균, 80 · 90°C · NVMe 70°C 선) | 2026-11-13 |
 | MON-STD-26 | `HostDiskWarning` · `HostDiskCritical` (`infra.yml`, 테스트 `tests/infra_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kafka · DB VM」 · 「pfSense」 타일 디스크 최대, 그래프 루트 디스크 사용률(80 · 90% 선) | 2026-11-18 |
-| MON-STD-25 | `RecoveryHold` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | 「장애 복구」 타일 HOLD 누적, HOLD 목록(PostgreSQL 뷰 `data.v_recovery_held`) · HOLD 누적 (지표) | 2026-11-20 |
-| MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/base/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 분류기, 그래프 받은 알람 · 발행한 사건 · 버린 것 · 상태 | 2026-11-20 |
-| MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 하트비트 경과(60초 선) · 하트비트 조회 | 2026-11-20 |
-| MON-STD-29 | `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` (`deploy/base/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 컨트롤러 · 소비 지연, 그래프 Ready · 재시작 · 소비 지연 | 2026-11-25 |
-| MON-STD-30 | `TrainingStalled` (`deploy/base/mimir/rules/training.yml`, 테스트 `tests/training_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「학습 작업」 타일 정체 작업(지표가 들어오는 작업만 센다), 그래프 현재 step · 체크포인트 step · 진행 속도 | 2026-11-25 |
-| MON-STD-31 | `WorkloadReplicasDegraded` · `WorkloadDown` · `EksWorkloadDown` (`deploy/base/mimir/rules/workloads.yml`, 테스트 `tests/workloads_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kubernetes 워크로드」 타일 복제 부족, 표 워크로드 복제 (cluster · namespace 선택) | 2026-11-25 |
-| MON-STD-32 | `LogShippingDropping` · `LogShippingStopped` · `LokiIngestStopped` (`deploy/base/mimir/rules/self.yml`, 테스트 `tests/self_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「수집 파이프라인」 타일 버린 로그, 그래프 출력 오류 · 버림 · 처리한 로그 · Loki로 보낸 로그 | 2026-11-25 |
+| MON-STD-25 | `RecoveryHold` (`deploy/monitoring-cluster/storage/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | | 「장애 복구」 타일 HOLD 누적, HOLD 목록(PostgreSQL 뷰 `data.v_recovery_held`) · HOLD 누적 (지표) | 2026-11-20 |
+| MON-STD-27 | `ClassifierDown` · `ClassifierLifecycleUnhealthy` (`deploy/monitoring-cluster/storage/mimir/rules/classifier.yml`, 테스트 `tests/classifier_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 분류기, 그래프 받은 알람 · 발행한 사건 · 버린 것 · 상태 | 2026-11-20 |
+| MON-STD-28 | `RecoveryHeartbeatStale` · `RecoveryHeartbeatReadFailing` (`deploy/monitoring-cluster/storage/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 하트비트 경과(60초 선) · 하트비트 조회 | 2026-11-20 |
+| MON-STD-29 | `RecoveryControllerDown` · `RecoveryControllerRestarting` · `RecoveryControllerStuck` (`deploy/monitoring-cluster/storage/mimir/rules/recovery.yml`, 테스트 `tests/recovery_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「장애 복구」 타일 컨트롤러 · 소비 지연, 그래프 Ready · 재시작 · 소비 지연 | 2026-11-25 |
+| MON-STD-30 | `TrainingStalled` (`deploy/monitoring-cluster/storage/mimir/rules/training.yml`, 테스트 `tests/training_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「학습 작업」 타일 정체 작업(지표가 들어오는 작업만 센다), 그래프 현재 step · 체크포인트 step · 진행 속도 | 2026-11-25 |
+| MON-STD-31 | `WorkloadReplicasDegraded` · `WorkloadDown` · `EksWorkloadDown` (`deploy/monitoring-cluster/storage/mimir/rules/workloads.yml`, 테스트 `tests/workloads_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「Kubernetes 워크로드」 타일 복제 부족, 표 워크로드 복제 (cluster · namespace 선택) | 2026-11-25 |
+| MON-STD-32 | `LogShippingDropping` · `LogShippingStopped` · `LokiIngestStopped` (`deploy/monitoring-cluster/storage/mimir/rules/self.yml`, 테스트 `tests/self_test.yml`) | `deploy/README.md` 「알람이 울리면」 | 「수집 파이프라인」 타일 버린 로그, 그래프 출력 오류 · 버림 · 처리한 로그 · Loki로 보낸 로그 | 2026-11-25 |
 | MON-STD-01 | | | 「GPU」 타일 온도 여유, 그래프 GPU 온도(한계 3단 점선) | 2026-11-20 |
 | MON-STD-02 | | | 「GPU」 타일 감속 GPU, 그래프 감속 사유 · 감속 시간 비율 · SM 클럭 | 2026-11-20 |
 | MON-STD-03 | | | 「GPU」 타일 ECC DBE · 폐기 대기, 그래프 ECC SBE 증가 · 페이지 폐기 | 2026-11-20 |
-| MON-STD-04 | `FailoverXidKernel` (`deploy/base/loki/rules/xid.yml`, 2026-11-27 GPU-218 — 합성 줄로만 검증, 실제 줄 확인 전) · 보조 `FailoverXidDcgm` (`deploy/base/mimir/rules/failover.yml`) | | 「GPU」 타일 Xid GPU, 그래프 Xid · 커널 Xid 로그 (Xid가 난 적이 없어 비어 있음) | 2026-11-20 |
+| MON-STD-04 | `FailoverXidKernel` (`deploy/monitoring-cluster/storage/loki/rules/xid.yml`, 2026-11-27 GPU-218 — 합성 줄로만 검증, 실제 줄 확인 전) · 보조 `FailoverXidDcgm` (`deploy/monitoring-cluster/storage/mimir/rules/failover.yml`) | | 「GPU」 타일 Xid GPU, 그래프 Xid · 커널 Xid 로그 (Xid가 난 적이 없어 비어 있음) | 2026-11-20 |
 | MON-STD-05 | | | 「GPU」 GPU 사용률 · GPU 메모리 | 2026-11-20 |
 | MON-STD-08 | | | 「학습 작업」 타일 스트래글러 · 데이터 대기, 그래프 스트래글러 비율(1.5 · 2.0 선) · 랭크 계산 · 통신 · 데이터 대기(0.1초 선) | 2026-11-20 |
 | 나머지 09 · 11 · 12 · 14 · 17 · 19 · 21 | | | | |

@@ -1,4 +1,4 @@
-# compose/alertmanager/alertmanager.yml을 그대로 옮긴 것. 시크릿은 Secret alertmanager-secrets를 /run/secrets에 마운트해
+# 옛 VM compose의 alertmanager.yml을 그대로 옮긴 것. 시크릿은 Secret alertmanager-secrets를 /run/secrets에 마운트해
 # compose 때와 같은 *_file 경로로 읽는다 (scripts/create-secrets.sh가 만든다. 레포에 없음)
 fullnameOverride: alertmanager
 # 2개(가십, 과반 불필요). 차트가 --cluster.peer와 headless Service 9094를 자동으로 넣는다.

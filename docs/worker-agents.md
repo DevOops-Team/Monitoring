@@ -1,6 +1,6 @@
 # 클러스터 수집 층 배치 규약 — 워커 EKS · 관리 클러스터
 
-워커 EKS 3개(AZ별)와 관리 클러스터(온프레미스)에 올릴 모니터링 구성 요소가 **어느 노드에, 어떤 toleration으로** 뜨는지 한 장. 매니페스트는 `deploy/agents/`(base 공통 + overlays/{onprem,kind,monitoring,eks}, GPU 노드용은 `gpu/`). ADR-18(11/08)로 Alloy는 폐기, **Fluent Bit DaemonSet + OTel Collector 게이트웨이**로 바뀌었다. 노드 라벨 · taint는 김성모 "쿠버네티스 아키텍처 초안" 6절(2026-11-05 v5, 권장안)과 ADR-2 · 4, **ADR-25(2026-11-11: GPU 노드는 고정 관리형 노드그룹, Karpenter 안 씀)**를 따른다. 매니페스트는 이 표대로 쓴다.
+워커 EKS 3개(AZ별)와 관리 클러스터(온프레미스)에 올릴 모니터링 구성 요소가 **어느 노드에, 어떤 toleration으로** 뜨는지 한 장. 매니페스트는 `deploy/cluster-common/`(쿠버네티스 클러스터 공통)과 그것을 가져다 쓰는 클러스터별 폴더(`deploy/manager-cluster` · `deploy/eks` · `deploy/kind/agents` · `deploy/monitoring-cluster/logs`)다. GPU 노드용(dcgm-exporter 등)은 `deploy/eks/` 안에 있다. ADR-18(11/08)로 Alloy는 폐기, **Fluent Bit DaemonSet + OTel Collector 게이트웨이**로 바뀌었다. 노드 라벨 · taint는 김성모 "쿠버네티스 아키텍처 초안" 6절(2026-11-05 v5, 권장안)과 ADR-2 · 4, **ADR-25(2026-11-11: GPU 노드는 고정 관리형 노드그룹, Karpenter 안 씀)**를 따른다. 매니페스트는 이 표대로 쓴다.
 
 ## 1. 노드 종류와 taint
 
@@ -22,7 +22,7 @@
 |---|---|---|---|---|
 | dcgm-exporter | DaemonSet | `devoops/gpu: "true"` | `[{operator: Exists}]` | GPU 노드 전부(예비 포함). Xid 필드 230 수집 5초 (fault-event ±45초 창 전제) |
 | NVML 사이드카 (호출 지연 · Xid 이벤트) | DaemonSet | `devoops/gpu: "true"` | `[{operator: Exists}]` | dcgm과 같은 노드 |
-| node-exporter | DaemonSet | 없음 | `[{operator: Exists}]` | 시스템 · GPU · 예비 전부. hostNetwork라 노드 IP:9100, `job="node-exporter"` · `node` 라벨은 모니터링 클러스터와 같다 (`deploy/agents/base/node-exporter/`) |
+| node-exporter | DaemonSet | 없음 | `[{operator: Exists}]` | 시스템 · GPU · 예비 전부. hostNetwork라 노드 IP:9100, `job="node-exporter"` · `node` 라벨은 모니터링 클러스터와 같다 (`deploy/cluster-common/node-exporter/`) |
 | Fluent Bit (Pod 로그 · journald 커널 로그) | DaemonSet | 없음 | `[{operator: Exists}]` | 전 노드. 호스트 `/var/log` · `/run/log` 읽기 전용, 책갈피 db · 미전송 버퍼는 hostPath `/var/lib/monitoring-agents/fluent-bit`. 커널 로그는 systemd 입력 `_TRANSPORT=kernel`(cursor 책갈피). 출력은 OTLP → 게이트웨이(저장소 주소를 모른다) |
 | OTel Collector 게이트웨이 (로그 · 앱 span 수신) | Deployment ×1 | `workload: system` | 없음 | 클러스터의 출구 한 곳. file_storage 영속 큐로 저장소 · VPN 중단을 버팀. 트레이스는 SDK에 디스크 버퍼가 없어 이게 유일한 보호. 클러스터 이름 라벨(`k8s.cluster.name`)을 여기서 붙임 |
 | Prometheus Agent | Deployment ×1 | `workload: system` | 없음 | 스팟 회수 때 수집 파이프 생존. `external_labels: {cluster: eks-a}`(env `CLUSTER_NAME`, EKS는 ConfigMap `monitoring-cluster-info`에서 읽음). WAL은 EKS · 관리 클러스터 모두 hostPath |
@@ -48,7 +48,7 @@ Loki ──ruler 알람──▶ Alertmanager :9093 ──webhook(pipeline=failo
 
 ## 3-1. 관리 클러스터(온프레미스)는 어떻게 다른가
 
-같은 base에 `deploy/agents/overlays/onprem`만 다르다. kind(`overlays/kind`)에서 실제 저장소로 데이터가 들어가는 것까지 검증했다(11/10).
+같은 `deploy/cluster-common`에 `deploy/manager-cluster`만 다르다. kind(`deploy/kind/agents`)에서 실제 저장소로 데이터가 들어가는 것까지 검증했다(11/10).
 
 | 항목 | 관리 클러스터 | 이유 |
 |---|---|---|
@@ -57,7 +57,7 @@ Loki ──ruler 알람──▶ Alertmanager :9093 ──webhook(pipeline=failo
 | cluster 라벨 | `onprem-manager` (노드 라벨 `platform-cluster`와 같은 값), site `onprem` | overlay가 Deployment env로 넣음 |
 | 버퍼 디스크 | hostPath `/var/lib/monitoring-agents/{prometheus-agent,otel-gateway,fluent-bit}` | StorageClass 없음. Pod 재시작은 버티고, 다른 노드로 옮겨질 때 잃는 것은 "저장소도 같이 죽어 있던 동안 쌓인 양"뿐 |
 | 복제 수 | Agent 1 · 게이트웨이 1 | Agent ×2 + Mimir HA tracker는 모니터링 클러스터 3중화 때 두 클러스터를 같이. 게이트웨이는 push 수신이라 2개여도 죽은 대의 큐는 못 지킴 → 1 유지 |
-| 적용 | ArgoCD Application `gpu-monitoring-agents`(K8s 레포), automated · prune · selfHeal, Monitoring 레포 **main**의 `deploy/agents/overlays/onprem` | main 머지 리뷰가 안전장치. AppProject `gpu-platform`에 Monitoring 레포 source · `monitoring` destination 필요(노찬경) |
+| 적용 | ArgoCD Application `gpu-monitoring-agents`(K8s 레포), automated · prune · selfHeal, Monitoring 레포 **main**의 `deploy/manager-cluster` | main 머지 리뷰가 안전장치. AppProject `gpu-platform`에 Monitoring 레포 source · `monitoring` destination 필요(노찬경) |
 | 네임스페이스 | `monitoring`은 K8s 레포 `gpu-foundation`이 만듦 | 우리 매니페스트에 Namespace 없음(FailOnSharedResource 충돌 방지) |
 
 유실 실측(`docs/measurements/2026-11-10-agents-storage-outage.md`): Loki · Tempo 154초 중단에 로그 31/31 · 트레이스 5/5 도착, 복귀 뒤 40초에 큐 비움.
@@ -79,7 +79,7 @@ Loki ──ruler 알람──▶ Alertmanager :9093 ──webhook(pipeline=failo
 - [x] (김성모) 예비 taint 키 `devoops/spare=true:NoSchedule` · GPU 라벨 `devoops/gpu=true` 확정 (2026-11-05). monitoring ns 자원 예산 0.5코어 · 1Gi, nodeSelector `platform-worker=true`(관리 클러스터)도 그대로
 - [ ] (나) dcgm-exporter Helm values: `customMetrics` 전체 목록(B3 초안) + Xid 230 주기 5초, tolerations Exists
 - [ ] (박기현 · 김성모) 관리형 노드그룹은 스팟 회수를 자체 처리한다(ADR-25). 그러면 분류기에 줄 **스팟 회수 신호의 출처**(지금 표는 aws-node-termination-handler IMDS 모드)를 유지할지, 노드그룹 이벤트로 바꿀지 (MON-STD-19)
-- [x] (나) EKS overlay: KSM 노드 라벨 허용(`node.kubernetes.io/instance-type` · `topology.kubernetes.io/zone`) — `overlays/eks` (11/18)
-- [x] (나) EKS overlay: nodeSelector `workload: system`, 버퍼는 hostPath(EBS CSI 애드온 없음 · CPU 노드 1대 고정), cluster 라벨은 `eks-a` · `eks-b` · `eks-c`를 ConfigMap `monitoring-cluster-info`로 받음(Gitops ApplicationSet이 넣는다) — `overlays/eks` (11/18)
+- [x] (나) EKS overlay: KSM 노드 라벨 허용(`node.kubernetes.io/instance-type` · `topology.kubernetes.io/zone`) — `deploy/eks` (11/18)
+- [x] (나) EKS overlay: nodeSelector `workload: system`, 버퍼는 hostPath(EBS CSI 애드온 없음 · CPU 노드 1대 고정), cluster 라벨은 `eks-a` · `eks-b` · `eks-c`를 ConfigMap `monitoring-cluster-info`로 받음(Gitops ApplicationSet이 넣는다) — `deploy/eks` (11/18)
 - [ ] (나) 관리 클러스터 적용 뒤 커널 로그 확인 `{k8s_cluster_name="onprem-manager", service_name="kernel"}` (kind엔 kernel journal이 없어 미확인)
 - [ ] (노찬경) AppProject `gpu-platform`에 Monitoring 레포 · `monitoring` destination, ArgoCD UI 읽기 계정

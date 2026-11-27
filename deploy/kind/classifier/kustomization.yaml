@@ -5,7 +5,7 @@ kind: Kustomization
 namespace: monitoring
 resources:
   - namespace.yaml
-  - ../../base
+  - ../../monitoring-cluster/classifier
   - kafka.yaml
 images:
   - name: ghcr.io/devoops-team/classifier

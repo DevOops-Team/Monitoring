@@ -2,8 +2,8 @@
 # 노트북에서 실행: 설정 검사 → 모니터링 클러스터(또는 kind)에 deploy/ 적용
 # 사용: KUBECONFIG=<admin.conf> scripts/deploy-k8s.sh [--lint-only] [--kind] [--agents-kind]
 #   --lint-only    검사만 하고 끝 (클러스터 접속 없음)
-#   --kind         로컬 kind 클러스터에 저장소 스택(deploy/base · values)을 적용 (더미 Secret을 만들어 구조만 검증)
-#   --agents-kind  로컬 kind 클러스터에 수집 층(deploy/agents/overlays/kind)만 적용. 데이터는 실제 모니터링 클러스터로 간다
+#   --kind         로컬 kind 클러스터에 저장소 스택(deploy/monitoring-cluster/storage · values)을 적용 (더미 Secret을 만들어 구조만 검증)
+#   --agents-kind  로컬 kind 클러스터에 수집 층(deploy/kind/agents)만 적용. 데이터는 실제 모니터링 클러스터로 간다
 # 수집 층의 관리 클러스터 · EKS 적용은 이 스크립트가 아니라 ArgoCD(K8s 레포 Application)가 한다
 # 환경변수 CHART_CACHE=<폴더> 를 주면 그 안의 <차트>-<버전>.tgz를 쓴다(GitHub 다운로드가 불안정할 때)
 set -euo pipefail
@@ -40,61 +40,61 @@ release() { [[ "$1" == tempo-distributed ]] && echo tempo || echo "$1"; }
 lint() {
   local tmp; tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
   echo "== promtool check rules (Mimir ruler가 읽을 룰)"
-  docker run --rm -v "$D/base/mimir:/mimir:ro" --entrypoint promtool "$PROMETHEUS_IMAGE" \
+  docker run --rm -v "$D/monitoring-cluster/storage/mimir:/mimir:ro" --entrypoint promtool "$PROMETHEUS_IMAGE" \
     check rules /mimir/rules/self.yml /mimir/rules/recovery.yml /mimir/rules/records.yml /mimir/rules/infra.yml /mimir/rules/failover.yml /mimir/rules/classifier.yml /mimir/rules/training.yml /mimir/rules/workloads.yml
   echo "== promtool test rules (룰 단위 테스트)"
-  docker run --rm -v "$D/base/mimir:/mimir:ro" --entrypoint promtool "$PROMETHEUS_IMAGE" \
+  docker run --rm -v "$D/monitoring-cluster/storage/mimir:/mimir:ro" --entrypoint promtool "$PROMETHEUS_IMAGE" \
     test rules /mimir/tests/recovery_test.yml /mimir/tests/infra_test.yml /mimir/tests/failover_test.yml /mimir/tests/classifier_test.yml /mimir/tests/self_test.yml /mimir/tests/training_test.yml /mimir/tests/workloads_test.yml
   echo "== promtool check config --agent (Prometheus Agent)"
   # promtool은 credentials_file 존재까지 본다. Pod 안에만 있는 ServiceAccount 토큰 자리에 빈 파일을 마운트
   : > "$tmp/token"
-  docker run --rm -v "$D/base/prometheus-agent:/etc/prometheus:ro" \
+  docker run --rm -v "$D/monitoring-cluster/storage/prometheus-agent:/etc/prometheus:ro" \
     -v "$tmp/token:/var/run/secrets/kubernetes.io/serviceaccount/token:ro" \
     --entrypoint promtool "$PROMETHEUS_IMAGE" check config --agent /etc/prometheus/prometheus.yml
   echo "== Grafana 대시보드 JSON (문법 · uid · title, uid 중복)"
-  jq -e '.uid and .title' "$D"/base/grafana/dashboards/*/*.json > /dev/null
-  [[ -z "$(jq -r '.uid' "$D"/base/grafana/dashboards/*/*.json | sort | uniq -d)" ]] || { echo "대시보드 uid 중복" >&2; return 1; }
-  echo "== kustomize 렌더 (deploy/base)"
-  kubectl kustomize "$D/base" > "$tmp/base.yaml"
+  jq -e '.uid and .title' "$D"/monitoring-cluster/storage/grafana/dashboards/*/*.json > /dev/null
+  [[ -z "$(jq -r '.uid' "$D"/monitoring-cluster/storage/grafana/dashboards/*/*.json | sort | uniq -d)" ]] || { echo "대시보드 uid 중복" >&2; return 1; }
+  echo "== kustomize 렌더 (deploy/monitoring-cluster/storage)"
+  kubectl kustomize "$D/monitoring-cluster/storage" > "$tmp/base.yaml"
   echo "   리소스 $(grep -c '^kind:' "$tmp/base.yaml")개"
-  echo "== 수집 층 (deploy/agents): promtool + 렌더"
-  docker run --rm -v "$D/agents/base/prometheus-agent:/etc/prometheus:ro" \
+  echo "== 수집 층 (deploy/cluster-common과 그것을 쓰는 폴더): promtool + 렌더"
+  docker run --rm -v "$D/cluster-common/prometheus-agent:/etc/prometheus:ro" \
     -v "$tmp/token:/var/run/secrets/kubernetes.io/serviceaccount/token:ro" \
     -e CLUSTER_NAME=lint -e SITE=lint \
     --entrypoint promtool "$PROMETHEUS_IMAGE" check config --agent /etc/prometheus/prometheus.yml
-  docker run --rm -v "$D/agents/base/fluent-bit/fluent-bit.yaml:/fluent-bit/etc/conf/fluent-bit.yaml:ro" \
+  docker run --rm -v "$D/cluster-common/fluent-bit/fluent-bit.yaml:/fluent-bit/etc/conf/fluent-bit.yaml:ro" \
     "$FLUENT_BIT_IMAGE" -c /fluent-bit/etc/conf/fluent-bit.yaml --dry-run
   # 모니터링 클러스터는 Fluent Bit 설정을 따로 둔다(Loki 직접 전송)
-  docker run --rm -v "$D/agents/overlays/monitoring/fluent-bit.yaml:/fluent-bit/etc/conf/fluent-bit.yaml:ro" \
+  docker run --rm -v "$D/monitoring-cluster/logs/fluent-bit.yaml:/fluent-bit/etc/conf/fluent-bit.yaml:ro" \
     "$FLUENT_BIT_IMAGE" -c /fluent-bit/etc/conf/fluent-bit.yaml --dry-run
-  docker run --rm -v "$D/agents/base/otel-gateway/config.yaml:/etc/otel/config.yaml:ro" \
+  docker run --rm -v "$D/cluster-common/otel-gateway/config.yaml:/etc/otel/config.yaml:ro" \
     -e CLUSTER_NAME=lint -e SITE=lint \
     "$OTEL_COLLECTOR_IMAGE" validate --config=/etc/otel/config.yaml
-  for o in "$D"/agents/overlays/*/; do
-    kubectl kustomize "$o" > "$tmp/agents-$(basename "$o").yaml"
-    echo "   overlays/$(basename "$o"): 리소스 $(grep -c '^kind:' "$tmp/agents-$(basename "$o").yaml")개"
+  for o in manager-cluster eks kind/agents monitoring-cluster/logs; do
+    kubectl kustomize "$D/$o" > "$tmp/agents-${o//\//-}.yaml"
+    echo "   $o: 리소스 $(grep -c '^kind:' "$tmp/agents-${o//\//-}.yaml")개"
   done
-  echo "== 분류기 (deploy/classifier): 렌더"
-  for o in "$D"/classifier/base/ "$D"/classifier/overlays/*/; do
-    kubectl kustomize "$o" > "$tmp/classifier-$(basename "$o").yaml"
-    echo "   $(basename "$o"): 리소스 $(grep -c '^kind:' "$tmp/classifier-$(basename "$o").yaml")개"
+  echo "== 분류기: 렌더"
+  for o in monitoring-cluster/classifier kind/classifier; do
+    kubectl kustomize "$D/$o" > "$tmp/classifier-${o//\//-}.yaml"
+    echo "   $o: 리소스 $(grep -c '^kind:' "$tmp/classifier-${o//\//-}.yaml")개"
   done
   echo "== helm template (values 문법)"
   # shellcheck disable=SC2046
-  helm template local-path-provisioner $(chart containeroo/local-path-provisioner "$LOCAL_PATH_CHART") -f "$D/values/local-path.yaml" > /dev/null
+  helm template local-path-provisioner $(chart containeroo/local-path-provisioner "$LOCAL_PATH_CHART") -f "$D/monitoring-cluster/values/local-path.yaml" > /dev/null
   # shellcheck disable=SC2046
-  helm template node-exporter $(chart prometheus-community/prometheus-node-exporter "$NODE_EXPORTER_CHART") -n "$NS" -f "$D/values/node-exporter.yaml" > /dev/null
+  helm template node-exporter $(chart prometheus-community/prometheus-node-exporter "$NODE_EXPORTER_CHART") -n "$NS" -f "$D/monitoring-cluster/values/node-exporter.yaml" > /dev/null
   # shellcheck disable=SC2046
-  helm template kube-state-metrics $(chart prometheus-community/kube-state-metrics "$KSM_CHART") -n "$NS" -f "$D/values/kube-state-metrics.yaml" > /dev/null
+  helm template kube-state-metrics $(chart prometheus-community/kube-state-metrics "$KSM_CHART") -n "$NS" -f "$D/monitoring-cluster/values/kube-state-metrics.yaml" > /dev/null
   # shellcheck disable=SC2046
-  helm template grafana $(chart grafana-community/grafana "$GRAFANA_CHART") -n "$NS" -f "$D/values/grafana.yaml" > /dev/null
+  helm template grafana $(chart grafana-community/grafana "$GRAFANA_CHART") -n "$NS" -f "$D/monitoring-cluster/values/grafana.yaml" > /dev/null
   # shellcheck disable=SC2046
   helm template alertmanager $(chart prometheus-community/alertmanager "$ALERTMANAGER_CHART") -n "$NS" \
-    -f "$D/values/alertmanager.yaml" -s templates/configmap.yaml \
+    -f "$D/monitoring-cluster/values/alertmanager.yaml" -s templates/configmap.yaml \
     | awk '/^  alertmanager.yml: \|/{f=1;next} f&&/^    /{sub(/^    /,"");print;next} f&&!/^ *$/{f=0}' > "$tmp/alertmanager.yml"
   [[ -s "$tmp/alertmanager.yml" ]] || { echo "alertmanager.yml 추출 실패" >&2; return 1; }
   for f in loki tempo-distributed blackbox kafka-exporter postgres-exporter; do
-    [[ -f "$D/values/$f.yaml" ]] || continue
+    [[ -f "$D/monitoring-cluster/values/$f.yaml" ]] || continue
     case "$f" in
       loki)     c="$(chart grafana-community/loki "$LOKI_CHART")" ;;
       tempo-distributed) c="$(chart grafana-community/tempo-distributed "$TEMPO_DISTRIBUTED_CHART")" ;;
@@ -103,7 +103,7 @@ lint() {
       postgres-exporter) c="$(chart prometheus-community/prometheus-postgres-exporter "$POSTGRES_EXPORTER_CHART")" ;;
     esac
     # shellcheck disable=SC2086
-    helm template "$(release "$f")" $c -n "$NS" -f "$D/values/$f.yaml" > /dev/null
+    helm template "$(release "$f")" $c -n "$NS" -f "$D/monitoring-cluster/values/$f.yaml" > /dev/null
   done
   echo "== amtool check-config (차트가 만든 alertmanager.yml)"
   docker run --rm -v "$tmp:/cfg:ro" --entrypoint amtool "$ALERTMANAGER_IMAGE" check-config /cfg/alertmanager.yml
@@ -158,7 +158,7 @@ SC
   else
     # shellcheck disable=SC2046
     helm upgrade --install local-path-provisioner $(chart containeroo/local-path-provisioner "$LOCAL_PATH_CHART") \
-      -n local-path-storage --create-namespace -f "$D/values/local-path.yaml" --wait --timeout 5m
+      -n local-path-storage --create-namespace -f "$D/monitoring-cluster/values/local-path.yaml" --wait --timeout 5m
   fi
   # Mimir · Loki · Tempo Pod가 인증서 Secret을 마운트한다. 없으면 ContainerCreating에서 멈추므로 먼저 본다(kind도 진짜 인증서가 필요)
   for s in mimir-s3-cert loki-s3-cert tempo-s3-cert; do
@@ -166,19 +166,19 @@ SC
       || { echo "Secret 없음: $s → 먼저 scripts/create-secrets.sh s3-certs <폴더> 를 실행하라" >&2; exit 1; }
   done
   echo "== 자체 매니페스트 (namespace · Mimir · Prometheus Agent)"
-  kubectl apply -k "$D/base"
+  kubectl apply -k "$D/monitoring-cluster/storage"
   # kind에는 LoadBalancer에 IP를 주는 것이 없어 helm --wait가 끝나지 않는다 → kind에서만 ClusterIP로
   local svc_override=()
   [[ "$MODE" == kind ]] && svc_override=(--set service.type=ClusterIP)
   echo "== 차트 (node-exporter · kube-state-metrics)"
   # shellcheck disable=SC2046
   helm upgrade --install node-exporter $(chart prometheus-community/prometheus-node-exporter "$NODE_EXPORTER_CHART") \
-    -n "$NS" -f "$D/values/node-exporter.yaml" --wait --timeout 5m
+    -n "$NS" -f "$D/monitoring-cluster/values/node-exporter.yaml" --wait --timeout 5m
   # shellcheck disable=SC2046
   helm upgrade --install kube-state-metrics $(chart prometheus-community/kube-state-metrics "$KSM_CHART") \
-    -n "$NS" -f "$D/values/kube-state-metrics.yaml" --wait --timeout 5m
+    -n "$NS" -f "$D/monitoring-cluster/values/kube-state-metrics.yaml" --wait --timeout 5m
   for f in loki tempo-distributed blackbox kafka-exporter postgres-exporter; do
-    [[ -f "$D/values/$f.yaml" ]] || continue
+    [[ -f "$D/monitoring-cluster/values/$f.yaml" ]] || continue
     case "$f" in
       loki)     c="$(chart grafana-community/loki "$LOKI_CHART")" ;;
       tempo-distributed) c="$(chart grafana-community/tempo-distributed "$TEMPO_DISTRIBUTED_CHART")" ;;
@@ -188,17 +188,17 @@ SC
     esac
     echo "== 차트 ($f)"
     # shellcheck disable=SC2086
-    helm upgrade --install "$(release "$f")" $c -n "$NS" -f "$D/values/$f.yaml" --wait --timeout 8m
+    helm upgrade --install "$(release "$f")" $c -n "$NS" -f "$D/monitoring-cluster/values/$f.yaml" --wait --timeout 8m
   done
   # 여기까지는 Secret 없이 뜬다(수집 · 저장은 이미 시작). Alertmanager · Grafana는 Secret이 있어야 한다
   ensure_secrets
   echo "== 차트 (Alertmanager · Grafana)"
   # shellcheck disable=SC2046
   helm upgrade --install alertmanager $(chart prometheus-community/alertmanager "$ALERTMANAGER_CHART") \
-    -n "$NS" -f "$D/values/alertmanager.yaml" ${svc_override[@]+"${svc_override[@]}"} --wait --timeout 5m
+    -n "$NS" -f "$D/monitoring-cluster/values/alertmanager.yaml" ${svc_override[@]+"${svc_override[@]}"} --wait --timeout 5m
   # shellcheck disable=SC2046
   helm upgrade --install grafana $(chart grafana-community/grafana "$GRAFANA_CHART") \
-    -n "$NS" -f "$D/values/grafana.yaml" ${svc_override[@]+"${svc_override[@]}"} --wait --timeout 8m
+    -n "$NS" -f "$D/monitoring-cluster/values/grafana.yaml" ${svc_override[@]+"${svc_override[@]}"} --wait --timeout 8m
   echo "== 롤아웃 대기"
   kubectl -n "$NS" rollout status statefulset/mimir --timeout=5m
   kubectl -n "$NS" rollout status statefulset/prometheus-agent --timeout=5m
@@ -206,8 +206,8 @@ SC
 }
 
 apply_agents_kind() {
-  echo "== 수집 층 → kind (overlays/kind)"
-  kubectl apply -k "$D/agents/overlays/kind"
+  echo "== 수집 층 → kind (deploy/kind/agents)"
+  kubectl apply -k "$D/kind/agents"
   for d in kube-state-metrics prometheus-agent otel-gateway; do
     kubectl -n "$NS" rollout status deployment/"$d" --timeout=3m
   done

@@ -1,5 +1,5 @@
-# 자체 매니페스트(Mimir · Prometheus Agent). 적용: kubectl apply -k deploy/base
-# 공식 차트를 쓰는 것(Alertmanager · Grafana · node-exporter · Loki · Tempo)은 deploy/values/
+# 자체 매니페스트(Mimir · Prometheus Agent). 적용: kubectl apply -k deploy/monitoring-cluster/storage
+# 공식 차트를 쓰는 것(Alertmanager · Grafana · node-exporter · Loki · Tempo)은 deploy/monitoring-cluster/values/
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: monitoring

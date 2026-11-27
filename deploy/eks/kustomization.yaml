@@ -10,8 +10,17 @@ namespace: monitoring
 resources:
   - namespace.yaml
   - cluster-info.yaml
-  - ../../base
-  - ../../gpu
+  - ../cluster-common
+  # GPU 노드에만 올리는 것. GPU는 EKS에만 있어 공통(cluster-common)에 두지 않는다
+  - dcgm-exporter/daemonset.yaml
+  - spot-notice-exporter/daemonset.yaml
+configMapGenerator:
+  # 이름 끝에 해시가 붙어 목록이 바뀌면 Pod가 다시 뜬다
+  - name: dcgm-exporter-counters
+    files: [counters.csv=dcgm-exporter/counters.csv]
+  # 스크립트가 바뀌면 해시가 바뀌어 Pod가 다시 뜬다
+  - name: spot-notice-exporter
+    files: [exporter.py=spot-notice-exporter/exporter.py]
 patches:
   # 1개짜리(Agent · KSM · 게이트웨이)는 CPU 노드에: GPU 노드는 스팟이라 회수되면 수집 파이프가 같이 죽는다. DaemonSet은 전 노드라 제외
   - target: {kind: Deployment}
