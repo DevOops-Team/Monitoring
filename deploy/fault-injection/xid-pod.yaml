@@ -1,0 +1,58 @@
+# 실제 Xid를 내는 시험 Pod (GPU-218). 절차 = deploy/README.md 「⑧ 실제 Xid 내기」.
+# Argo CD가 관리하지 않는다(kustomization에 없음). 시험할 때만 손으로 올리고 끝나면 지운다.
+#
+# 하는 일: GPU에서 잘못된 주소에 쓴다 → 드라이버가 커널 로그에 `NVRM: Xid` 줄을 남긴다(기대 31, 13 · 43일 수도 — T4에서 미검증).
+#   dcgmi 주입(③)과 달리 드라이버가 실제로 보고하므로 커널 로그 경로(FailoverXidKernel)와 dcgm 경로(FailoverXidDcgm)가 둘 다 울린다.
+#   하드웨어는 건드리지 않는다. 죽는 것은 이 Pod의 프로세스뿐이다.
+# 주의: 원인 알람이 실제로 분류기까지 간다(31 · 13 · 43 = restart_in_place). 복구 컨트롤러 모드를 먼저 확인하고,
+#   GPU를 1장 요청하므로 학습이 안 도는 노드(예비 노드 등)에서 한다. 학습 중인 노드면 GPU가 없어 Pending으로 남는다.
+#
+# 이미지 = trainer의 베이스와 같은 공개 이미지(Data 레포 trainer/Dockerfile). 학습이 돌았던 노드면 레이어가 이미 있다.
+# 컨테이너 이름을 trainer로 짓지 말 것: FailoverPodExit가 trainer 컨테이너 종료를 본다
+apiVersion: v1
+kind: Pod
+metadata:
+  name: xid-test
+  namespace: monitoring
+  labels: {app.kubernetes.io/name: xid-test}
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: NODE_NAME      # 올릴 때 sed로 바꾼다
+  tolerations:
+    - {key: nvidia.com/gpu, operator: Exists, effect: NoSchedule}
+    - {key: devoops/spare, operator: Exists, effect: NoSchedule}
+  containers:
+    - name: xid-test
+      image: pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+      env:
+        # mmu    = 할당 안 된 GPU 주소에 쓰기 (기대 Xid 31, MMU fault)
+        # assert = 범위 밖 인덱스 (device-side assert. Xid가 안 남을 수도 있다 — mmu가 안 될 때 비교용)
+        - {name: METHOD, value: mmu}
+      resources:
+        limits: {nvidia.com/gpu: 1, memory: 2Gi}
+        requests: {cpu: 100m, memory: 1Gi}
+      command: ["python", "-u", "-c"]
+      args:
+        - |
+          import os, time, torch
+
+          def now():      # 커널 로그 줄 시각과 맞춰 볼 수 있게 UTC로 찍는다
+              return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+          method = os.environ.get("METHOD", "mmu")
+          print(now(), "gpu:", torch.cuda.get_device_name(0), "method:", method)
+          torch.zeros(1, device="cuda")           # CUDA 초기화를 먼저 끝낸다
+          print(now(), "inject")
+          try:
+              if method == "mmu":
+                  # PyTorch가 「이미 GPU에 있는 배열」로 믿게 한 가짜 주소. 실제로는 아무것도 할당돼 있지 않다
+                  class Bogus:
+                      __cuda_array_interface__ = {"shape": (1 << 20,), "typestr": "<f4", "data": (0x10000, False), "version": 2}
+                  torch.as_tensor(Bogus(), device="cuda").fill_(42.0)
+              else:
+                  torch.zeros(4, device="cuda")[torch.tensor([10], device="cuda")]
+              torch.cuda.synchronize()
+              print(now(), "오류 없이 끝남 — Xid가 안 났을 가능성이 크다")
+          except Exception as e:
+              print(now(), "CUDA 오류:", type(e).__name__, str(e)[:300])
