@@ -639,3 +639,46 @@ tests:
       - eval_time: 20m
         alertname: FailoverStraggler
         exp_alerts: []
+
+  # --- FailoverSpotNotice. 값 = exporter가 예고를 처음 본 시각(epoch 초) ---
+  # 24) g1이 5분 15초에 예고를 받는다(값 315). 바로 울리고 event_ts는 그 값, 2분 뒤 노드가 회수돼 시계열이 끊기면 꺼진다
+  - name: 스팟 회수 예고가 오면 바로 울리고 노드가 사라지면 꺼진다
+    interval: 15s
+    input_series:
+      - series: 'spot_interruption_notice_timestamp_seconds{job="annotated-pods", namespace="monitoring", container="spot-notice-exporter", cluster="eks-a", node="g1", pod="spot-notice-exporter-aaaaa"}'
+        values: '_x21 315x8 stale'
+      - series: 'spot_notice_imds_ok{job="annotated-pods", namespace="monitoring", container="spot-notice-exporter", cluster="eks-a", node="g2", pod="spot-notice-exporter-bbbbb"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: FailoverSpotNotice
+        exp_alerts: []
+      - eval_time: 5m15s
+        alertname: FailoverSpotNotice
+        exp_alerts: &spot
+          - exp_labels: {pipeline: failover, signal: spot, cluster: eks-a, node: g1}
+            exp_annotations:
+              event_ts: '1970-01-01T00:05:15Z'
+              log_line: 'EC2 spot interruption notice (IMDS spot/instance-action)'
+              summary: '스팟 회수 예고: eks-a g1'
+      - eval_time: 7m15s
+        alertname: FailoverSpotNotice
+        exp_alerts: *spot
+      - eval_time: 7m30s
+        alertname: FailoverSpotNotice
+        exp_alerts: []
+
+  # 25) 학습 Pod · 다른 컨테이너 · EKS가 아닌 클러스터가 같은 이름의 지표를 내도 보지 않는다
+  - name: exporter가 아닌 곳의 지표는 스팟 예고로 보지 않는다
+    interval: 15s
+    input_series:
+      - series: 'spot_interruption_notice_timestamp_seconds{job="annotated-pods", namespace="training", container="trainer", cluster="eks-a", node="g1"}'
+        values: '315x40'
+      - series: 'spot_interruption_notice_timestamp_seconds{job="annotated-pods", namespace="monitoring", container="other", cluster="eks-a", node="g2"}'
+        values: '315x40'
+      - series: 'spot_interruption_notice_timestamp_seconds{job="annotated-pods", namespace="monitoring", container="spot-notice-exporter", cluster="kind-test", node="g3"}'
+        values: '315x40'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: FailoverSpotNotice
+        exp_alerts: []
